@@ -1,0 +1,105 @@
+{
+  "schema": "repo-governance.policy.v1",
+  "factory_version": "repo-factory@{{FACTORY_VERSION}}",
+  "mode": "single_owner_policy_delegated_autonomy",
+  "repository": {
+    "name": "{{REPO_FULL}}",
+    "owner": "{{OWNER}}",
+    "visibility": "{{VISIBILITY}}"
+  },
+  "tier": "{{TIER}}",
+  "branches": {
+    "integration": "dev",
+    "production": "main"
+  },
+  "merge": {
+    "method": "merge_commit",
+    "one_ticket_one_pr": true,
+    "delete_head_branch": true,
+    "use_merge_queue_when_available": true,
+    "authorization_model": "evidence_gated_role_agnostic",
+    "requesters": "any_registered_agent",
+    "executor": "github_auto_merge_or_neutral_merge_broker",
+    "human_approval_required": false,
+    "direct_agent_merge_credentials": false,
+    "recheck_at_execution": true,
+    "intent_ttl_seconds": 600,
+    "single_writer": true
+  },
+  "wip": {
+    "max_active_tickets": 3,
+    "max_active_prs": 3,
+    "reject_overlapping_ownership": true
+  },
+  "autonomy": {
+    "routine_human_required": false,
+    "auto_start": ["low", "standard", "high"],
+    "auto_merge": ["low", "standard", "high"],
+    "high_auto_merge_requires_predelegation": true,
+    "critical_default": "halt",
+    "auto_revert_out_of_band": true,
+    "max_repair_rounds": 3,
+    "max_transient_retries": 3,
+    "max_ticket_wall_minutes": 180,
+    "max_daily_external_cost": null
+  },
+  "checks": {
+    "governance": "governance",
+    "project_ci": "project-ci",
+    "review": "agent-review",
+    "post_merge": "post-merge"
+  },
+  "risk_profiles": {
+    "low": { "reviewer_quorum": 0 },
+    "standard": { "reviewer_quorum": 1 },
+    "high": {
+      "reviewer_quorum": 2,
+      "require_oracle_before_start": true,
+      "require_property_or_mutation_test": true,
+      "require_live_evidence": true,
+      "require_rollback_path": true,
+      "predelegated": false
+    },
+    "critical": {
+      "reviewer_quorum": 2,
+      "require_oracle_before_start": true,
+      "predelegated": false,
+      "rollback": null
+    }
+  },
+  "project_commands": {
+    "focused": null,
+    "full": "{{FULL_CMD}}",
+    "build": "{{BUILD_CMD}}",
+    "lint": null,
+    "typecheck": null
+  },
+  "security_commands": {
+    "sast": null,
+    "dependency_audit": null,
+    "secret_scan": null
+  },
+  "agent_runtime": {
+    "controller": "{{CONTROLLER_ADAPTER}}",
+    "worker": "{{WORKER_ADAPTER}}",
+    "reviewers": ["{{REVIEWER_ADAPTER_A}}", "{{REVIEWER_ADAPTER_B}}"],
+    "merge_broker": "{{MERGE_BROKER_ADAPTER}}",
+    "merge_requesters": "any_registered_agent",
+    "additional_registered_agents": [],
+    "supports_execute": true,
+    "supports_review": true,
+    "supports_repair": true,
+    "supports_merge_request": true
+  },
+  "security": {
+    "runtime_identity": "local_controller",
+    "allow_personal_access_token": false,
+    "pin_actions_by_full_sha": true,
+    "worker_can_modify_governance": false,
+    "worker_can_modify_oracles": false
+  },
+  "commitlore": {
+    "required_at_genesis": true,
+    "operational_authority": false
+  }
+}

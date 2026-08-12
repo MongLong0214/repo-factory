@@ -1,0 +1,42 @@
+# project CI — check 이름 "project-ci" 는 policy .checks.project_ci 와 결박된다.
+# lower bound + latest 두 runtime 모두에서 같은 test case set 이 발견돼야 한다
+# (한쪽 runtime 이 조용히 테스트를 건너뛰면 zero-test lane 으로 실패한다).
+name: ci
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ["{{RUNTIME_LOWER}}", "{{RUNTIME_LATEST}}"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: setup runtime {{RUNTIME_KIND}} ${{ matrix.runtime }}
+        run: echo "프로젝트 언어에 맞는 SHA-pinned setup action 으로 교체하라 (installer placeholder)"
+      - name: full test
+        run: {{FULL_CMD}}
+      - name: build
+        run: {{BUILD_CMD}}
+  project-ci:
+    name: project-ci
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: aggregate
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "test matrix failed: ${{ needs.test.result }}"; exit 1
+          fi

@@ -1,0 +1,72 @@
+{
+  "schema": "repo-governance.github-free-capabilities.v1",
+  "verified_at": "2026-08-08",
+  "plan": "free",
+  "note": "GitHub Free 기능 매트릭스 정본. 프로파일별로 지원되지 않는 기능은 호출하지도, 설정 성공을 주장하지도 않는다. 403≠기능 미지원, 404≠plan 제한 — 분류는 scripts/github-profile.py 가 한다.",
+  "profiles": {
+    "FREE_PUBLIC_USER_NATIVE": {
+      "conditions": { "plan": "free", "owner_type": "User", "visibility": "public" },
+      "available": [
+        "actions", "protected_branches", "rulesets", "native_auto_merge",
+        "codeql_default_setup", "dependency_review", "secret_scanning",
+        "artifact_attestations", "environments", "dependency_graph",
+        "dependabot_alerts", "dependabot_security_updates"
+      ],
+      "unavailable": [ "merge_queue" ],
+      "unavailable_reasons": {
+        "merge_queue": "merge queue 는 organization 소유 public repository 전용 — 개인 계정 public 에 시도하지 않는다"
+      },
+      "enforcement": "native"
+    },
+    "FREE_PUBLIC_ORG_NATIVE_QUEUE": {
+      "conditions": { "plan": "free", "owner_type": "Organization", "visibility": "public" },
+      "available": [
+        "actions", "protected_branches", "rulesets", "native_auto_merge",
+        "codeql_default_setup", "dependency_review", "secret_scanning",
+        "artifact_attestations", "environments", "dependency_graph",
+        "dependabot_alerts", "dependabot_security_updates",
+        "merge_queue"
+      ],
+      "unavailable": [],
+      "unavailable_reasons": {},
+      "enforcement": "native",
+      "note": "기본 환경은 개인 계정이므로 fixture·선택 지원으로만 유지. owner.type=Organization 이 API 로 확인될 때만 선택한다."
+    },
+    "FREE_PRIVATE_COMPENSATING": {
+      "conditions": { "plan": "free", "owner_type": "User|Organization", "visibility": "private" },
+      "available": [
+        "actions", "dependency_graph", "dependabot_alerts",
+        "dependabot_security_updates", "repository_secrets",
+        "actions_permission_settings", "rest_graphql_pr_merge_api"
+      ],
+      "unavailable": [
+        "protected_branches", "rulesets", "native_auto_merge", "merge_queue",
+        "codeql_default_setup", "dependency_review", "secret_scanning",
+        "artifact_attestations", "environment_secrets",
+        "deployment_protection_rules", "environment_branch_restriction"
+      ],
+      "unavailable_reasons": {
+        "protected_branches": "GitHub Free private 미지원 (2026-08-08 403 실측) — 호출·성공 주장 금지",
+        "rulesets": "GitHub Free private 미지원 — 재시도 루프 금지",
+        "native_auto_merge": "protected branch 없이는 의미 없는 표면 — 사용 금지"
+      },
+      "enforcement": "compensating",
+      "compensating_controls": [
+        "agent 에게 GitHub write credential 0",
+        "외부 Merge Broker 만 write (target repo 밖, short-lived token)",
+        "exact-head sha guard 로만 merge API 호출",
+        "merge commit 에 Repo-Factory broker marker",
+        "post-merge audit 가 marker 없는 commit 을 OUT_OF_BAND_WRITE 로 검출",
+        "repository 당 merge 직렬화 + post-merge barrier"
+      ]
+    }
+  },
+  "experimental_disabled": {
+    "policy": "DISABLED_EXPERIMENTAL — 기본 경로 사용 금지, Phase Gate 필수 조건 아님, production-ready 근거 아님, opt-in ticket 없이 활성화 금지, 장애 시 routine merge path 영향 금지",
+    "features": [
+      "workflow_execution_protections",
+      "custom_deployment_protection_rules",
+      "preview_only_actions_policy"
+    ]
+  }
+}

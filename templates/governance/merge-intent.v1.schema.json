@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.merge-intent.v1.schema.json",
+  "title": "repo-governance merge intent v1 — role-agnostic evidence-gated merge 요청",
+  "description": "등록된 어떤 에이전트든 제출할 수 있다. 요청자 역할·자기 주장은 authorization 근거가 아니다. approved/authorized/checks_passed/review_passed/safe_to_merge 필드는 schema에서 금지되며 Merge Broker가 current facts에서 재계산한다. 같은 intent의 replay는 duplicate merge가 아니라 기존 receipt를 반환한다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "request_id", "requester_agent_id", "repository", "pr_number", "ticket_id", "operation_id", "expected_head_sha", "expected_base_sha", "policy_digest", "requested_at", "expires_at"],
+  "properties": {
+    "schema": { "const": "repo-governance.merge-intent.v1" },
+    "request_id": { "type": "string", "minLength": 8 },
+    "requester_agent_id": { "type": "string", "minLength": 1 },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "ticket_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{0,7}-\\d{3,4}$" },
+    "operation_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "expected_head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "expected_base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "policy_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "requested_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" }
+  },
+  "x-forbidden-fields": ["approved", "authorized", "checks_passed", "review_passed", "safe_to_merge", "green", "mergeable"]
+}

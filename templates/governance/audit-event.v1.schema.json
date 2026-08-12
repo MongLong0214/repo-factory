@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.audit-event.v1.schema.json",
+  "title": "repo-governance audit event v1 — projection/audit 전용, readiness 입력 아님",
+  "description": "chain-of-thought 금지, secrets 금지. current state authority가 아니다. reason_code는 deterministic해야 하고 controller decision은 이 이벤트만으로 재현 가능해야 한다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "operation_id", "ticket_id", "state_from", "state_to", "base_sha", "head_sha", "policy_digest", "reason_code", "evidence"],
+  "properties": {
+    "schema": { "const": "repo-governance.audit-event.v1" },
+    "operation_id": { "type": "string" },
+    "ticket_id": { "type": "string" },
+    "state_from": { "$ref": "#/$defs/state" },
+    "state_to": { "$ref": "#/$defs/state" },
+    "base_sha": { "type": ["string", "null"] },
+    "head_sha": { "type": ["string", "null"] },
+    "policy_digest": { "type": "string" },
+    "reason_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+    "evidence": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "state": {
+      "enum": ["planned", "blocked", "ready", "claimed", "executing", "pr_open", "review", "repair", "ci", "merge_ready", "merge_requested", "merging", "post_merge", "verified", "invalidated", "superseded", "quarantined", "human_decision_required", "unknown"]
+    }
+  }
+}

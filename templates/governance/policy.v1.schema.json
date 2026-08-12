@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.policy.v1.schema.json",
+  "title": "repo-governance policy v1 — 단 하나의 Machine-Readable Policy SSOT",
+  "description": "정본은 생성 레포의 governance/policy.v1.json 하나다. resolver 하드코딩·티켓/ADR 복제·workflow 중복 금지. 기계 강제는 scripts/governance.py validate가 수행하며 이 파일은 스펙 문서다. cross-field 불변식: (1) autonomy.auto_merge ⊆ autonomy.auto_start (2) merge.requesters=any_registered_agent ⇒ merge.direct_agent_merge_credentials=false (3) critical_default는 halt 또는 risk_profiles.critical.predelegated=true+rollback (4) security.allow_personal_access_token=false (5) checks 이름 유일 (6) agent_runtime.merge_broker 없이는 autonomous-ready 금지.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "factory_version", "mode", "repository", "tier", "branches", "merge", "wip", "autonomy", "checks", "risk_profiles", "project_commands", "security_commands", "agent_runtime", "security", "commitlore"],
+  "properties": {
+    "schema": { "const": "repo-governance.policy.v1" },
+    "factory_version": { "type": "string", "pattern": "^repo-factory@\\d+\\.\\d+\\.\\d+$" },
+    "mode": { "const": "single_owner_policy_delegated_autonomy" },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "owner", "visibility"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "owner": { "type": "string", "minLength": 1 },
+        "visibility": { "enum": ["private", "public"] }
+      }
+    },
+    "tier": { "enum": ["S", "M", "L"] },
+    "branches": {
+      "type": "object", "additionalProperties": false,
+      "required": ["integration", "production"],
+      "properties": {
+        "integration": { "type": "string", "minLength": 1 },
+        "production": { "type": "string", "minLength": 1 }
+      }
+    },
+    "merge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "one_ticket_one_pr", "delete_head_branch", "use_merge_queue_when_available", "authorization_model", "requesters", "executor", "human_approval_required", "direct_agent_merge_credentials", "recheck_at_execution", "intent_ttl_seconds", "single_writer"],
+      "properties": {
+        "method": { "const": "merge_commit" },
+        "one_ticket_one_pr": { "const": true },
+        "delete_head_branch": { "type": "boolean" },
+        "use_merge_queue_when_available": { "type": "boolean" },
+        "authorization_model": { "const": "evidence_gated_role_agnostic" },
+        "requesters": { "const": "any_registered_agent" },
+        "executor": { "enum": ["github_auto_merge_or_neutral_merge_broker", "github_native_auto_merge", "github_merge_queue", "neutral_merge_broker"] },
+        "human_approval_required": { "const": false },
+        "direct_agent_merge_credentials": { "const": false },
+        "recheck_at_execution": { "const": true },
+        "intent_ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "single_writer": { "const": true }
+      }
+    },
+    "wip": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_active_tickets", "max_active_prs", "reject_overlapping_ownership"],
+      "properties": {
+        "max_active_tickets": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "max_active_prs": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "reject_overlapping_ownership": { "const": true }
+      }
+    },
+    "autonomy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["routine_human_required", "auto_start", "auto_merge", "high_auto_merge_requires_predelegation", "critical_default", "auto_revert_out_of_band", "max_repair_rounds", "max_transient_retries", "max_ticket_wall_minutes", "max_daily_external_cost"],
+      "properties": {
+        "routine_human_required": { "const": false },
+        "auto_start": { "type": "array", "items": { "enum": ["low", "standard", "high", "critical"] }, "uniqueItems": true },
+        "auto_merge": { "type": "array", "items": { "enum": ["low", "standard", "high", "critical"] }, "uniqueItems": true },
+        "high_auto_merge_requires_predelegation": { "const": true },
+        "critical_default": { "enum": ["halt", "predelegated"] },
+        "auto_revert_out_of_band": { "type": "boolean", "description": "OUT_OF_BAND_WRITE 검출 시 rollback ticket 자동 생성 여부. false 면 HUMAN_DECISION_REQUIRED" },
+        "max_repair_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max_transient_retries": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max_ticket_wall_minutes": { "type": "integer", "minimum": 5, "maximum": 1440 },
+        "max_daily_external_cost": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "checks": {
+      "type": "object", "additionalProperties": false,
+      "required": ["governance", "project_ci", "review", "post_merge"],
+      "properties": {
+        "governance": { "type": "string", "minLength": 1 },
+        "project_ci": { "type": "string", "minLength": 1 },
+        "review": { "type": "string", "minLength": 1 },
+        "post_merge": { "type": "string", "minLength": 1 }
+      }
+    },
+    "risk_profiles": {
+      "type": "object", "additionalProperties": false,
+      "required": ["low", "standard", "high", "critical"],
+      "properties": {
+        "low": { "$ref": "#/$defs/riskProfile" },
+        "standard": { "$ref": "#/$defs/riskProfile" },
+        "high": { "$ref": "#/$defs/riskProfile" },
+        "critical": { "$ref": "#/$defs/riskProfile" }
+      }
+    },
+    "project_commands": {
+      "type": "object", "additionalProperties": false,
+      "required": ["focused", "full", "build", "lint", "typecheck"],
+      "properties": {
+        "focused": { "type": ["string", "null"] },
+        "full": { "type": "string", "minLength": 1 },
+        "build": { "type": "string", "minLength": 1 },
+        "lint": { "type": ["string", "null"] },
+        "typecheck": { "type": ["string", "null"] }
+      }
+    },
+    "security_commands": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sast", "dependency_audit", "secret_scan"],
+      "description": "private profile 의 custom security lane. null=없음(없는 scanner 를 있는 것으로 가정 금지, CodeQL 동등 주장 금지). private+high/critical 은 sast·dependency_audit 없이는 auto-merge 금지.",
+      "properties": {
+        "sast": { "type": ["string", "null"] },
+        "dependency_audit": { "type": ["string", "null"] },
+        "secret_scan": { "type": ["string", "null"] }
+      }
+    },
+    "agent_runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["controller", "worker", "reviewers", "merge_broker", "merge_requesters", "supports_execute", "supports_review", "supports_repair", "supports_merge_request"],
+      "properties": {
+        "controller": { "type": "string", "minLength": 1 },
+        "worker": { "type": "string", "minLength": 1 },
+        "reviewers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+        "merge_broker": { "type": "string", "minLength": 1 },
+        "merge_requesters": { "const": "any_registered_agent" },
+        "additional_registered_agents": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "supports_execute": { "const": true },
+        "supports_review": { "const": true },
+        "supports_repair": { "const": true },
+        "supports_merge_request": { "const": true }
+      }
+    },
+    "security": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtime_identity", "allow_personal_access_token", "pin_actions_by_full_sha", "worker_can_modify_governance", "worker_can_modify_oracles"],
+      "properties": {
+        "runtime_identity": { "const": "local_controller" },
+        "allow_personal_access_token": { "const": false },
+        "pin_actions_by_full_sha": { "const": true },
+        "worker_can_modify_governance": { "const": false },
+        "worker_can_modify_oracles": { "const": false }
+      }
+    },
+    "commitlore": {
+      "type": "object", "additionalProperties": false,
+      "required": ["required_at_genesis", "operational_authority"],
+      "properties": {
+        "required_at_genesis": { "type": "boolean" },
+        "operational_authority": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "riskProfile": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "reviewer_quorum": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "require_oracle_before_start": { "type": "boolean" },
+        "require_property_or_mutation_test": { "type": "boolean" },
+        "require_live_evidence": { "type": "boolean" },
+        "require_rollback_path": { "type": "boolean" },
+        "predelegated": { "type": "boolean" },
+        "rollback": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

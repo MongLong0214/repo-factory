@@ -1,0 +1,44 @@
+# post-merge verification — check 이름 "post-merge" 는 policy .checks.post_merge 와 결박.
+# dev push(= exact merge SHA)에서 full CI + governance validate + OOB marker audit.
+# 전부 read-only evidence 다: 실패하면 이 check 가 red 로 남고, 로컬 controller 의
+# reconcile 이 그 사실을 보고 rollback ticket 을 만든다(in-repo dispatch 없음).
+name: post-merge
+on:
+  push:
+    branches: [dev]
+permissions:
+  contents: read
+concurrency:
+  group: post-merge-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  post-merge:
+    name: post-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0  # OOB audit 의 parent 계보가 shallow 로 절단되지 않게 (canary 실측 교훈)
+      - name: governance validate at exact merge SHA
+        run: python3 scripts/governance.py validate --root .
+      - name: out-of-band write audit (broker marker / PR provenance)
+        run: |
+          python3 - <<'PYEOF'
+          import json, subprocess, sys
+          message = subprocess.run(["git", "log", "-1", "--format=%B%n__PARENTS__%P"],
+                                   capture_output=True, text=True).stdout
+          body, _, parents = message.partition("__PARENTS__")
+          commits = [{"sha": "HEAD", "message": body.strip(),
+                      "parents": len(parents.split()),
+                      "associated_prs": [1] if len(parents.split()) >= 2 else []}]
+          import pathlib, tempfile
+          facts = pathlib.Path(tempfile.mkstemp(suffix=".json")[1])
+          facts.write_text(json.dumps({"commits": commits}))
+          sys.exit(subprocess.run(["python3", "scripts/merge-broker.py", "audit",
+                                   "--root", ".", "--facts", str(facts)]).returncode)
+          PYEOF
+      - name: full project CI
+        run: {{FULL_CMD}}
+      - name: build
+        run: {{BUILD_CMD}}

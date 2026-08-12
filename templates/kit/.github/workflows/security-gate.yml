@@ -1,0 +1,28 @@
+# security gate — check 이름 "security-gate". profile 인지:
+# public 은 native lane(CodeQL/dependency review/secret scanning)이 별도로 존재하고,
+# private Free 는 custom command 만 사용하며 native 와 동등하다고 주장하지 않는다.
+# UNAVAILABLE_BLOCKING 은 절대 success 로 반환되지 않는다 (governance.py security-scan).
+name: security-gate
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: security-gate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  security-gate:
+    name: security-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: profile-aware security scan
+        run: python3 scripts/governance.py security-scan --root .

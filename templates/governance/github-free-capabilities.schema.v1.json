@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.github-free-capabilities.schema.v1.json",
+  "title": "GitHub Free capability matrix + per-repo profile lock",
+  "description": "matrix(repo-governance.github-free-capabilities.v1)는 factory 정본이고, 각 생성 레포는 Genesis 시점에 확정된 governance/github-profile.lock.json(repo-governance.github-profile.lock.v1)을 가진다. lock 은 동적 현재 상태가 아니라 확정된 plan·owner type·visibility·enforcement profile 이다.",
+  "$defs": {
+    "profileName": {
+      "enum": ["FREE_PUBLIC_USER_NATIVE", "FREE_PUBLIC_ORG_NATIVE_QUEUE", "FREE_PRIVATE_COMPENSATING"]
+    },
+    "profileLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "plan", "plan_verified", "owner_type", "repository",
+                   "visibility", "profile", "native_branch_enforcement",
+                   "native_auto_merge", "merge_queue", "resolved_at"],
+      "properties": {
+        "schema": { "const": "repo-governance.github-profile.lock.v1" },
+        "plan": { "const": "free" },
+        "plan_verified": { "type": "boolean", "description": "API 로 plan 을 읽지 못했으면 false — PASS 로 가장하지 않는다" },
+        "owner_type": { "enum": ["User", "Organization"] },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "visibility": { "enum": ["public", "private"] },
+        "profile": { "$ref": "#/$defs/profileName" },
+        "native_branch_enforcement": { "type": "boolean" },
+        "native_auto_merge": { "type": "boolean" },
+        "merge_queue": { "type": "boolean" },
+        "assurance_limit": { "type": ["string", "null"] },
+        "resolved_at": { "type": "string" }
+      },
+      "x-invariants": [
+        "visibility=private ⇒ profile=FREE_PRIVATE_COMPENSATING ∧ native_* 전부 false ∧ assurance_limit=COMPENSATING_CONTROLS_ONLY",
+        "visibility=public ∧ owner_type=User ⇒ profile=FREE_PUBLIC_USER_NATIVE ∧ merge_queue=false",
+        "visibility=public ∧ owner_type=Organization ⇒ profile=FREE_PUBLIC_ORG_NATIVE_QUEUE"
+      ]
+    }
+  }
+}

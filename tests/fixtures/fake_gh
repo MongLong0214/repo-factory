@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""fake gh — 테스트용 GitHub CLI 대역. FAKE_GH_WORLD JSON 파일이 상태다.
+
+FAKE_GH_FAIL=1 이면 모든 호출이 exit 1 (API outage 시뮬레이션).
+"""
+import json
+import os
+import sys
+
+
+def load(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save(path, world):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(world, f, ensure_ascii=False, indent=1)
+
+
+def flag(args, name):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def flags_all(args, name):
+    return [args[i + 1] for i, a in enumerate(args) if a == name and i + 1 < len(args)]
+
+
+def main():
+    args = sys.argv[1:]
+    if os.environ.get("FAKE_GH_FAIL") == "1":
+        print("fake outage: HTTP 503", file=sys.stderr)
+        return 1
+    world_path = os.environ.get("FAKE_GH_WORLD")
+    if not world_path:
+        print("FAKE_GH_WORLD unset", file=sys.stderr)
+        return 1
+    world = load(world_path)
+
+    if args[:2] == ["auth", "status"]:
+        return 0
+    if args[:1] == ["label"]:
+        return 0
+    if args[:1] == ["api"]:
+        # world["api"] = {"repos/o/r": {...}, "user": {...}} — resolver/profile 테스트용
+        path = args[1]
+        payload = (world.get("api") or {}).get(path)
+        if payload is None:
+            print(f"gh: Not Found (HTTP 404) {path}", file=sys.stderr)
+            return 1
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    if args[:2] == ["issue", "list"]:
+        print(json.dumps(world.get("issues", []), ensure_ascii=False))
+        return 0
+    if args[:2] == ["issue", "create"]:
+        number = int(world.get("next", 1))
+        world["issues"] = world.get("issues", []) + [{
+            "number": number,
+            "title": flag(args, "--title") or "",
+            "body": flag(args, "--body") or "",
+            "state": "OPEN",
+            "labels": flags_all(args, "--label"),
+        }]
+        world["next"] = number + 1
+        save(world_path, world)
+        print(f"https://github.com/fake/fake/issues/{number}")
+        return 0
+    if args[:2] == ["issue", "edit"]:
+        number = int(args[2])
+        for issue in world.get("issues", []):
+            if issue["number"] == number:
+                title = flag(args, "--title")
+                body = flag(args, "--body")
+                if title is not None:
+                    issue["title"] = title
+                if body is not None:
+                    issue["body"] = body
+        save(world_path, world)
+        return 0
+    if args[:2] == ["issue", "view"]:
+        number = int(args[2])
+        for issue in world.get("issues", []):
+            if issue["number"] == number:
+                print(json.dumps(issue, ensure_ascii=False))
+                return 0
+        print("not found", file=sys.stderr)
+        return 1
+    print(f"fake gh: unhandled {args[:3]}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

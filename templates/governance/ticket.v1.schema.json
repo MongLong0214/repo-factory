@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.ticket.v1.schema.json",
+  "title": "repo-governance ticket v1 — 한 원자 티켓 = 한 파일 = 한 PR",
+  "description": "각 티켓은 docs/tickets/ 아래 한 Markdown 파일이며 정확히 하나의 <!-- repo-governance-ticket:v1 {json} --> metadata를 가진다. 경로는 repository-relative POSIX, absolute/../symlink escape 금지, glob은 trailing '/**'만. executable kind(implementation·rollback)는 owned_paths 비어 있음 금지. rollback은 invalidates 필수. oracle_paths는 owned_paths와 겹칠 수 없고 implementation PR에서 수정 불가.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "title", "kind", "risk", "predelegated", "dependencies", "adr_refs", "prd_ref", "owned_paths", "coordinated_paths", "oracle_paths", "acceptance", "commands", "budgets", "invalidates", "supersedes"],
+  "properties": {
+    "schema": { "const": "repo-governance.ticket.v1" },
+    "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{0,7}-\\d{3,4}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["implementation", "contract-change", "governance-change", "rollback"] },
+    "risk": { "enum": ["low", "standard", "high", "critical"] },
+    "predelegated": { "type": "boolean" },
+    "milestone": { "type": ["string", "null"] },
+    "dependencies": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{0,7}-\\d{3,4}$" }, "uniqueItems": true },
+    "adr_refs": { "type": "array", "items": { "type": "string", "pattern": "^ADR-\\d{4}$" }, "uniqueItems": true },
+    "prd_ref": { "type": ["string", "null"], "pattern": "^PRD-[A-Z0-9]+$" },
+    "owned_paths": { "type": "array", "items": { "$ref": "#/$defs/repoPath" }, "uniqueItems": true },
+    "coordinated_paths": { "type": "array", "items": { "$ref": "#/$defs/coordinatedPath" }, "uniqueItems": true },
+    "oracle_paths": { "type": "array", "items": { "$ref": "#/$defs/repoPath" }, "uniqueItems": true },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "test_path", "cases"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC-[A-Z0-9-]+$" },
+          "test_path": { "$ref": "#/$defs/repoPath" },
+          "cases": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+        }
+      }
+    },
+    "commands": {
+      "type": "object", "additionalProperties": false,
+      "required": ["focused", "full", "build", "lint", "typecheck", "manual"],
+      "properties": {
+        "focused": { "type": ["string", "null"] },
+        "full": { "type": ["string", "null"] },
+        "build": { "type": ["string", "null"] },
+        "lint": { "type": ["string", "null"] },
+        "typecheck": { "type": ["string", "null"] },
+        "manual": { "type": ["string", "null"] }
+      }
+    },
+    "budgets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repair_rounds", "wall_minutes", "external_cost"],
+      "properties": {
+        "repair_rounds": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "wall_minutes": { "type": "integer", "minimum": 5, "maximum": 1440 },
+        "external_cost": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "invalidates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "supersedes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  },
+  "$defs": {
+    "repoPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[^\\s]+$",
+      "description": "repository-relative POSIX. '/**' suffix glob만 허용."
+    },
+    "coordinatedPath": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "reason", "symbols"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repoPath" },
+        "reason": { "type": "string", "minLength": 1 },
+        "symbols": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    }
+  }
+}

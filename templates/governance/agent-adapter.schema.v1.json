@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-governance.agent-adapter.v1.schema.json",
+  "title": "repo-governance agent adapter v1 — 모델/provider 하드코딩 금지",
+  "description": "생성 레포의 governance/adapters/<id>.json. repo-factory는 특정 모델·provider를 강제하지 않는다. adapter는 execute/review/repair/cancel/health 작업을 argv 계약으로 노출한다. 입출력은 stdin/stdout JSON이다(worker input/output, reviewer verdict — references/operational-governance.md §Agent Adapter Contract). 자연어 보고만으로 완료 인정 금지: output JSON의 head_sha·changed_paths·commands_run이 evidence다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "roles", "invoke"],
+  "properties": {
+    "schema": { "const": "repo-governance.agent-adapter.v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "roles": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["controller", "worker", "reviewer", "merge_broker", "specialist", "scheduler", "recovery"] }
+    },
+    "provider": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "invoke": {
+      "type": "object", "additionalProperties": false,
+      "required": ["execute", "review", "repair", "cancel", "health"],
+      "properties": {
+        "execute": { "$ref": "#/$defs/argvOrNull" },
+        "review": { "$ref": "#/$defs/argvOrNull" },
+        "repair": { "$ref": "#/$defs/argvOrNull" },
+        "cancel": { "$ref": "#/$defs/argvOrNull" },
+        "health": { "$ref": "#/$defs/argvOrNull" }
+      }
+    },
+    "isolation": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "read_only": { "type": "boolean" },
+        "no_worker_transcript": { "type": "boolean" },
+        "no_chain_of_thought_storage": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "argvOrNull": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      ]
+    }
+  }
+}

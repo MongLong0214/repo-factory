@@ -1,0 +1,32 @@
+# 독립 에이전트 리뷰 — check 이름 "agent-review" 는 policy .checks.review 와 결박.
+# read-only. candidate code 에 write token 없음. reviewer 입력은 immutable
+# digest/patch 뿐이고 worker transcript 는 어떤 경로로도 넘기지 않는다.
+name: agent-review
+on:
+  pull_request:
+  merge_group:
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: agent-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  agent-review:
+    name: agent-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: run reviewer quorum
+        run: |
+          python3 scripts/autopilot.py review --root . --event "$GITHUB_EVENT_PATH" --out review-artifacts
+      - uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: agent-review-${{ github.event.pull_request.head.sha || github.sha }}
+          path: review-artifacts/
+          retention-days: 1

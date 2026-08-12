@@ -1,0 +1,33 @@
+# governance kernel workflow — 이 파일은 governance-change 티켓으로만 수정할 수 있다.
+# check 이름 "governance" 는 governance/policy.v1.json .checks.governance 와 결박된다.
+name: governance
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: read
+concurrency:
+  group: governance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  governance:
+    name: governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          # event head == checkout HEAD 를 기계 검사하므로 merge ref 가 아니라 exact head 를 받는다
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: validate contract
+        run: python3 scripts/governance.py validate --root .
+      - name: check PR contract
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 scripts/governance.py check-pr --root . --event "$GITHUB_EVENT_PATH"

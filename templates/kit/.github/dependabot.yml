@@ -1,0 +1,18 @@
+# Dependabot — 모든 profile 에서 활성 (dependency graph + alerts + security updates).
+# Dependabot PR 에 trusted shortcut 은 없다: Ticket: linkage + risk escalation +
+# full CI/security gate/review 를 일반 PR 과 동일하게 통과해야 한다.
+version: 2
+updates:
+  - package-ecosystem: "{{DEPENDABOT_ECOSYSTEM}}"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
