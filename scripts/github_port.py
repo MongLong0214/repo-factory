@@ -39,7 +39,7 @@ class GhRateLimited(GhError):
 
 # 이 포트가 이름으로 다루는 저장소 설정들. 목록에 없는 이름은 거부한다 — 조용히 저장소 문서
 # 전체를 설정으로 삼는 것보다 이름 하나가 빠졌다고 말하는 편이 낫다.
-SETTINGS: Tuple[str, ...] = ("default-branch", "secret-scanning")
+SETTINGS: Tuple[str, ...] = ("default-branch", "secret-scanning", "code-scanning")
 
 
 def parse_identity(identity: str) -> Tuple[str, str, Optional[str]]:
@@ -112,6 +112,17 @@ class GhCliPort:
                 raise GhError(
                     f"the settings this port observes are {sorted(SETTINGS)}: {identity!r}"
                 )
+            if ref == "code-scanning":
+                # 별도 엔드포인트다. 저장소 문서에는 없다.
+                setup = self._api(f"repos/{owner}/{repo}/code-scanning/default-setup")
+                if setup is None:
+                    return None
+                # `languages` 는 **일부러 안 읽는다.** configured 전에는 GitHub 이 감지한 목록이고
+                # configured 뒤에는 영원히 빈 배열이다(실측). 그것을 승인 상태에 넣으면 재조회가
+                # "approved [...], observed []" 로 매번 실패한다 — bypass_actors 와 정반대
+                # 방향의 같은 결함이다. 언어를 안 대도 GitHub 이 감지하므로 계획에도 안 넣는다.
+                return {"identity": identity, "resourceType": "setting",
+                        "state": setup.get("state"), "querySuite": setup.get("query_suite")}
             observed = self._api(f"repos/{owner}/{repo}")
             if observed is None:
                 return None
@@ -222,6 +233,15 @@ class GhCliPort:
             code, _, err = self.run(argv, json.dumps(body))
             if code != 0:
                 raise GhError(f"setting secret scanning on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            return
+        if resource_type == "setting" and ref == "code-scanning":
+            body = {"state": spec["state"], "query_suite": spec["querySuite"]}
+            argv = [self.gh, "api", "--method", "PATCH",
+                    f"repos/{owner}/{repo}/code-scanning/default-setup", "--input", "-"]
+            self.calls.append(argv)
+            code, _, err = self.run(argv, json.dumps(body))
+            if code != 0:
+                raise GhError(f"configuring code scanning on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
             return
         if resource_type == "setting" and ref == "default-branch":
             wanted = spec.get("defaultBranch")

@@ -51,6 +51,7 @@ class FakeGitHub:
         self.state = {}
         self.defaults = {}
         self.security = {}
+        self.scanning = {}
 
     def observe(self, resource_type, identity):
         if resource_type == "setting" and identity.endswith("#default-branch"):
@@ -71,6 +72,15 @@ class FakeGitHub:
             return {"identity": identity, "resourceType": "setting",
                     **self.security.get(repository,
                                         {"secretScanning": "enabled", "pushProtection": "enabled"})}
+        if resource_type == "setting" and identity.endswith("#code-scanning"):
+            repository = identity.split("#", 1)[0]
+            if repository not in self.state:
+                return None
+            # Starts not-configured, like the real thing. A fake that starts configured cannot
+            # show what this operation changes.
+            return {"identity": identity, "resourceType": "setting",
+                    **self.scanning.get(repository,
+                                        {"state": "not-configured", "querySuite": "default"})}
         return self.state.get(identity)
 
     def create(self, resource_type, identity, spec):
@@ -82,6 +92,9 @@ class FakeGitHub:
             return
         if resource_type == "setting" and identity.endswith("#secret-scanning"):
             self.security[identity.split("#", 1)[0]] = dict(spec)
+            return
+        if resource_type == "setting" and identity.endswith("#code-scanning"):
+            self.scanning[identity.split("#", 1)[0]] = dict(spec)
             return
         raise AssertionError(f"no update is implemented for {resource_type}")
 

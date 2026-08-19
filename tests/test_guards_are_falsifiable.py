@@ -443,6 +443,20 @@ GUARDS: List[Dict[str, object]] = [
                    '                    "pushProtection": "enabled"}'),
         "killed_by": ["tests/test_github_port.py::test_the_port_reads_the_security_posture_it_was_asked_about"],
     },
+    {
+        "name": "code scanning is planned, and its unobservable field is not",
+        "file": "scripts/plan.py",
+        "mutate": ('    return {"state": "configured", "querySuite": "default"}',
+                   '    return {"state": "configured", "querySuite": "default", "languages": ["javascript"]}'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
+    },
+    {
+        "name": "the port reads code scanning off its own endpoint, not the repository document",
+        "file": "scripts/github_port.py",
+        "mutate": ('                        "state": setup.get("state"), "querySuite": setup.get("query_suite")}',
+                   '                        "state": "configured", "querySuite": "default"}'),
+        "killed_by": ["tests/test_github_port.py::test_the_port_reads_the_code_scanning_setup_it_was_asked_about"],
+    },
 ]
 
 

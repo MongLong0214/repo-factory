@@ -106,6 +106,24 @@ def main():
         save(path, world)
         return 0
 
+    # repos/{owner}/{repo}/code-scanning/default-setup
+    if len(parts) == 5 and parts[3:5] == ["code-scanning", "default-setup"]:
+        slug = f"{parts[1]}/{parts[2]}"
+        if slug not in world["repos"]:
+            return not_found(route)
+        setup = world.setdefault("scanning", {}).setdefault(
+            slug, {"state": "not-configured", "query_suite": "default", "languages": ["javascript"]})
+        if method == "PATCH":
+            body = json.loads(sys.stdin.read())
+            setup["state"] = body.get("state", setup["state"])
+            setup["query_suite"] = body.get("query_suite", setup["query_suite"])
+            # The real endpoint empties this once configured, which is why the plan does not
+            # approve it. The stub does the same so a test cannot pass on a friendlier fake.
+            setup["languages"] = []
+            save(path, world)
+        print(json.dumps(setup, ensure_ascii=False))
+        return 0
+
     # repos/{owner}/{repo}/rulesets[/{id}]
     if len(parts) >= 4 and parts[3] == "rulesets":
         slug = f"{parts[1]}/{parts[2]}"

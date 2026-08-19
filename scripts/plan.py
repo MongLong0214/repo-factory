@@ -66,6 +66,15 @@ RULESET_CHECK_REPORTER_APP_ID = 15368
 DEFAULT_BRANCH = "dev"
 
 
+def code_scanning_desired_state() -> Dict[str, Any]:
+    """CodeQL default setup. 파일 뒤에 켠다 — 스캔할 코드가 있어야 의미가 있다.
+
+    `languages` 는 계획하지 않는다. GitHub 이 감지하고, configured 뒤에는 그 필드가 영원히
+    빈 배열로 돌아온다(실측). 승인 상태에 넣으면 재조회가 매번 실패하고, 그것은 쓸 수는
+    있는데 관측이 안 되는 필드를 승인된 상태인 척한 것이다."""
+    return {"state": "configured", "querySuite": "default"}
+
+
 def security_desired_state() -> Dict[str, Any]:
     """저장소가 가져야 할 보안 자세. public 저장소에서는 둘 다 기본 on 이므로 이 Operation 이
     하는 일은 켜는 것이 아니라 **꺼져 있으면 잡는 것**이다 — 그리고 그것이 요점이다.
@@ -398,6 +407,13 @@ def compile_plan(
             {"operationId": f"set-default-branch:{r['name']}", "resourceType": "setting",
              "intent": "update", "resourceIdentity": f"github:{owner}/{r['name']}#default-branch",
              "phase": "after-files", "desiredState": {"defaultBranch": DEFAULT_BRANCH}}
+            for r in request["repositories"]
+        ] + [
+            {"operationId": f"enable-code-scanning:{r['name']}", "resourceType": "setting",
+             "intent": "update", "resourceIdentity": f"github:{owner}/{r['name']}#code-scanning",
+             # 파일 뒤다. 빈 저장소에도 켤 수는 있지만 스캔할 것이 없다.
+             "phase": "after-files",
+             "desiredState": code_scanning_desired_state()}
             for r in request["repositories"]
         ] + [
             {"operationId": f"create-ruleset:{r['name']}", "resourceType": "ruleset",
