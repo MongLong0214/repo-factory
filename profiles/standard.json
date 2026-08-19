@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/bootstrap-profile.schema.json",
+  "bootstrapProfile": "STANDARD",
+  "appliesTo": "Ordinary projects that will be maintained over time.",
+  "required": [
+    "portable-project-manifest",
+    "readme",
+    "agents",
+    "stack-specific-ci",
+    "verification-commands",
+    "branch-contract",
+    "repo-factory-result",
+    "compact-prd-or-equivalent-specification"
+  ],
+  "optional": [
+    "tickets",
+    "issue-projection",
+    "adr",
+    "research-dossier"
+  ],
+  "evidenceLane": "TARGETED",
+  "commitlore": { "default": "required", "onFailure": "REVISE" },
+  "notes": "Tickets when execution decomposition earns its keep; ADRs for decisions that will outlive the discussion. Issue projection follows tickets rather than standing on its own (PRD §6.2, §17.1)."
+}

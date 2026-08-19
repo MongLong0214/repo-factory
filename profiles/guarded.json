@@ -1,0 +1,30 @@
+{
+  "$schema": "../schemas/bootstrap-profile.schema.json",
+  "bootstrapProfile": "GUARDED",
+  "appliesTo": "Security and auth, protocols, migrations, benchmarks, sensitive data, consequential OSS, research-grade systems.",
+  "required": [
+    "portable-project-manifest",
+    "readme",
+    "agents",
+    "stack-specific-ci",
+    "verification-commands",
+    "branch-contract",
+    "repo-factory-result",
+    "compact-prd-or-equivalent-specification",
+    "architecture-adr",
+    "acceptance-oracle",
+    "rollback-strategy",
+    "security-command"
+  ],
+  "optional": [
+    "tickets",
+    "issue-projection",
+    "adversarial-evidence-search",
+    "reproduction-experiment",
+    "measurement-preregistration",
+    "provenance-evidence"
+  ],
+  "evidenceLane": "FULL",
+  "commitlore": { "default": "required", "onFailure": "BLOCK" },
+  "notes": "The additions are risk-driven, not uniform: PRD §6.3 lists them as requirable, and which ones apply is a judgement the Bootstrap CTO records rather than a checklist the profile forces."
+}

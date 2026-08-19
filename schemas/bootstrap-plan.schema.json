@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MongLong0214/repo-factory/schemas/bootstrap-plan.schema.json",
+  "title": "BootstrapPlanCore",
+  "description": "The exact approved intent, and nothing that varies between two runs of the same intent. Volatile observation lives in EnvironmentObservation and is referenced by id, so the canonical digest answers `is this the same plan` rather than `was this produced at the same moment` (PRD §8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "bootstrapOperationId",
+    "requestDigest",
+    "bootstrapProfile",
+    "authorization",
+    "repositories",
+    "files",
+    "githubOperations",
+    "branchContracts",
+    "verificationContractDigest",
+    "projectManifestDigest"
+  ],
+  "properties": {
+    "schema": { "const": "repo-factory.bootstrap-plan.v2" },
+    "bootstrapOperationId": { "$ref": "#/$defs/uuid" },
+    "requestDigest": { "$ref": "#/$defs/digest" },
+    "bootstrapProfile": { "enum": ["SIMPLE", "STANDARD", "GUARDED"] },
+    "authorization": {
+      "description": "HERMES may authorize private, reversible, low-cost setup already implied by the request. Public exposure, paid-plan changes, destructive replacement and irreversible naming are OWNER (PRD §7 Phase F).",
+      "enum": ["HERMES", "OWNER"]
+    },
+    "environmentSnapshotId": {
+      "description": "A reference to the observation, never its bytes. Mixing observation into this object would make the digest change when nothing about the intent did.",
+      "type": "string",
+      "minLength": 1
+    },
+    "repositories": { "type": "array", "items": { "$ref": "#/$defs/plannedRepository" } },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/plannedFile" } },
+    "githubOperations": { "type": "array", "items": { "$ref": "#/$defs/githubOperation" } },
+    "branchContracts": { "type": "array", "items": { "$ref": "#/$defs/branchContract" } },
+    "verificationContractDigest": { "$ref": "#/$defs/digest" },
+    "projectManifestDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "repositoryRelativePath": {
+      "description": "Repository-relative. A leading `/` or `~`, a drive letter, or any `..` segment is refused: an absolute path in a committed plan is the defect PRD §10.2 exists to prevent.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/|~|[A-Za-z]:)(?!.*(^|/)\\.\\.(/|$)).+$"
+    },
+    "plannedRepository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "identity"],
+      "properties": {
+        "role": { "enum": ["primary", "secondary"] },
+        "identity": {
+          "description": "Portable remote identity, not a checkout path. The absolute path belongs to the control plane's local registry (PRD §11).",
+          "type": "string",
+          "pattern": "^(github|git):[^/\\\\\\s:]+/.+$"
+        },
+        "visibility": { "enum": ["private", "public"] }
+      }
+    },
+    "plannedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryRole", "path", "contentDigest"],
+      "properties": {
+        "repositoryRole": { "enum": ["primary", "secondary"] },
+        "path": { "$ref": "#/$defs/repositoryRelativePath" },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "mode": { "enum": ["100644", "100755"] }
+      }
+    },
+    "githubOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "resourceType", "intent"],
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1 },
+        "resourceType": { "enum": ["repository", "branch", "ruleset", "issue", "milestone", "tag", "setting"] },
+        "intent": { "enum": ["create", "update", "delete"] },
+        "resourceIdentity": { "type": "string", "minLength": 1 }
+      }
+    },
+    "branchContract": {
+      "description": "PRD §9.2. The parent is declared rather than inferred, because the control plane's GitHub kernel validates the declared parent at PR creation and merge.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "requiredBase", "allowedTargets"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "requiredBase": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "allowedTargets": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "updateStrategy": { "enum": ["rebase_before_review", "none"] },
+        "mergeStrategy": { "enum": ["merge_commit", "fast_forward"] },
+        "purpose": { "type": "string" }
+      }
+    }
+  }
+}

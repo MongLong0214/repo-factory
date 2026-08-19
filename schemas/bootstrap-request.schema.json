@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MongLong0214/repo-factory/schemas/bootstrap-request.schema.json",
+  "title": "BootstrapRequest",
+  "description": "What the control plane hands Repo Factory when a PROJECT_BOOTSTRAP run reaches Phase A (PRD §13.1). It carries intent; it does not carry runtime state, because Repo Factory owns no session, provider or scheduling fact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "runId", "seed", "bootstrapProfile", "priority", "repositories", "visibility", "origin"],
+  "properties": {
+    "schema": { "const": "repo-factory.bootstrap-request.v1" },
+    "runId": { "type": "string", "minLength": 1 },
+    "seed": {
+      "description": "The natural-language project seed, as the owner or Hermes stated it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "bootstrapProfile": { "enum": ["SIMPLE", "STANDARD", "GUARDED"] },
+    "priority": { "enum": ["CRITICAL", "NORMAL", "LOW"] },
+    "repositories": {
+      "description": "Repository intents. One bootstrap operation may cover more than one repository (PRD §16.4), and each carries its own receipts and partial state.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/repositoryIntent" }
+    },
+    "visibility": {
+      "description": "Intent only. Public exposure is an owner gate regardless of what this says (PRD §7 Phase F).",
+      "enum": ["private", "public"]
+    },
+    "ownerConstraints": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "humanGateFacts": {
+      "description": "What is already known to require an owner decision, so Phase F does not rediscover it.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel"],
+      "properties": {
+        "channel": {
+          "description": "Which ingress admitted the request. Channel name only — never the actor value, which is an identity the receipt already binds.",
+          "enum": ["cli", "telegram", "buzz", "mcp"]
+        },
+        "requestedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "repositoryIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "name"],
+      "properties": {
+        "role": { "enum": ["primary", "secondary"] },
+        "name": {
+          "description": "Repository name only. A remote is resolved during planning; a name that already exists with different provenance is a RESOURCE_COLLISION rather than a resume (PRD §16.3).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "stack": {
+          "description": "Absent means the plan must resolve it. An unknown stack requires a reviewed custom template and is never silently defaulted to Node (PRD §14.1).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
