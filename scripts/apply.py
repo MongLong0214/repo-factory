@@ -33,7 +33,8 @@ from canonical import digest
 __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
-    "UNKNOWN_PHASE", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT", "PHASES",
+    "UNKNOWN_PHASE", "UNSUPPORTED_INTENT", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
+    "PHASES",
     "PUBLISH_OPERATION",
 ]
 
@@ -49,6 +50,7 @@ REREAD_MISMATCH = "REREAD_MISMATCH"
 # written inside it. A refusal no input can reach is not protection; it is an answer of "yes"
 # to "is this checked?".
 PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
+UNSUPPORTED_INTENT = "UNSUPPORTED_INTENT"
 UNKNOWN_PHASE = "UNKNOWN_PHASE"
 OWNER_AUTHORIZATION_REQUIRED = "OWNER_AUTHORIZATION_REQUIRED"
 RESUMED_RESOURCE_ABSENT = "RESUMED_RESOURCE_ABSENT"
@@ -72,6 +74,9 @@ class GitHubPort(Protocol):
 
     def create(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
         """만들기만 한다. 만들어졌는지는 호출자가 다시 읽어 판단한다."""
+
+    def update(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
+        """있는 것을 바꾸기만 한다. 바뀌었는지는 호출자가 다시 읽어 판단한다."""
 
 
 class ReceiptLedger:
@@ -259,26 +264,44 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
             applied.append(prior)
             continue
 
+        intent = operation.get("intent", "create")
+        if intent not in ("create", "update"):
+            raise ApplyError(UNSUPPORTED_INTENT,
+                             f"{operation_id} asks for intent {intent!r}, which this applier does "
+                             f"not perform; an intent nobody implements is not a plan that ran",
+                             applied, {"operationId": operation_id, "intent": intent})
+
         observed = port.observe(operation["resourceType"], operation["resourceIdentity"])
-        if observed is not None:
+        if intent == "create" and observed is not None:
             # 이름은 같은데 이 Bootstrap 의 영수증이 없다. 우리 것이라고 추정하지 않는다.
             raise ApplyError(RESOURCE_COLLISION,
                              f"{operation['resourceIdentity']} already exists and carries no receipt "
                              f"from this bootstrap operation",
                              applied,
                              {"operationId": operation_id, "resourceIdentity": operation["resourceIdentity"]})
+        if intent == "update" and observed is None:
+            # `update` 는 있는 것을 바꾼다. 없는데 만들지 않는다 — 없으면 무엇을 바꾸는지에
+            # 대한 승인이 아니라 무엇을 만드는지에 대한 승인이 필요하고, 그건 다른 결정이다.
+            raise ApplyError(RESUMED_RESOURCE_ABSENT,
+                             f"{operation['resourceIdentity']} is absent, and an update is not a "
+                             f"licence to create it",
+                             applied, {"operationId": operation_id})
 
         # 두 시각을 따로 읽는다. 하나로 쓰면 영수증이 "이 시각에 다시 읽었다" 고 말하는데
         # 그 시각에 재조회는 아직 일어나지 않았다 — §16.2 가 요구하는 것은 재조회가 있었다는
         # 사실이고, 영수증은 그것이 언제였는지를 말해야 한다.
         created_at = now()
-        port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
+        if intent == "create":
+            port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
+        else:
+            port.update(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
 
         # §16.2 — 다시 읽는다. 명령이 성공했다는 것과 원격이 기대대로라는 것은 다르다.
         after = port.observe(operation["resourceType"], operation["resourceIdentity"])
         if after is None:
             raise ApplyError(REREAD_MISMATCH,
-                             f"{operation['resourceIdentity']} is absent when re-read after a successful create",
+                             f"{operation['resourceIdentity']} is absent when re-read after a successful "
+                             f"{intent}",
                              applied, {"operationId": operation_id})
 
         # §16.2 는 "다시 읽었다" 가 아니라 "기대한 것이 거기 있다" 를 요구한다. 존재만 확인하면
@@ -290,7 +313,7 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              f"approved state: {'; '.join(gaps[:5])}",
                              applied, {"operationId": operation_id, "gaps": gaps})
 
-        receipt = _receipt(plan, operation, preexisting=False, before=None, after=after,
+        receipt = _receipt(plan, operation, preexisting=intent == "update", before=observed, after=after,
                            created_at=created_at, reread_at=now())
         ledger.record(receipt)
         applied.append(receipt)

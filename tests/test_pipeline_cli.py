@@ -67,9 +67,11 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "after-files", "--dry-run"])
     assert staged.returncode == 0, staged.stderr[-600:]
     would = json.loads(staged.stdout)["wouldApply"]
-    assert [op["operationId"] for op in would] == ["create-ruleset:demo"]
+    assert [op["operationId"] for op in would] == ["set-default-branch:demo", "create-ruleset:demo"]
     # The dry run has to show the effect, not just the name — that is the thing under approval.
-    assert would[0]["desiredState"]["enforcement"] == "active"
+    by_id = {op["operationId"]: op for op in would}
+    assert by_id["create-ruleset:demo"]["desiredState"]["enforcement"] == "active"
+    assert by_id["set-default-branch:demo"]["desiredState"]["defaultBranch"] == "dev"
 
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)

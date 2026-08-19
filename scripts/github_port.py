@@ -100,6 +100,18 @@ class GhCliPort:
                 "private": observed.get("private"),
                 "nodeId": observed.get("node_id"),
             }
+        if resource_type == "setting":
+            # 하나의 설정만 다룬다. 이름을 안 대면 저장소 문서 전체가 설정이 되고, 그러면
+            # 재조회 대조가 star 수처럼 매 초 변하는 필드까지 비교한다.
+            if ref != "default-branch":
+                raise GhError(
+                    f"the only repository setting this port observes is #default-branch: {identity!r}"
+                )
+            observed = self._api(f"repos/{owner}/{repo}")
+            if observed is None:
+                return None
+            return {"identity": identity, "resourceType": "setting",
+                    "defaultBranch": observed.get("default_branch")}
         if resource_type == "branch":
             if not ref:
                 raise GhError(f"branch identity must name a ref: {identity!r}")
@@ -176,3 +188,21 @@ class GhCliPort:
                 raise GhError(f"creating branch {ref} failed ({code}): {err.strip()[:200]}")
             return
         raise GhError(f"no creation is implemented for resourceType {resource_type!r}")
+
+    def update(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
+        owner, repo, ref = parse_identity(identity)
+        if resource_type == "setting" and ref == "default-branch":
+            wanted = spec.get("defaultBranch")
+            if not wanted:
+                raise GhError(f"a default-branch update must name the branch: {identity!r}")
+            argv = [self.gh, "api", "--method", "PATCH", f"repos/{owner}/{repo}",
+                    "-f", f"default_branch={wanted}"]
+            self.calls.append(argv)
+            code, _, err = self.run(argv)
+            if code != 0:
+                raise GhError(f"setting the default branch of {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            return
+        raise GhError(
+            f"no update is implemented for resourceType {resource_type!r}; an unobservable or "
+            "unwritable change cannot carry a verified receipt (§16.2)"
+        )

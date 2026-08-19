@@ -38,12 +38,28 @@ HEAD = "a" * 40
 class FakeGitHub:
     def __init__(self):
         self.state = {}
+        self.defaults = {}
 
     def observe(self, resource_type, identity):
+        if resource_type == "setting" and identity.endswith("#default-branch"):
+            # GitHub sets the default to the first branch that arrives, which is `main`. The
+            # setting exists only once the repository does, and the operation flips it — so the
+            # re-read comparison is against a value that really was something else first.
+            repository = identity.split("#", 1)[0]
+            if repository not in self.state:
+                return None
+            return {"identity": identity, "resourceType": "setting",
+                    "defaultBranch": self.defaults.get(repository, "main")}
         return self.state.get(identity)
 
     def create(self, resource_type, identity, spec):
         self.state[identity] = {"identity": identity, "type": resource_type, **spec}
+
+    def update(self, resource_type, identity, spec):
+        if resource_type == "setting" and identity.endswith("#default-branch"):
+            self.defaults[identity.split("#", 1)[0]] = spec["defaultBranch"]
+            return
+        raise AssertionError(f"no update is implemented for {resource_type}")
 
 
 CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm install",
@@ -231,3 +247,23 @@ def test_verification_commands_that_are_not_the_approved_ones_refuse_the_result(
 
     with pytest.raises(ResultError, match="not the ones the plan approved"):
         build_result(**result_args(verification_commands=swapped))
+
+
+def test_a_default_branch_the_plan_never_set_refuses_the_result():
+    """The builder used to carry whatever the caller passed. The remote could be `main` while the
+    result asserted `dev`, and the receiving side had no way to tell."""
+    with pytest.raises(ResultError, match="approved, re-read operation set"):
+        build_result(**result_args(repositories=[
+            {"role": "primary", "identity": IDENTITY, "defaultBranch": "main",
+             "createdBranches": ["main", "dev"]}]))
+
+
+def test_a_repository_with_no_default_branch_operation_refuses_the_result():
+    args = result_args()
+    plan_without = copy.deepcopy(args["plan"])
+    plan_without["githubOperations"] = [op for op in plan_without["githubOperations"]
+                                        if not op["resourceIdentity"].endswith("#default-branch")]
+    receipts = [r for r in args["receipts"] if not r["resourceIdentity"].endswith("#default-branch")]
+
+    with pytest.raises(ResultError, match="no approved operation set"):
+        build_result(**result_args(plan=plan_without, receipts=receipts))

@@ -178,8 +178,10 @@ def test_the_diff_summary_names_the_owner_gates_it_would_cross():
     assert summary["ownerGates"] == ["public-exposure"]
     assert summary["planDigest"].startswith("sha256:")
     # The ruleset is planned too, and after the files: a rule requiring project-ci cannot
-    # exist before the commit that publishes that workflow.
+    # exist before the commit that publishes that workflow. The default branch is an operation
+    # as well — push order decides which branch GitHub picks, and nothing re-reads what it did.
     assert summary["githubOperations"] == ["create-repository:ledger-reconciler",
+                                           "set-default-branch:ledger-reconciler",
                                            "create-ruleset:ledger-reconciler"]
 
 
