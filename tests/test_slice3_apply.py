@@ -234,3 +234,40 @@ def test_a_ledger_write_that_dies_leaves_the_previous_one_readable(tmp_path, mon
 
     assert book.path.read_text(encoding="utf-8") == intact, "the previous ledger was damaged"
     assert len(_json.loads(book.path.read_text(encoding="utf-8"))) == 1
+
+
+def phased_plan(*names: str):
+    core = plan(*names)
+    core["githubOperations"] = [dict(op, phase="before-files") for op in core["githubOperations"]] + [
+        {"operationId": f"create-ruleset:{n}", "resourceType": "ruleset", "intent": "create",
+         "resourceIdentity": f"github:MongLong0214/{n}#acp-managed-branches", "phase": "after-files"}
+        for n in names
+    ]
+    return core
+
+
+def test_only_the_named_phase_is_applied(tmp_path):
+    # A ruleset requiring project-ci cannot exist before the commit that publishes that
+    # workflow — it would refuse the push that gives the repository its content. The phase is
+    # the plan's decision, not the caller's, so applying one does not reach the other.
+    port = FakeGitHub()
+    book = ledger(tmp_path)
+
+    before = apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+
+    assert [r["operationId"] for r in before["receipts"]] == ["create-repository:alpha"]
+    assert before["completed"] is True
+    assert port.creates == ["github:MongLong0214/alpha"]
+
+
+def test_the_later_phase_applies_against_the_same_ledger(tmp_path):
+    port = FakeGitHub()
+    book = ledger(tmp_path)
+    apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+
+    after = apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files")
+
+    assert [r["operationId"] for r in after["receipts"]] == ["create-ruleset:alpha"]
+    assert "github:MongLong0214/alpha#acp-managed-branches" in port.creates
+    # And both receipts survive in one ledger.
+    assert len(ReceiptLedger(book.path).all()) == 2

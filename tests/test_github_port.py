@@ -22,9 +22,11 @@ class ScriptedGh:
     def __init__(self, responses):
         self.responses = responses
         self.seen: List[List[str]] = []
+        self.stdin: List[str] = []
 
-    def __call__(self, argv: List[str]) -> Tuple[int, str, str]:
+    def __call__(self, argv: List[str], stdin: str = None) -> Tuple[int, str, str]:
         self.seen.append(argv)
+        self.stdin.append(stdin)
         for match, reply in self.responses:
             if match in " ".join(argv):
                 return reply
@@ -95,7 +97,7 @@ def test_an_unobservable_resource_type_is_refused_rather_than_silently_skipped()
     # it would produce a receipt that verifies nothing.
     port = GhCliPort(runner=ScriptedGh([]))
     with pytest.raises(GhError, match="post-write re-read"):
-        port.observe("ruleset", "github:MongLong0214/alpha")
+        port.observe("milestone", "github:MongLong0214/alpha#1")
 
 
 def test_the_real_port_satisfies_the_engine_it_was_written_for():
@@ -180,3 +182,45 @@ def test_a_rate_limit_is_still_not_read_as_absence():
     with pytest.raises(GhError):  # GhRateLimited is a GhError, so callers that catch the base still stop
         GhCliPort(runner=gh).observe("repository", "github:MongLong0214/alpha")
     assert issubclass(GhRateLimited, GhError)
+
+
+def test_a_ruleset_is_found_by_name_and_read_in_full():
+    # The list response is a summary with no conditions or rules. A receipt digest has to say
+    # what it pins, so the entry is re-read in full rather than digested from the summary.
+    listed = json.dumps([{"id": 7, "name": "main-protection"}])
+    full = json.dumps({"id": 7, "name": "main-protection", "target": "branch",
+                       "enforcement": "active", "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+                       "rules": [{"type": "pull_request"}]})
+    gh = ScriptedGh([("api repos/MongLong0214/alpha/rulesets/7", (0, full, "")),
+                     ("api repos/MongLong0214/alpha/rulesets", (0, listed, ""))])
+    port = GhCliPort(runner=gh)
+
+    observed = port.observe("ruleset", "github:MongLong0214/alpha#main-protection")
+
+    assert observed["target"] == "branch" and observed["enforcement"] == "active"
+    assert observed["rules"] == [{"type": "pull_request"}]
+
+
+def test_a_ruleset_that_is_not_listed_reads_as_absent():
+    gh = ScriptedGh([("api repos/MongLong0214/alpha/rulesets", (0, "[]", ""))])
+
+    assert GhCliPort(runner=gh).observe("ruleset", "github:MongLong0214/alpha#main-protection") is None
+
+
+def test_creating_a_ruleset_sends_the_body_on_stdin_with_the_name_from_the_identity():
+    # The name is the only handle we have before the ruleset exists — an id is assigned by
+    # GitHub — so the identity carries it and the body cannot disagree.
+    gh = ScriptedGh([("api --method POST", (0, "", ""))])
+    GhCliPort(runner=gh).create("ruleset", "github:MongLong0214/alpha#main-protection",
+                                {"target": "branch", "enforcement": "active", "name": "ignored"})
+
+    assert gh.seen[-1][-2:] == ["--input", "-"]
+    assert json.loads(gh.stdin[-1])["name"] == "main-protection"
+
+
+def test_a_ruleset_identity_without_a_name_is_refused():
+    port = GhCliPort(runner=ScriptedGh([]))
+    with pytest.raises(GhError, match="must name the ruleset"):
+        port.observe("ruleset", "github:MongLong0214/alpha")
+    with pytest.raises(GhError, match="must name the ruleset"):
+        port.create("ruleset", "github:MongLong0214/alpha", {})

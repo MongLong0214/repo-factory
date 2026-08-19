@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["GhError", "GhRateLimited", "GhCliPort", "parse_identity"]
 
-Runner = Callable[[List[str]], Tuple[int, str, str]]
+Runner = Callable[..., Tuple[int, str, str]]
 
 
 class GhError(RuntimeError):
@@ -54,8 +54,8 @@ def parse_identity(identity: str) -> Tuple[str, str, Optional[str]]:
     return parts[0], parts[1], ref
 
 
-def _default_runner(argv: List[str]) -> Tuple[int, str, str]:
-    done = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+def _default_runner(argv: List[str], stdin: Optional[str] = None) -> Tuple[int, str, str]:
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=120, input=stdin)
     return done.returncode, done.stdout, done.stderr
 
 
@@ -108,6 +108,31 @@ class GhCliPort:
                 return None
             return {"identity": identity, "resourceType": "branch", "name": observed.get("name"),
                     "head": (observed.get("commit") or {}).get("sha")}
+        if resource_type == "ruleset":
+            if not ref:
+                raise GhError(f"ruleset identity must name the ruleset: {identity!r}")
+            # 목록에서 이름으로 찾는다. 개별 GET 은 id 를 요구하는데 id 는 우리가 만들기
+            # 전에는 없고, 이름은 Plan 이 정하는 것이므로 이름이 우리가 가진 유일한 손잡이다.
+            listed = self._api(f"repos/{owner}/{repo}/rulesets")
+            if listed is None:
+                return None
+            match = next((r for r in listed if r.get("name") == ref), None)
+            if match is None:
+                return None
+            # 목록 응답은 요약이라 조건·규칙이 없다. 영수증의 digest 가 무엇을 고정하는지
+            # 말할 수 있어야 하므로 전문을 다시 읽는다.
+            full = self._api(f"repos/{owner}/{repo}/rulesets/{match['id']}")
+            if full is None:
+                return None
+            return {
+                "identity": identity,
+                "resourceType": "ruleset",
+                "name": full.get("name"),
+                "target": full.get("target"),
+                "enforcement": full.get("enforcement"),
+                "conditions": full.get("conditions"),
+                "rules": full.get("rules"),
+            }
         raise GhError(
             f"no observation is implemented for resourceType {resource_type!r}; "
             "an unobservable write cannot satisfy the post-write re-read (§16.2)"
@@ -124,6 +149,18 @@ class GhCliPort:
             code, _, err = self.run(argv)
             if code != 0:
                 raise GhError(f"gh repo create {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            return
+        if resource_type == "ruleset":
+            if not ref:
+                raise GhError(f"ruleset creation must name the ruleset: {identity!r}")
+            body = dict(spec)
+            body["name"] = ref
+            argv = [self.gh, "api", "--method", "POST", f"repos/{owner}/{repo}/rulesets",
+                    "--input", "-"]
+            self.calls.append(argv)
+            code, _, err = self.run(argv, json.dumps(body))
+            if code != 0:
+                raise GhError(f"creating ruleset {ref} failed ({code}): {err.strip()[:200]}")
             return
         if resource_type == "branch":
             if not ref or not spec.get("fromSha"):

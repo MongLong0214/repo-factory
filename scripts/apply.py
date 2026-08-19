@@ -118,7 +118,8 @@ def _utc_now() -> str:
 
 
 def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
-               *, specs: Dict[str, Dict[str, Any]] = None, clock=None) -> Dict[str, Any]:
+               *, specs: Dict[str, Dict[str, Any]] = None, clock=None,
+               phase: str = "before-files") -> Dict[str, Any]:
     """Plan 의 Operation 을 순서대로 수행하고 영수증 목록을 돌려준다.
 
     `specs` 는 operationId → 생성 파라미터. Plan 에 없는 operationId 를 담고 있으면
@@ -146,7 +147,10 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              ledger.all(), {"repositories": public})
 
     applied: List[Dict[str, Any]] = []
-    for operation in plan["githubOperations"]:
+    # 이 단계의 Operation 만 수행한다. 단계는 Plan 이 정하고 호출자가 고르지 않는다 —
+    # 고르게 하면 ruleset 을 파일보다 먼저 적용하는 실수가 호출자마다 가능해진다.
+    staged = [op for op in plan["githubOperations"] if op.get("phase", "before-files") == phase]
+    for operation in staged:
         operation_id = operation["operationId"]
         prior = ledger.get(operation_id)
         if prior is not None:
@@ -193,4 +197,4 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         ledger.record(receipt)
         applied.append(receipt)
 
-    return {"receipts": applied, "completed": len(applied) == len(plan["githubOperations"])}
+    return {"receipts": applied, "completed": len(applied) == len(staged), "phase": phase}
