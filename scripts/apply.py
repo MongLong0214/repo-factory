@@ -30,12 +30,14 @@ from canonical import digest
 __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "OPERATION_NOT_IN_PLAN",
+    "OWNER_AUTHORIZATION_REQUIRED",
 ]
 
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
 PLAN_INTENT_CHANGED = "PLAN_INTENT_CHANGED"
 REREAD_MISMATCH = "REREAD_MISMATCH"
 OPERATION_NOT_IN_PLAN = "OPERATION_NOT_IN_PLAN"
+OWNER_AUTHORIZATION_REQUIRED = "OWNER_AUTHORIZATION_REQUIRED"
 
 
 class ApplyError(RuntimeError):
@@ -113,6 +115,17 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         raise ApplyError(OPERATION_NOT_IN_PLAN,
                          f"spec supplied for operations the approved plan does not contain: {stray}",
                          ledger.all(), {"operations": stray})
+
+    # RF-S25 — Hermes 가 승인한 Plan 이라도 Public 노출은 Owner 결정이다. 컴파일러가
+    # 이미 authorization 을 OWNER 로 올리지만, 여기서 다시 본다. 계획을 만든 코드와
+    # 계획을 실행하는 코드가 같은 가정을 공유하면 그 가정이 틀렸을 때 아무도 안 막는다.
+    if plan.get("authorization") == "HERMES":
+        public = sorted(r["identity"] for r in plan.get("repositories", [])
+                        if r.get("visibility") == "public")
+        if public:
+            raise ApplyError(OWNER_AUTHORIZATION_REQUIRED,
+                             "a Hermes-authorised plan may not create public repositories",
+                             ledger.all(), {"repositories": public})
 
     applied: List[Dict[str, Any]] = []
     for operation in plan["githubOperations"]:
