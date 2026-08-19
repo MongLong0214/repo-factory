@@ -10,6 +10,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
+import render_ci  # noqa: E402
 from render_ci import CiRenderError, available_stacks, ci_findings, render, required_tokens  # noqa: E402
 
 VALUES = {
@@ -107,10 +108,23 @@ def test_an_unknown_stack_is_refused_and_not_defaulted_to_node():
         render("cobol", VALUES["node"])
 
 
-def test_a_missing_value_is_refused_rather_than_rendered_empty():
+def test_a_missing_value_is_refused_rather_than_rendered_empty(monkeypatch):
+    """호출자가 값을 빼먹는 것은 이제 기본값이 메운다. 메울 기본값조차 없는 토큰이 남는
+    경로가 이 거부가 지키는 자리다 — 새 템플릿 토큰이 추가되고 기본값이 안 따라온 경우."""
+    monkeypatch.setitem(render_ci.DEFAULT_VALUES, "node",
+                        {k: v for k, v in render_ci.DEFAULT_VALUES["node"].items()
+                         if k != "TEST_CMD"})
     partial = {k: v for k, v in VALUES["node"].items() if k != "TEST_CMD"}
     with pytest.raises(CiRenderError, match="TEST_CMD"):
         render("node", partial)
+
+
+def test_every_token_a_reviewed_template_uses_has_a_factory_default():
+    """기본값이 토큰을 못 따라가면 `--ci-values` 없이 부르는 순간 렌더가 죽는다. 그리고
+    기본값이 있어야 골격과 CI 가 같은 값을 읽을 수 있다 — 그것이 이 기본값들의 이유다."""
+    for stack in available_stacks():
+        missing = sorted(set(required_tokens(stack)) - set(render_ci.DEFAULT_VALUES.get(stack, {})))
+        assert not missing, f"{stack}: template tokens with no factory default: {missing}"
 
 
 def test_an_empty_command_is_refused_because_it_verifies_nothing():
