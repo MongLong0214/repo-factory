@@ -1,0 +1,79 @@
+{
+  "capture": "One real bootstrap per profile, driven end to end by scripts/dogfood.sh — the published commands and nothing else.",
+  "capturedAt": "2026-08-19",
+  "howToReproduce": "scripts/dogfood.sh <name> <profile> <stack>",
+  "visibility": "all public, by owner decision (#39); private plans are refused at compile time",
+  "whatIsEvidenced": "Every line below is read back out of the receipt ledger, the Result produced by scripts/result.py, or the GitHub API. Nothing is asserted from the session. The previous capture claimed three finished bootstraps while every ledger held one receipt; that is what this format is a response to.",
+  "notCovered": {
+    "GUARDED": "not bootstrappable yet. The profile requires a `security-command` verification the caller supplies, and no toolchain ships one that runs at genesis: `npm audit` needs a lockfile (ENOLOCK) and a repository at genesis has none. Issue #42 — secret scanning and CodeQL default setup are free on public repositories and need neither a lockfile nor a dependency graph.",
+    "go, rust": "no local toolchain on the machine this ran from; the stacks are exercised by unit tests, not by a real bootstrap."
+  },
+  "runs": [
+    {
+      "repository": "github:MongLong0214/rf-dogfood-d-node",
+      "bootstrapProfile": "SIMPLE",
+      "stack": "node",
+      "planDigest": "sha256:a4a608baee2d27d75a26f3a861dbb034a0ae89d076385fe039157939e3ea252b",
+      "authorization": "OWNER",
+      "receiptsInLedger": [
+        "create-repository:rf-dogfood-d-node",
+        "publish:github:MongLong0214/rf-dogfood-d-node",
+        "set-default-branch:rf-dogfood-d-node",
+        "create-ruleset:rf-dogfood-d-node"
+      ],
+      "publishedHead": "76891819e60ad5d8e4257d326b12509618ee03f5",
+      "remoteAsRead": {
+        "default_branch": "dev",
+        "private": false,
+        "visibility": "public"
+      },
+      "rulesetsAsRead": [
+        {
+          "enforcement": "active",
+          "name": "acp-managed-branches",
+          "target": "branch"
+        }
+      ],
+      "ci": {
+        "checkName": "project-ci",
+        "conclusion": "PASS",
+        "head": "76891819e60ad5d8e4257d326b12509618ee03f5",
+        "runUrl": "https://github.com/MongLong0214/rf-dogfood-d-node/actions/runs/32237087718"
+      },
+      "unresolvedGaps": []
+    },
+    {
+      "repository": "github:MongLong0214/rf-dogfood-d-python",
+      "bootstrapProfile": "STANDARD",
+      "stack": "python",
+      "planDigest": "sha256:f542f3b0ea5c870e9ebd2f7e91dc0821609bafcaad3b17b7403930ace1fc4305",
+      "authorization": "OWNER",
+      "receiptsInLedger": [
+        "create-repository:rf-dogfood-d-python",
+        "publish:github:MongLong0214/rf-dogfood-d-python",
+        "set-default-branch:rf-dogfood-d-python",
+        "create-ruleset:rf-dogfood-d-python"
+      ],
+      "publishedHead": "459f4da3129f459b3d01d429a43fd8ecdbf467cd",
+      "remoteAsRead": {
+        "default_branch": "dev",
+        "private": false,
+        "visibility": "public"
+      },
+      "rulesetsAsRead": [
+        {
+          "enforcement": "active",
+          "name": "acp-managed-branches",
+          "target": "branch"
+        }
+      ],
+      "ci": {
+        "checkName": "project-ci",
+        "conclusion": "PASS",
+        "head": "459f4da3129f459b3d01d429a43fd8ecdbf467cd",
+        "runUrl": "https://github.com/MongLong0214/rf-dogfood-d-python/actions/runs/32237241772"
+      },
+      "unresolvedGaps": []
+    }
+  ]
+}
