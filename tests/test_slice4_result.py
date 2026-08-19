@@ -45,23 +45,52 @@ class FakeGitHub:
         self.state[identity] = {"identity": identity, "type": resource_type, **spec}
 
 
-def whole_chain() -> dict:
-    """Request → plan → apply → result, exactly as the pipeline runs it."""
-    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION,
+CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm install",
+             "TEST_CMD": "npm test", "BUILD_CMD": "node --check index.js"}
+
+
+def chain_parts() -> tuple:
+    """Request → plan → apply(both phases) → the arguments a result is assembled from.
+
+    Both phases, against one ledger and one port. Running only `before-files` produced a
+    repository receipt, no ruleset receipt, and a result the receiving parser accepted — half an
+    executed bootstrap reported as a finished one. The parser reads shape; completeness is only
+    visible here.
+    """
+    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, stack="node",
+                            ci_values=CI_VALUES,
                             operation_id="11111111-2222-3333-4444-555555555555")
+    port = FakeGitHub()
     with tempfile.TemporaryDirectory() as scratch:
-        applied = apply_plan(compiled["planCore"], FakeGitHub(),
-                             ReceiptLedger(Path(scratch) / "receipts.json"))
-    return build_result(
-        run_id=REQUEST["runId"], plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
+        book = Path(scratch) / "receipts.json"
+        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
+    return compiled, before["receipts"] + after["receipts"]
+
+
+def result_args(**overrides) -> dict:
+    """A complete, valid argument set. Each refusal test overrides exactly the one thing it is
+    about, so the refusal it asserts is the refusal it triggered."""
+    compiled, receipts = chain_parts()
+    args = dict(
+        run_id=REQUEST["runId"],
+        plan=compiled["planCore"],
+        plan_digest=diff_summary(compiled)["planDigest"],
         repositories=[{"role": "primary", "identity": IDENTITY,
                        "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
-        receipts=applied["receipts"],
+        receipts=receipts,
         bootstrap_verification=[{"commandId": "test", "repositoryIdentity": IDENTITY,
                                  "exactHead": HEAD, "status": "PASS"}],
+        verification_commands=VERIFICATION,
         ci_evidence=[{"repositoryIdentity": IDENTITY, "checkName": "project-ci", "head": HEAD,
                       "conclusion": "PASS", "workflowDigest": "sha256:" + "c" * 64}],
     )
+    args.update(overrides)
+    return args
+
+
+def whole_chain() -> dict:
+    return build_result(**result_args())
 
 
 def acp_verdict(result: dict) -> dict:
@@ -86,51 +115,30 @@ def acp_verdict(result: dict) -> dict:
 # --- the assembler refuses before the handoff -------------------------------------------
 
 def test_an_unverified_receipt_is_refused_at_assembly_not_at_handoff():
-    result = whole_chain()
-    receipts = copy.deepcopy(result["externalWriteReceipts"])
+    args = result_args()
+    receipts = copy.deepcopy(args["receipts"])
     receipts[0]["verified"] = False
 
     with pytest.raises(ResultError, match="post-write re-read"):
-        build_result(run_id="r", plan={"bootstrapOperationId": "o", "projectManifestDigest": "d"},
-                     plan_digest="sha256:x", repositories=[{"role": "primary", "identity": IDENTITY,
-                                                            "defaultBranch": "dev"}],
-                     receipts=receipts,
-                     bootstrap_verification=[{"commandId": "t", "repositoryIdentity": IDENTITY,
-                                              "exactHead": HEAD, "status": "PASS"}])
+        build_result(**result_args(receipts=receipts))
 
 
 def test_a_repeated_operation_id_is_refused():
-    result = whole_chain()
-    doubled = result["externalWriteReceipts"] * 2
-
     with pytest.raises(ResultError, match="unique"):
-        build_result(run_id="r", plan={"bootstrapOperationId": "o", "projectManifestDigest": "d"},
-                     plan_digest="sha256:x",
-                     repositories=[{"role": "primary", "identity": IDENTITY, "defaultBranch": "dev"}],
-                     receipts=doubled,
-                     bootstrap_verification=[{"commandId": "t", "repositoryIdentity": IDENTITY,
-                                              "exactHead": HEAD, "status": "PASS"}])
+        build_result(**result_args(receipts=result_args()["receipts"] * 2))
 
 
 def test_a_failing_verification_has_no_place_in_a_result():
     # The receiving schema types this field as PASS only. A result is not where a failure is
     # reported; unresolvedGaps is, or the result is not produced at all.
     with pytest.raises(ResultError, match="only carry PASS"):
-        build_result(run_id="r", plan={"bootstrapOperationId": "o", "projectManifestDigest": "d"},
-                     plan_digest="sha256:x",
-                     repositories=[{"role": "primary", "identity": IDENTITY, "defaultBranch": "dev"}],
-                     receipts=whole_chain()["externalWriteReceipts"],
-                     bootstrap_verification=[{"commandId": "t", "repositoryIdentity": IDENTITY,
-                                              "exactHead": HEAD, "status": "FAIL"}])
+        build_result(**result_args(bootstrap_verification=[
+            {"commandId": "test", "repositoryIdentity": IDENTITY, "exactHead": HEAD, "status": "FAIL"}]))
 
 
 def test_a_result_without_a_receipt_describes_no_bootstrap():
     with pytest.raises(ResultError, match="no external write receipt"):
-        build_result(run_id="r", plan={"bootstrapOperationId": "o", "projectManifestDigest": "d"},
-                     plan_digest="sha256:x",
-                     repositories=[{"role": "primary", "identity": IDENTITY, "defaultBranch": "dev"}],
-                     receipts=[], bootstrap_verification=[{"commandId": "t", "repositoryIdentity": IDENTITY,
-                                                           "exactHead": HEAD, "status": "PASS"}])
+        build_result(**result_args(receipts=[]))
 
 
 def test_the_forbidden_claim_list_matches_the_receiving_side():
@@ -148,3 +156,67 @@ def test_the_forbidden_claim_list_matches_the_receiving_side():
 def test_a_local_checkout_path_is_a_proposal_and_defaults_to_absent():
     # §11 — Repo Factory may propose a local binding but never commits one.
     assert whole_chain()["repositories"][0]["proposedCheckoutPath"] is None
+
+
+# --- the result is closed against the plan it claims to have executed --------------------
+
+def test_a_plan_operation_with_no_receipt_refuses_the_result():
+    """The defect this pins: the chain ran only `before-files`, so the ruleset was never created
+    and never claimed, and the receiving parser accepted the result anyway. The parser reads
+    shape. Whether the bootstrap finished is only visible against the plan."""
+    args = result_args()
+    partial = [r for r in args["receipts"] if r["resourceType"] != "ruleset"]
+    assert partial != args["receipts"], "the fixture must have a ruleset receipt to remove"
+
+    with pytest.raises(ResultError, match="no receipt"):
+        build_result(**result_args(receipts=partial))
+
+
+def test_a_receipt_for_an_operation_the_plan_does_not_contain_refuses_the_result():
+    args = result_args()
+    extra = copy.deepcopy(args["receipts"][0])
+    extra["operationId"] = "create-repository:not-in-this-plan"
+
+    with pytest.raises(ResultError, match="does not contain"):
+        build_result(**result_args(receipts=args["receipts"] + [extra]))
+
+
+def test_a_receipt_written_under_a_different_approval_refuses_the_result():
+    args = result_args()
+    borrowed = copy.deepcopy(args["receipts"])
+    borrowed[0]["requestDigest"] = "sha256:" + "f" * 64
+
+    with pytest.raises(ResultError, match="different approved intent"):
+        build_result(**result_args(receipts=borrowed))
+
+
+def test_a_receipt_naming_another_resource_refuses_the_result():
+    args = result_args()
+    swapped = copy.deepcopy(args["receipts"])
+    swapped[0]["resourceIdentity"] = "github:MongLong0214/somewhere-else"
+
+    with pytest.raises(ResultError, match="different resource"):
+        build_result(**result_args(receipts=swapped))
+
+
+def test_a_result_may_not_carry_unresolved_gaps():
+    """A gap is the honest record of something that could not be made. Reporting it inside a
+    completed bootstrap puts both statements in one document and lets the reader take either."""
+    with pytest.raises(ResultError, match="unresolved gaps"):
+        build_result(**result_args(unresolved_gaps=["stack-specific-ci"]))
+
+
+def test_a_required_verification_command_with_no_result_refuses_the_result():
+    with pytest.raises(ResultError, match="required verification"):
+        build_result(**result_args(bootstrap_verification=[
+            {"commandId": "some-other-command", "repositoryIdentity": IDENTITY,
+             "exactHead": HEAD, "status": "PASS"}]))
+
+
+def test_verification_commands_that_are_not_the_approved_ones_refuse_the_result():
+    """Coverage against a list the caller supplies is coverage against whatever they chose to
+    supply. The list has to be the one the plan's digest was taken over."""
+    swapped = [dict(VERIFICATION[0], id="test", timeoutSeconds=1)]
+
+    with pytest.raises(ResultError, match="not the ones the plan approved"):
+        build_result(**result_args(verification_commands=swapped))

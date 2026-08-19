@@ -152,17 +152,27 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
 
     compiled = compile_plan(request_for("STANDARD", "ledger"), VER, stack="node",
                             ci_values=CI_VALUES, operation_id="11111111-2222-3333-4444-555555555555")
+    # Both phases. Running only the default one produced a repository receipt, no ruleset
+    # receipt, and a result this parser accepted — half an executed bootstrap reported as a
+    # finished one. "The whole chain" has to be the whole chain.
+    port = FakeGitHub()
     with tempfile.TemporaryDirectory() as scratch:
-        applied = apply_plan(compiled["planCore"], FakeGitHub(),
-                             ReceiptLedger(Path(scratch) / "r.json"))
+        book = Path(scratch) / "r.json"
+        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
+    receipts = before["receipts"] + after["receipts"]
+    assert {r["operationId"] for r in receipts} == {
+        op["operationId"] for op in compiled["planCore"]["githubOperations"]
+    }
     identity = "github:MongLong0214/ledger"
     result = build_result(
         run_id="contract", plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
         repositories=[{"role": "primary", "identity": identity, "defaultBranch": "dev",
                        "createdBranches": ["main", "dev"]}],
-        receipts=applied["receipts"],
+        receipts=receipts,
         bootstrap_verification=[{"commandId": "test", "repositoryIdentity": identity,
                                  "exactHead": "a" * 40, "status": "PASS"}],
+        verification_commands=VER,
     )
 
     verdict = run_check("acp-parse-check.mts", result)

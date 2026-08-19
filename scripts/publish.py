@@ -14,11 +14,29 @@
 """
 from __future__ import annotations
 
+import hashlib
+import re
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-__all__ = ["PublishError", "publish_files"]
+__all__ = ["PublishError", "publish_files", "remote_identity"]
+
+_REMOTE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
+)
+
+
+def remote_identity(remote_url: str) -> Optional[str]:
+    """`github:owner/name`, or None when the URL is not a GitHub remote we can read.
+
+    None is "could not tell", not "does not match". The caller refuses on either, but the two
+    are different facts and writing them as one value is how an unchecked destination reads as
+    a checked one."""
+    match = _REMOTE.match(remote_url.strip())
+    if not match:
+        return None
+    return f"github:{match.group('owner')}/{match.group('repo')}"
 
 Runner = "callable"
 
@@ -35,6 +53,8 @@ def _run(argv: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> Tu
 def publish_files(
     files: Dict[str, str],
     *,
+    plan: Dict[str, object],
+    repository_identity: str,
     workdir: Path,
     remote_url: str,
     author_name: str,
@@ -49,6 +69,27 @@ def publish_files(
     workdir 은 비어 있어야 한다. `git add -A` 는 거기 있는 것을 전부 담으므로, 남아 있던
     파일 하나가 genesis 커밋에 섞이면 Plan 의 contentDigest 집합이 실제로 착지한 바이트를
     더 이상 가리키지 않는다 — Plan 이 "무엇을 만들 것인가" 의 진술이 아니게 된다."""
+    # 목적지를 먼저 본다. 계획된 저장소가 아닌 곳으로 밀면 계획된 집합을 정확히 올려도
+    # 계획되지 않은 저장소가 하나 생긴다 — 경로 집합 검사는 그것을 못 본다.
+    observed_identity = remote_identity(remote_url)
+    if observed_identity is None:
+        raise PublishError(
+            f"the remote {remote_url!r} is not a GitHub URL this publisher can bind to the plan; "
+            "it cannot tell whether the destination is the approved repository"
+        )
+    if observed_identity != repository_identity:
+        raise PublishError(
+            f"the remote resolves to {observed_identity} and the plan approved {repository_identity}"
+        )
+
+    planned_digests = {entry["path"]: entry["contentDigest"] for entry in plan["files"]}
+    if set(planned_digests) != set(files):
+        raise PublishError(
+            "the file map does not match the plan's file list: "
+            f"unplanned={sorted(set(files) - set(planned_digests))} "
+            f"missing={sorted(set(planned_digests) - set(files))}"
+        )
+
     if workdir.exists() and any(workdir.iterdir()):
         raise PublishError(
             f"publish target is not empty: {workdir}. The genesis commit must contain the planned "
@@ -96,6 +137,23 @@ def publish_files(
             f"unplanned={sorted(committed - planned)} missing={sorted(planned - committed)}"
         )
 
+    # 경로 집합이 같아도 바이트는 다를 수 있다. 전역 git filter, autocrlf, 훅 하나면
+    # 커밋된 내용이 계획된 내용과 갈라지고 `ls-files` 는 그것을 모른다. 커밋 안의 바이트를
+    # 그대로 읽어 Plan 의 contentDigest 와 맞춘다.
+    drifted = []
+    for path in sorted(planned_digests):
+        code, blob, err = runner(["git", "show", f"HEAD:{path}"], workdir)
+        if code != 0:
+            raise PublishError(f"could not read {path} back out of the genesis commit: {err.strip()[:200]}")
+        landed = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        if landed != planned_digests[path]:
+            drifted.append(path)
+    if drifted:
+        raise PublishError(
+            f"the committed bytes are not the planned bytes: {drifted}. The path set matched, so "
+            "something rewrote content between the plan and the commit."
+        )
+
     run_all([
         ["git", "branch", default_branch],
         ["git", "remote", "add", "origin", remote_url],
@@ -106,8 +164,30 @@ def publish_files(
     code, out, err = runner(["git", "rev-parse", "HEAD"], workdir)
     if code != 0:
         raise PublishError(f"could not read the published head: {err.strip()[:200]}")
-    return {"head": out.strip(), "branches": [release_branch, default_branch],
-            "committedPaths": sorted(committed)}
+    head = out.strip()
+
+    # 밀고 나서 원격을 다시 읽는다. push 의 exit 0 은 명령이 실패하지 않았다는 뜻이고,
+    # 원격의 ref 가 이 커밋을 가리킨다는 뜻이 아니다 — 그건 원격에게 물어봐야 안다.
+    code, listed, err = runner(["git", "ls-remote", "origin"], workdir)
+    if code != 0:
+        raise PublishError(f"could not re-read the remote after pushing: {err.strip()[:200]}")
+    remote_heads = {}
+    for line in listed.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            remote_heads[parts[1][len("refs/heads/"):]] = parts[0]
+    disagreeing = sorted(branch for branch in (release_branch, default_branch)
+                         if remote_heads.get(branch) != head)
+    if disagreeing:
+        raise PublishError(
+            f"the remote does not carry the genesis commit on {disagreeing}: "
+            f"expected {head}, observed {[remote_heads.get(b) for b in disagreeing]}"
+        )
+
+    return {"head": head, "branches": [release_branch, default_branch],
+            "committedPaths": sorted(committed),
+            "repositoryIdentity": repository_identity,
+            "remoteHeads": {b: remote_heads.get(b) for b in (release_branch, default_branch)}}
 
 
 def main(argv: List[str] = None) -> int:
@@ -127,19 +207,33 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--author-email", required=True)
     parser.add_argument("--message", default="genesis: repository contract and verification",
                         help="the genesis commit subject; no session identifier is added (PRD §4.6)")
+    parser.add_argument("--repository-identity", default=None,
+                        help="which planned repository this push targets; inferred when the plan names one")
     parser.add_argument("--default-branch", default="dev")
     parser.add_argument("--release-branch", default="main")
     args = parser.parse_args(argv)
 
     document = json.loads(args.plan.read_text(encoding="utf-8"))
     files = document.get("files")
+    core = document.get("planCore", document)
     if not isinstance(files, dict) or not files:
         print(json.dumps({"error": "the plan document carries no `files` map to publish"},
                          ensure_ascii=False), file=sys.stderr)
         return 2
+    identity = args.repository_identity
+    if identity is None:
+        repositories = core.get("repositories") or []
+        if len(repositories) != 1:
+            print(json.dumps({"error": "--repository-identity is required when the plan names "
+                                       f"{len(repositories)} repositories"},
+                             ensure_ascii=False), file=sys.stderr)
+            return 2
+        identity = repositories[0]["identity"]
     try:
         heads = publish_files(
             files,
+            plan=core,
+            repository_identity=identity,
             workdir=args.workdir,
             remote_url=args.remote_url,
             author_name=args.author_name,
