@@ -256,6 +256,12 @@ def main() -> int:
     for path in sorted(KIT_DIR.rglob("*")):
         if not path.is_file():
             continue
+        # 킷 안의 스크립트를 한 번이라도 임포트하면 그 옆에 __pycache__/*.pyc 가 생긴다.
+        # 그건 프로젝트 산출물이 아니라 실행 흔적인데, rglob 은 그것도 집어서 UTF-8 로
+        # 읽으려 하고 첫 바이트에서 죽는다. GITIGNORE_LINES 가 이미 "이건 내용이 아니다"
+        # 라고 알고 있었는데 walk 만 그 지식을 안 쓰고 있었다.
+        if any(part == "__pycache__" for part in path.parts) or path.suffix == ".pyc":
+            continue
         rel = path.relative_to(KIT_DIR).as_posix()
         outputs[rel] = substitute(path.read_text(encoding="utf-8"), mapping)
     policy = build_policy(config)

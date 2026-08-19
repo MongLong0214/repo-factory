@@ -1,0 +1,16 @@
+{
+  "$comment": "The control-plane commit this repository's contract tests run against. Pinned, because a contract check whose other side moves is not a check — it is a report about whatever happened to be checked out. CI clones this exact commit; a mismatch is a failure, not a skip.",
+  "repository": "https://github.com/MongLong0214/agent-control-plane",
+  "commit": "6cf4dbdf3f2348d4a3136ae95946fb2ae82a64a3",
+  "pinnedAt": "2026-08-19",
+  "schemaIds": {
+    "projectManifest": "agent-control-plane.project.v2",
+    "repoFactoryResult": "repo-factory.result.v2",
+    "candidateSnapshot": "agent-control-plane.candidate-snapshot.v1",
+    "bootstrapActivation": "agent-control-plane.bootstrap-activation.v1"
+  },
+  "entryPoints": {
+    "parseRepoFactoryResult": "src/bootstrap/repo-factory-result.ts",
+    "assertPortableManifest": "src/contracts/manifest.ts"
+  }
+}

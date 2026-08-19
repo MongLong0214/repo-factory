@@ -1,5 +1,5 @@
 {
-  "capture": "Repo Factory v1.1 §28 DoD #2 — one end-to-end bootstrap in each of SIMPLE, STANDARD and GUARDED",
+  "capture": "Factory-side bootstrap and receiver shape acceptance, once per profile (SIMPLE, STANDARD, GUARDED)",
   "capturedAt": "2026-08-19T12:20:00Z",
   "verdictSource": "agent-control-plane src/bootstrap/repo-factory-result.ts :: parseRepoFactoryResult",
   "visibility": "all three private",
@@ -117,5 +117,25 @@
     "apply resumed from a receipt without re-observing the resource",
     "GitHub rate-limits 404-producing existence checks separately from the core quota; the port refused rather than reading a limit as absence"
   ],
-  "notReviewed": "None of this passed a cross-provider blind review. No reviewer was reachable (grok 402, codex usage limit). Recorded as held, not as passed."
+  "notReviewed": "None of this passed a cross-provider blind review. No reviewer was reachable (grok 402, codex usage limit). Recorded as held, not as passed.",
+  "whatThisIsNot": "Not the Integration PRD's full bootstrap. That runs User/Hermes -> PROJECT_BOOTSTRAP run -> BOOTSTRAP_CTO binding -> evidence -> CEO specification -> CTO lean review -> authorized plan -> apply -> ACP trusted verification -> mandatory blind review -> CEO confirm -> project registration -> local binding -> primary CTO -> Buzz -> handoff ACK -> doctor -> ACPBootstrapActivationResult. None of that is exercised here.",
+  "whatTheParserProves": [
+    "the JSON shape",
+    "no forbidden activation fields",
+    "receipts verified and re-read",
+    "operation id uniqueness"
+  ],
+  "whatTheParserDoesNotProve": [
+    "the result agrees with the approved plan",
+    "the result agrees with the approved manifest",
+    "required verification coverage",
+    "a trusted CI workflow digest",
+    "the local checkout's exact HEAD",
+    "blind review",
+    "CEO confirm",
+    "CTO activation",
+    "handoff ACK",
+    "doctor"
+  ],
+  "knownContractGap": "The Python and Go manifests these runs produced are refused by the control plane's own assertPortableManifest: python, go and cargo are not on its verification executable allowlist. project-ci was green in GitHub, which is a different claim from a manifest the control plane can verify. Pinned by tests/test_acp_contract.py."
 }
