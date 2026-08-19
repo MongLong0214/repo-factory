@@ -215,9 +215,9 @@ def _python_skeleton(project_id: str) -> Dict[str, str]:
     }
 
 
-def _go_skeleton(project_id: str) -> Dict[str, str]:
+def _go_skeleton(project_id: str, owner: str = "MongLong0214") -> Dict[str, str]:
     return {
-        "go.mod": f"module github.com/MongLong0214/{project_id}\n\ngo 1.22\n",
+        "go.mod": f"module github.com/{owner}/{project_id}\n\ngo 1.22\n",
         "greet.go": ('package main\n\nimport "fmt"\n\n'
                      'func Greet(who string) string { return fmt.Sprintf("hello, %s", who) }\n\n'
                      'func main() { fmt.Println(Greet("world")) }\n'),
@@ -278,6 +278,7 @@ def materialize(
     stack: Optional[str] = None,
     ci_values: Dict[str, str] = None,
     artifacts: Optional[list] = None,
+    remote_owner: str = "MongLong0214",
 ) -> Dict[str, str]:
     """path → content. 스택을 모르면 CI 를 만들지 않는다(§14.1) — 조용히 Node 로 대체하지 않는다."""
     project_id = manifest["projectId"]
@@ -295,7 +296,8 @@ def materialize(
         files[CI_PATH] = render(stack, ci_values or {})
         skeleton = SKELETONS.get(stack)
         if skeleton is not None:
-            files.update(skeleton(project_id))
+            # go.mod 의 module 경로는 소유자를 담는다 — 여기서도 요청이 정한 값을 쓴다.
+            files.update(skeleton(project_id, remote_owner) if stack == "go" else skeleton(project_id))
 
     # 프로파일이 요구한 것만 만든다. §6.1 이 금지하는 것은 형식 충족용 문서 생성이므로,
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.

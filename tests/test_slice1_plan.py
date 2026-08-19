@@ -212,3 +212,23 @@ def test_the_compiler_refuses_a_plan_that_does_not_satisfy_its_own_schema(monkey
 
     with pytest.raises(PlanError, match="bootstrap-plan.schema.json"):
         compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
+
+
+def test_the_remote_owner_comes_from_the_request():
+    # It was written into four places in this file. A request naming another account went to
+    # this one silently, which is the shape of defect that only shows up on someone else's
+    # machine.
+    elsewhere = copy.deepcopy(REQUEST)
+    elsewhere["remoteOwner"] = "someone-else"
+
+    compiled = compile_plan(elsewhere, VERIFICATION, operation_id=FIXED_OP)
+
+    assert compiled["planCore"]["repositories"][0]["identity"].startswith("github:someone-else/")
+    assert compiled["planCore"]["githubOperations"][0]["resourceIdentity"].startswith("github:someone-else/")
+    assert compiled["projectManifest"]["repositories"][0]["remote"].startswith("github:someone-else/")
+
+
+def test_the_deployment_default_is_used_when_the_request_says_nothing():
+    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
+
+    assert compiled["planCore"]["repositories"][0]["identity"].startswith("github:MongLong0214/")

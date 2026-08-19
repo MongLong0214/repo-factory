@@ -22,6 +22,8 @@ Exit 0 은 완료의 증거가 아니다(§16.2). 명령이 성공했는데 원�
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -77,17 +79,25 @@ class ReceiptLedger:
     def record(self, receipt: Dict[str, Any]) -> None:
         self._rows[receipt["operationId"]] = receipt
         # 다음 Operation 전에 쓴다. 프로세스가 여기서 죽어도 재개 지점이 남는다.
+        #
+        # 원자적으로 쓴다. 제자리 쓰기 도중에 죽으면 잘린 JSON 이 남고, 다음 실행은 원장을
+        # 아예 못 읽는다 — 재개 지점을 지키려고 만든 파일이 재개를 막는다.
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(list(self._rows.values()), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        payload = json.dumps(list(self._rows.values()), ensure_ascii=False, indent=2)
+        scratch = self.path.with_name(self.path.name + ".partial")
+        with open(scratch, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(scratch, self.path)
 
     def all(self) -> List[Dict[str, Any]]:
         return list(self._rows.values())
 
 
 def _receipt(plan: Dict[str, Any], operation: Dict[str, Any], *, preexisting: bool,
-             before: Optional[Dict[str, Any]], after: Dict[str, Any], clock: str) -> Dict[str, Any]:
+             before: Optional[Dict[str, Any]], after: Dict[str, Any],
+             created_at: str, reread_at: str) -> Dict[str, Any]:
     return {
         "bootstrapOperationId": plan["bootstrapOperationId"],
         "requestDigest": plan["requestDigest"],
@@ -97,19 +107,26 @@ def _receipt(plan: Dict[str, Any], operation: Dict[str, Any], *, preexisting: bo
         "preexisting": preexisting,
         "beforeStateDigest": digest(before, volatile="allow") if before is not None else None,
         "afterStateDigest": digest(after, volatile="allow"),
-        "createdAt": clock,
-        "rereadAt": clock,
+        "createdAt": created_at,
+        "rereadAt": reread_at,
         "verified": True,
     }
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
-               *, specs: Dict[str, Dict[str, Any]] = None, clock: str = "1970-01-01T00:00:00Z") -> Dict[str, Any]:
+               *, specs: Dict[str, Dict[str, Any]] = None, clock=None) -> Dict[str, Any]:
     """Plan 의 Operation 을 순서대로 수행하고 영수증 목록을 돌려준다.
 
     `specs` 는 operationId → 생성 파라미터. Plan 에 없는 operationId 를 담고 있으면
     거부한다 — Plan 밖의 쓰기가 spec 을 통해 새어드는 경로가 그것이다(§16.1)."""
     specs = specs or {}
+    # 시계는 주입 가능하지만 영수증마다 다시 읽힌다. 호출자가 값 하나를 건네고 그것이
+    # createdAt 과 rereadAt 양쪽에 박히면, 일어나지 않은 시각의 재조회를 주장하게 된다.
+    now = clock or _utc_now
     planned = {op["operationId"]: op for op in plan["githubOperations"]}
     stray = sorted(set(specs).difference(planned))
     if stray:
@@ -158,6 +175,10 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              applied,
                              {"operationId": operation_id, "resourceIdentity": operation["resourceIdentity"]})
 
+        # 두 시각을 따로 읽는다. 하나로 쓰면 영수증이 "이 시각에 다시 읽었다" 고 말하는데
+        # 그 시각에 재조회는 아직 일어나지 않았다 — §16.2 가 요구하는 것은 재조회가 있었다는
+        # 사실이고, 영수증은 그것이 언제였는지를 말해야 한다.
+        created_at = now()
         port.create(operation["resourceType"], operation["resourceIdentity"], specs.get(operation_id, {}))
 
         # §16.2 — 다시 읽는다. 명령이 성공했다는 것과 원격이 기대대로라는 것은 다르다.
@@ -167,7 +188,8 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              f"{operation['resourceIdentity']} is absent when re-read after a successful create",
                              applied, {"operationId": operation_id})
 
-        receipt = _receipt(plan, operation, preexisting=False, before=None, after=after, clock=clock)
+        receipt = _receipt(plan, operation, preexisting=False, before=None, after=after,
+                           created_at=created_at, reread_at=now())
         ledger.record(receipt)
         applied.append(receipt)
 

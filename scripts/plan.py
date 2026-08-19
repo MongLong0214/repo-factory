@@ -35,6 +35,10 @@ SCHEMAS = SKILL / "schemas"
 
 MANIFEST_PATH = ".agent-control-plane/project.json"
 
+# 요청이 소유자를 말하지 않으면 이 값을 쓴다. 상수로 두되 한 곳에만 둔다 — 네 곳에
+# 흩어져 있던 동안에는 다른 계정으로 만들려는 요청이 조용히 이 계정으로 갔다.
+DEFAULT_REMOTE_OWNER = "MongLong0214"
+
 _PLAN_SCHEMA_CACHE: Dict[str, Any] = {}
 
 
@@ -119,6 +123,12 @@ def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def remote_owner(request: Dict[str, Any]) -> str:
+    """요청이 정하고, 없으면 배포 기본값. 어느 쪽인지가 Plan 에 남는다."""
+    owner = (request.get("origin") or {}).get("remoteOwner") or request.get("remoteOwner")
+    return str(owner) if owner else DEFAULT_REMOTE_OWNER
+
+
 def project_manifest(
     request: Dict[str, Any],
     verification_commands: List[Dict[str, Any]],
@@ -131,7 +141,8 @@ def project_manifest(
         "schema": "agent-control-plane.project.v2",
         "projectId": request["repositories"][0]["name"],
         "repositories": [
-            {"role": repo["role"], "remote": f"github:MongLong0214/{repo['name']}", "manifestRoot": "."}
+            {"role": repo["role"], "remote": f"github:{remote_owner(request)}/{repo['name']}",
+             "manifestRoot": "."}
             for repo in request["repositories"]
         ],
         "branchProfile": {
@@ -208,6 +219,7 @@ def compile_plan(
         if stack is not None and stack != requested:
             raise PlanError(f"request declares stack {requested!r} but {stack!r} was supplied")
         stack = requested
+    owner = remote_owner(request)
     manifest = project_manifest(request, verification_commands, stack=stack,
                                 commitlore_mode=profile["commitlore"]["default"])
     manifest_digest = digest(manifest)
@@ -216,7 +228,7 @@ def compile_plan(
     # 렌더링은 Plan 시점이다. Apply 가 렌더하면 Plan 의 contentDigest 는 아직 존재하지
     # 않는 바이트를 가리키고, 승인은 무엇을 승인했는지 말할 수 없게 된다.
     files = materialize(manifest, seed=request["seed"], stack=stack,
-                        ci_values=ci_values, artifacts=artifacts)
+                        ci_values=ci_values, artifacts=artifacts, remote_owner=owner)
     gaps: List[str] = []
 
     # 프로파일이 요구한 산출물이 실제로 만들어졌는지 본다. 이 검사가 없으면 `required`
@@ -241,7 +253,7 @@ def compile_plan(
         "bootstrapProfile": request["bootstrapProfile"],
         "authorization": gate["authorization"],
         "repositories": [
-            {"role": r["role"], "identity": f"github:MongLong0214/{r['name']}",
+            {"role": r["role"], "identity": f"github:{owner}/{r['name']}",
              "visibility": request["visibility"]}
             for r in request["repositories"]
         ],
@@ -252,7 +264,7 @@ def compile_plan(
         ],
         "githubOperations": [
             {"operationId": f"create-repository:{r['name']}", "resourceType": "repository",
-             "intent": "create", "resourceIdentity": f"github:MongLong0214/{r['name']}"}
+             "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}"}
             for r in request["repositories"]
         ],
         "branchContracts": [dict(c) for c in BRANCH_CONTRACTS],
