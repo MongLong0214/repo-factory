@@ -177,7 +177,10 @@ def test_the_diff_summary_names_the_owner_gates_it_would_cross():
 
     assert summary["ownerGates"] == ["public-exposure"]
     assert summary["planDigest"].startswith("sha256:")
-    assert summary["githubOperations"] == ["create-repository:ledger-reconciler"]
+    # The ruleset is planned too, and after the files: a rule requiring project-ci cannot
+    # exist before the commit that publishes that workflow.
+    assert summary["githubOperations"] == ["create-repository:ledger-reconciler",
+                                           "create-ruleset:ledger-reconciler"]
 
 
 def test_the_operation_id_must_be_supplied_rather_than_invented():
@@ -308,3 +311,24 @@ def test_a_plan_without_an_observation_carries_no_reference():
     compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
 
     assert "environmentSnapshotId" not in compiled["planCore"]
+
+
+def test_the_ruleset_is_planned_after_the_files_and_the_repository_before_them():
+    # Asserted on the compiler's own output, not a hand-built plan: the phase is the compiler's
+    # decision and a test that supplies its own phases proves nothing about it. A ruleset
+    # requiring project-ci that exists before the commit publishing that workflow refuses the
+    # push which gives the repository its content.
+    operations = {op["operationId"]: op for op in compiled()["planCore"]["githubOperations"]}
+
+    assert operations["create-repository:ledger-reconciler"]["phase"] == "before-files"
+    assert operations["create-ruleset:ledger-reconciler"]["phase"] == "after-files"
+
+
+def test_the_ruleset_identity_carries_the_name_the_plan_chose():
+    # GitHub assigns the id, so before the ruleset exists the name is the only handle. It has to
+    # travel in the identity or the receipt cannot find what it created.
+    from plan import RULESET_NAME
+
+    operations = {op["operationId"]: op for op in compiled()["planCore"]["githubOperations"]}
+
+    assert operations["create-ruleset:ledger-reconciler"]["resourceIdentity"].endswith(f"#{RULESET_NAME}")

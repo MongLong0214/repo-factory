@@ -40,6 +40,10 @@ MANIFEST_PATH = ".agent-control-plane/project.json"
 # 흩어져 있던 동안에는 다른 계정으로 만들려는 요청이 조용히 이 계정으로 갔다.
 DEFAULT_REMOTE_OWNER = "MongLong0214"
 
+# 생성 저장소의 네이티브 보호 규칙 이름. Plan 이 정하고 영수증이 그것으로 리소스를 찾는다 —
+# id 는 GitHub 이 배정하므로 만들기 전에 우리가 쥘 수 있는 손잡이는 이름뿐이다.
+RULESET_NAME = "acp-managed-branches"
+
 _PLAN_SCHEMA_CACHE: Dict[str, Any] = {}
 
 
@@ -270,7 +274,18 @@ def compile_plan(
         ],
         "githubOperations": [
             {"operationId": f"create-repository:{r['name']}", "resourceType": "repository",
-             "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}"}
+             "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}",
+             "phase": "before-files"}
+            for r in request["repositories"]
+        ] + [
+            # §9.4 의 저장소 쪽 방어선. 제어평면이 최종 권위지만, 네이티브 규칙이 없으면
+            # 그 권위를 우회하는 직접 푸시를 저장소가 스스로 막지 못한다.
+            #
+            # 파일 뒤에 만든다. project-ci 를 요구하는 ruleset 이 그 워크플로를 실어 나르는
+            # 커밋보다 먼저 존재하면, 저장소에 내용을 넣는 바로 그 푸시를 거부한다.
+            {"operationId": f"create-ruleset:{r['name']}", "resourceType": "ruleset",
+             "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}#{RULESET_NAME}",
+             "phase": "after-files"}
             for r in request["repositories"]
         ],
         "branchContracts": [dict(c) for c in BRANCH_CONTRACTS],
