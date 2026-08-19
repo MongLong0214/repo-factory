@@ -53,6 +53,15 @@ RULESET_REFS: Tuple[str, ...] = ("refs/heads/main", "refs/heads/dev")
 # 나르는 바로 그 푸시가 거부된다.
 RULESET_REQUIRED_CHECK = "project-ci"
 
+# 그 체크를 **누가** 보고해야 하는가. context 만 요구하면 그 이름으로 check-run 을 만드는
+# 어떤 앱이든 규칙을 충족시킨다 — 저장소에 설치된 다른 GitHub App 이 `project-ci` 라는
+# 이름으로 success 를 하나 올리면, 워크플로가 돌지 않아도 머지가 열린다. 요구하는 것이
+# "이 이름의 통과" 가 아니라 "이 워크플로의 통과" 이므로 보고자를 같이 못 박는다.
+#
+# 15368 은 GitHub Actions 앱의 전역 고정 id 다(github.com 전체에서 같다). 이 저장소의
+# 자기 ruleset 을 걸면서 실측했다: `commits/main/check-runs` 가 `app.id=15368` 을 보고한다.
+RULESET_CHECK_REPORTER_APP_ID = 15368
+
 # 통합 지점이 기본 브랜치다. `main` 은 릴리스 이력이고 일상 작업은 `dev` 로 간다.
 DEFAULT_BRANCH = "dev"
 
@@ -73,7 +82,9 @@ def ruleset_desired_state() -> Dict[str, Any]:
             {"type": "non_fast_forward"},
             {"type": "required_status_checks",
              "parameters": {"strict_required_status_checks_policy": True,
-                            "required_status_checks": [{"context": RULESET_REQUIRED_CHECK}]}},
+                            "required_status_checks": [
+                                {"context": RULESET_REQUIRED_CHECK,
+                                 "integration_id": RULESET_CHECK_REPORTER_APP_ID}]}},
         ],
         # 비어 있음이 이 계획의 진술이다. 생략하면 "우회자를 정하지 않았다" 가 되고, 그 자리는
         # Plan 밖에서 채워질 수 있다.

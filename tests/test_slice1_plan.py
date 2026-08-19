@@ -334,7 +334,10 @@ def test_the_ruleset_body_is_in_the_plan_and_not_only_its_name(tmp_path=None):
     assert state["conditions"]["ref_name"]["include"] == ["refs/heads/main", "refs/heads/dev"]
     assert state["bypass_actors"] == []
     checks = next(r for r in state["rules"] if r["type"] == "required_status_checks")
-    assert checks["parameters"]["required_status_checks"] == [{"context": "project-ci"}]
+    # 보고자까지 못 박는다. context 만 요구하면 그 이름으로 check-run 을 만드는 어떤 앱이든
+    # 규칙을 충족시키고, 워크플로가 돌지 않아도 머지가 열린다.
+    assert checks["parameters"]["required_status_checks"] == [
+        {"context": "project-ci", "integration_id": 15368}]
 
 
 def test_the_repository_operation_states_the_exposure_it_will_create(tmp_path=None):
