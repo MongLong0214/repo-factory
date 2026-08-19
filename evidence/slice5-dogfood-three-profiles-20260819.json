@@ -1,0 +1,121 @@
+{
+  "capture": "Repo Factory v1.1 §28 DoD #2 — one end-to-end bootstrap in each of SIMPLE, STANDARD and GUARDED",
+  "capturedAt": "2026-08-19T12:20:00Z",
+  "verdictSource": "agent-control-plane src/bootstrap/repo-factory-result.ts :: parseRepoFactoryResult",
+  "visibility": "all three private",
+  "runs": [
+    {
+      "repository": "github:MongLong0214/rf-dogfood-node",
+      "bootstrapProfile": "SIMPLE",
+      "stack": "node",
+      "runId": "dogfood-2",
+      "planDigest": "sha256:88615d7ac00300a292f15bd7628210edd729bf48a53fbfa6d5b248721d6eaa14",
+      "authorization": "HERMES",
+      "plannedFiles": [
+        ".agent-control-plane/project.json",
+        ".github/workflows/project-ci.yml",
+        "AGENTS.md",
+        "README.md",
+        "index.js",
+        "package.json",
+        "test/smoke.test.js"
+      ],
+      "publishedHead": "e4370dd86750f6ec2b0b40c661801c9cb1e2d907",
+      "branches": [
+        "main",
+        "dev"
+      ],
+      "defaultBranch": "dev",
+      "unresolvedGaps": [],
+      "ci": {
+        "checkName": "project-ci",
+        "conclusion": "PASS",
+        "head": "e4370dd86750f6ec2b0b40c661801c9cb1e2d907"
+      },
+      "controlPlaneVerdict": {
+        "allowed": true,
+        "reasonCode": "OK"
+      },
+      "resultDigest": "sha256:cfaddffdff49805c3939442e7ea42cf4d1f26a559520002f6458bfebe2fa1597"
+    },
+    {
+      "repository": "github:MongLong0214/rf-dogfood-python",
+      "bootstrapProfile": "STANDARD",
+      "stack": "python",
+      "runId": "dogfood-standard",
+      "planDigest": "sha256:be49ac7096fe1acfd97095fea2a8ffe3c6a470663fde00b0d7b676975ae8b96f",
+      "authorization": "HERMES",
+      "plannedFiles": [
+        ".agent-control-plane/project.json",
+        ".github/workflows/project-ci.yml",
+        "AGENTS.md",
+        "README.md",
+        "docs/PRD.md",
+        "pyproject.toml",
+        "rf_dogfood_python.py",
+        "tests/test_rf_dogfood_python.py"
+      ],
+      "publishedHead": "a026cc7b169845fbe9b1afbbd47e127af7199a8a",
+      "branches": [
+        "main",
+        "dev"
+      ],
+      "defaultBranch": "dev",
+      "unresolvedGaps": [],
+      "ci": {
+        "checkName": "project-ci",
+        "conclusion": "PASS",
+        "head": "a026cc7b169845fbe9b1afbbd47e127af7199a8a"
+      },
+      "controlPlaneVerdict": {
+        "allowed": true,
+        "reasonCode": "OK"
+      },
+      "resultDigest": "sha256:622dc8a02258ad69664344a89596496eb60906465de0aca49b6655187c2fb324"
+    },
+    {
+      "repository": "github:MongLong0214/rf-dogfood-go",
+      "bootstrapProfile": "GUARDED",
+      "stack": "go",
+      "runId": "dogfood-guarded",
+      "planDigest": "sha256:5d7f3a90ddc2654bee0934129194015e017fafb3e30e5567a12976ba8b5ae133",
+      "authorization": "HERMES",
+      "plannedFiles": [
+        ".agent-control-plane/project.json",
+        ".github/workflows/project-ci.yml",
+        "AGENTS.md",
+        "README.md",
+        "docs/ACCEPTANCE.md",
+        "docs/PRD.md",
+        "docs/ROLLBACK.md",
+        "docs/adr/ADR-0001-architecture.md",
+        "go.mod",
+        "greet.go",
+        "greet_test.go"
+      ],
+      "publishedHead": "e8cd12453fc569c20d8994f20e29268270f7b814",
+      "branches": [
+        "main",
+        "dev"
+      ],
+      "defaultBranch": "dev",
+      "unresolvedGaps": [],
+      "ci": {
+        "checkName": "project-ci",
+        "conclusion": "PASS",
+        "head": "e8cd12453fc569c20d8994f20e29268270f7b814"
+      },
+      "controlPlaneVerdict": {
+        "allowed": true,
+        "reasonCode": "OK"
+      },
+      "resultDigest": "sha256:bce6114e56bbad9104b3eebc6d3d09637bbaca396161fccbbbabc8936be16f3f"
+    }
+  ],
+  "defectsFoundByTheseRuns": [
+    "setup-node/setup-python/setup-go `cache:` hard-requires a lockfile a genesis repository does not have",
+    "apply resumed from a receipt without re-observing the resource",
+    "GitHub rate-limits 404-producing existence checks separately from the core quota; the port refused rather than reading a limit as absence"
+  ],
+  "notReviewed": "None of this passed a cross-provider blind review. No reviewer was reachable (grok 402, codex usage limit). Recorded as held, not as passed."
+}
