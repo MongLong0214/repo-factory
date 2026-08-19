@@ -23,6 +23,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from jsonschema import Draft202012Validator
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
 from materialize import CI_PATH, SKELETONS, artifact_coverage, materialize  # noqa: E402
@@ -30,6 +32,20 @@ from materialize import CI_PATH, SKELETONS, artifact_coverage, materialize  # no
 SKILL = Path(__file__).resolve().parent.parent
 PROFILES = SKILL / "profiles"
 SCHEMAS = SKILL / "schemas"
+
+MANIFEST_PATH = ".agent-control-plane/project.json"
+
+_PLAN_SCHEMA_CACHE: Dict[str, Any] = {}
+
+
+def _plan_schema() -> Dict[str, Any]:
+    """우리가 싣고 다니는 스키마. 한 번 읽고 재사용한다."""
+    if not _PLAN_SCHEMA_CACHE:
+        _PLAN_SCHEMA_CACHE.update(
+            json.loads((SCHEMAS / "bootstrap-plan.schema.json").read_text(encoding="utf-8"))
+        )
+    return _PLAN_SCHEMA_CACHE
+
 
 def content_digest(text: str) -> str:
     """파일은 구조가 아니라 바이트다. 정규화 없이 그대로 센다."""
@@ -166,13 +182,32 @@ def compile_plan(
     verification_commands: List[Dict[str, Any]],
     *,
     requested_optional: List[str] = None,
-    operation_id: str = None,
+    operation_id: str,
     stack: str = None,
     ci_values: Dict[str, str] = None,
 ) -> Dict[str, Any]:
+    """`operation_id` 는 호출자가 대야 한다.
+
+    §16.3 의 재개는 Operation 정체성에 걸려 있다. 여기서 매번 새 uuid 를 만들면 같은
+    의도로 다시 부른 재시도가 **다른 Operation** 이 되고, 원장은 그것을 옳게 못 알아본다 —
+    기본값이 그 실수를 쉽게 만든다."""
+    if not operation_id or not operation_id.strip():
+        raise PlanError("bootstrapOperationId must be supplied; a fresh one per call turns a retry into a new operation")
+
     profile = load_profile(request["bootstrapProfile"])
     artifacts = selected_artifacts(profile, requested_optional or [])
     gate = classify_human_gate(request)
+
+    # 요청이 스택을 말했으면 그것이 정본이다. 인자와 어긋난 채로 진행하면 요청서에 적힌
+    # 값이 아무 효과도 없이 남고, 두 곳이 다른 말을 하는데 아무도 안 막는다.
+    declared = {repo.get("stack") for repo in request["repositories"] if repo.get("stack")}
+    if len(declared) > 1:
+        raise PlanError(f"repositories declare more than one stack: {sorted(declared)}")
+    if declared:
+        requested = declared.pop()
+        if stack is not None and stack != requested:
+            raise PlanError(f"request declares stack {requested!r} but {stack!r} was supplied")
+        stack = requested
     manifest = project_manifest(request, verification_commands, stack=stack,
                                 commitlore_mode=profile["commitlore"]["default"])
     manifest_digest = digest(manifest)
@@ -224,6 +259,15 @@ def compile_plan(
         "verificationContractDigest": verification_digest,
         "projectManifestDigest": manifest_digest,
     }
+    # 우리가 싣고 다니는 스키마로 우리 산출물을 검사한다. 없으면 잘못된 Plan 이 apply 까지
+    # 가서 거기서 죽고, 스키마를 가진 경계는 그냥 지나친다.
+    invalid = sorted(Draft202012Validator(_plan_schema()).iter_errors(core), key=str)
+    if invalid:
+        raise PlanError(
+            "the compiled plan does not satisfy schemas/bootstrap-plan.schema.json: "
+            + "; ".join(f"{'.'.join(str(x) for x in e.path)}: {e.message}" for e in invalid[:5])
+        )
+
     return {"planCore": core, "artifacts": artifacts, "humanGate": gate,
             "projectManifest": manifest, "files": files, "unresolvedGaps": gaps}
 
@@ -245,7 +289,8 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--request", required=True, type=Path, help="BootstrapRequest JSON")
     parser.add_argument("--verification", required=True, type=Path, help="VerificationCommand list JSON")
     parser.add_argument("--optional", nargs="*", default=[], help="optional artifacts to include")
-    parser.add_argument("--operation-id", default=None)
+    parser.add_argument("--operation-id", required=True,
+                        help="the bootstrap operation id; a retry must reuse it (PRD §16.3)")
     args = parser.parse_args(argv)
 
     request = json.loads(args.request.read_text(encoding="utf-8"))

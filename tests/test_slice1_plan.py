@@ -37,6 +37,8 @@ REQUEST = {
 }
 
 FIXED_OP = "11111111-2222-3333-4444-555555555555"
+CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm install",
+             "TEST_CMD": "npm test", "BUILD_CMD": "true"}
 
 
 def compiled(request=None, **kwargs):
@@ -176,3 +178,37 @@ def test_the_diff_summary_names_the_owner_gates_it_would_cross():
     assert summary["ownerGates"] == ["public-exposure"]
     assert summary["planDigest"].startswith("sha256:")
     assert summary["githubOperations"] == ["create-repository:ledger-reconciler"]
+
+
+def test_the_operation_id_must_be_supplied_rather_than_invented():
+    # §16.3 hangs resume on operation identity. A fresh uuid per call turns a retry into a new
+    # operation against the same intent, and the ledger — correctly — refuses to recognise it.
+    # A default is what makes that mistake easy.
+    with pytest.raises(PlanError, match="must be supplied"):
+        compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id="")
+
+
+def test_the_request_stack_is_used_and_a_disagreement_is_refused():
+    request = copy.deepcopy(REQUEST)
+    request["repositories"][0]["stack"] = "python"
+
+    resolved = compile_plan(request, VERIFICATION, operation_id=FIXED_OP,
+                            ci_values={"RUNTIME_LOWER": "3.11", "RUNTIME_LATEST": "3.13",
+                                       "INSTALL_CMD": "true", "TEST_CMD": "true", "BUILD_CMD": "true"})
+    assert ".github/workflows/project-ci.yml" in resolved["files"]
+
+    with pytest.raises(PlanError, match="declares stack"):
+        compile_plan(request, VERIFICATION, operation_id=FIXED_OP, stack="node", ci_values=CI_VALUES)
+
+
+def test_the_compiler_refuses_a_plan_that_does_not_satisfy_its_own_schema(monkeypatch):
+    # Validating the *output* here would pass whether or not the compiler checks anything — the
+    # compiler produces valid plans by construction, so the guard would be unfalsifiable and the
+    # test would be measuring the schema rather than the guard. Breaking one field the compiler
+    # computes is what makes the refusal observable.
+    import plan as plan_module
+
+    monkeypatch.setattr(plan_module, "content_digest", lambda _text: "not-a-digest")
+
+    with pytest.raises(PlanError, match="bootstrap-plan.schema.json"):
+        compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
