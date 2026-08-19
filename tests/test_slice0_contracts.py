@@ -95,3 +95,28 @@ def test_commitlore_failure_handling_hardens_with_the_profile() -> None:
     for profile, (default, on_failure) in expected.items():
         commitlore = load(PROFILES / f"{profile}.json")["commitlore"]
         assert (commitlore["default"], commitlore["onFailure"]) == (default, on_failure)
+
+
+def test_the_kit_installer_ignores_execution_traces():
+    """Importing a kit script leaves __pycache__ beside it; that is not project content.
+
+    CI found this on its first run: the installer read every file under the kit as UTF-8 and
+    died on a .pyc's magic byte. It never reproduced locally because nothing had imported those
+    scripts in the same working tree. The fix is one skip, and this pins it — a laptop that
+    happens to have a clean tree is not evidence that the walk is correct.
+    """
+    import shutil
+    import subprocess
+    import sys as _sys
+
+    kit_cache = SKILL / "templates" / "kit" / "scripts" / "__pycache__"
+    kit_cache.mkdir(parents=True, exist_ok=True)
+    (kit_cache / "probe.cpython-311.pyc").write_bytes(b"\xa7\r\r\n\x00")
+    try:
+        done = subprocess.run(
+            [_sys.executable, "-m", "pytest", "tests/test_install_governance.py", "-q"],
+            cwd=str(SKILL), capture_output=True, text=True, timeout=300,
+        )
+        assert done.returncode == 0, done.stdout[-800:]
+    finally:
+        shutil.rmtree(kit_cache, ignore_errors=True)
