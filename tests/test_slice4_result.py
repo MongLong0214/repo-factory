@@ -79,29 +79,10 @@ def acp_verdict(result: dict) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-# --- the authority accepts what this pipeline produces ----------------------------------
-
-def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
-    # Checked against `parseRepoFactoryResult` itself rather than a local copy of its rules,
-    # so a change on the receiving side shows up here instead of at handoff.
-    assert acp_verdict(whole_chain()) == {"allowed": True, "reasonCode": "OK", "evidence": {}}
-
-
-def test_the_control_plane_rejects_a_result_that_claims_activation():
-    overclaiming = dict(whole_chain(), doctor={"status": "PASS"})
-
-    verdict = acp_verdict(overclaiming)
-
-    assert verdict["allowed"] is False
-    assert verdict["reasonCode"] == "BOOTSTRAP_RESULT_OVERCLAIMS_ACTIVATION"
-
-
-def test_the_control_plane_rejects_an_unverified_receipt():
-    weakened = whole_chain()
-    weakened["externalWriteReceipts"][0]["rereadAt"] = None
-
-    assert acp_verdict(weakened)["allowed"] is False
-
+# The three cross-checks that ran the control plane's own parser now live in
+# tests/test_acp_contract.py, where an absent control plane fails rather than skips. A skipped
+# contract check and a passing one look identical in a summary line, which is how a suite goes
+# green having verified nothing about the other side.
 
 # --- the assembler refuses before the handoff -------------------------------------------
 
