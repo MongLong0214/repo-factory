@@ -1,18 +1,24 @@
-# Test dependencies are pinned because CI installs them by name otherwise, and "whatever the
-# runner resolved that morning" is not a contract. The runtime scripts deliberately have no
-# third-party dependencies: a bootstrap compiler that cannot run on a stock interpreter is one
-# more thing to install before a project can be created.
+# Dependencies are pinned because CI installs them by name otherwise, and "whatever the runner
+# resolved that morning" is not a contract.
+#
+# `jsonschema` is a runtime dependency, not a test aid. `scripts/plan.py` imports it at module
+# scope to validate both the request it is given and the plan it produces, and those are
+# production refusals. It spent a while declared only under `test` while the comment here claimed
+# the runtime had none, which reads as "runs on a stock interpreter" and does not
+# — `python3 scripts/plan.py` on a clean host raised ModuleNotFoundError.
+# `tests/test_declared_dependencies.py` now compares this list against what the scripts import.
 [project]
 name = "repo-factory"
 version = "1.1.0.dev0"
 description = "Project bootstrap compiler — seeds to a verifiable, portable repository contract"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+  "jsonschema==4.23.0",
+]
 
 [project.optional-dependencies]
 test = [
   "pytest==8.3.4",
-  "jsonschema==4.23.0",
 ]
 
 [tool.pytest.ini_options]

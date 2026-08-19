@@ -44,16 +44,33 @@ DEFAULT_REMOTE_OWNER = "MongLong0214"
 # id 는 GitHub 이 배정하므로 만들기 전에 우리가 쥘 수 있는 손잡이는 이름뿐이다.
 RULESET_NAME = "acp-managed-branches"
 
-_PLAN_SCHEMA_CACHE: Dict[str, Any] = {}
+_SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _schema(name: str) -> Dict[str, Any]:
+    """우리가 싣고 다니는 스키마. 한 번 읽고 재사용한다."""
+    if name not in _SCHEMA_CACHE:
+        _SCHEMA_CACHE[name] = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
+    return _SCHEMA_CACHE[name]
 
 
 def _plan_schema() -> Dict[str, Any]:
-    """우리가 싣고 다니는 스키마. 한 번 읽고 재사용한다."""
-    if not _PLAN_SCHEMA_CACHE:
-        _PLAN_SCHEMA_CACHE.update(
-            json.loads((SCHEMAS / "bootstrap-plan.schema.json").read_text(encoding="utf-8"))
+    return _schema("bootstrap-plan.schema.json")
+
+
+def validate_request(request: Dict[str, Any]) -> None:
+    """입력도 출력과 같은 문으로 들어와야 한다.
+
+    컴파일러가 자기 출력만 검증하고 입력은 안 하면, 스키마가 금지하는 요청이 통과해서
+    Plan 이 된다. `remoteOwner` 가 정확히 그렇게 지냈다 — 컴파일러가 읽고 테스트가 넣는
+    필드인데 `additionalProperties: false` 인 요청 스키마 어디에도 선언돼 있지 않았고,
+    프로덕션 경로가 요청을 검증하지 않아서 아무도 몰랐다."""
+    invalid = sorted(Draft202012Validator(_schema("bootstrap-request.schema.json")).iter_errors(request), key=str)
+    if invalid:
+        raise PlanError(
+            "the request does not satisfy schemas/bootstrap-request.schema.json: "
+            + "; ".join(f"{'.'.join(str(x) for x in e.path) or '<root>'}: {e.message}" for e in invalid[:5])
         )
-    return _PLAN_SCHEMA_CACHE
 
 
 def content_digest(text: str) -> str:
@@ -133,8 +150,12 @@ def _utc_now() -> str:
 
 
 def remote_owner(request: Dict[str, Any]) -> str:
-    """요청이 정하고, 없으면 배포 기본값. 어느 쪽인지가 Plan 에 남는다."""
-    owner = (request.get("origin") or {}).get("remoteOwner") or request.get("remoteOwner")
+    """요청이 정하고, 없으면 배포 기본값. 어느 쪽인지가 Plan 에 남는다.
+
+    `origin` 은 요청이 **어디서 왔는지**고 소유자는 **어디로 가는지**다. 한때 두 자리를 다
+    읽었는데, 출처 객체에서 대상을 읽는 것은 이름이 적힌 자리와 강제되는 자리를 뒤섞는 그
+    모양이라 한 자리로 줄였다."""
+    owner = request.get("remoteOwner")
     return str(owner) if owner else DEFAULT_REMOTE_OWNER
 
 
@@ -215,6 +236,7 @@ def compile_plan(
     if not operation_id or not operation_id.strip():
         raise PlanError("bootstrapOperationId must be supplied; a fresh one per call turns a retry into a new operation")
 
+    validate_request(request)
     profile = load_profile(request["bootstrapProfile"])
     artifacts = selected_artifacts(profile, requested_optional or [])
     gate = classify_human_gate(request)
@@ -322,28 +344,53 @@ def diff_summary(compiled: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main(argv: List[str] = None) -> int:
+    """공개 CLI 는 라이브러리가 만들 수 있는 Plan 을 만들 수 있어야 한다.
+
+    한동안 그러지 못했다 — `--ci-values` 가 없어서 스택을 말한 요청은 CI 를 렌더할 값을
+    받을 길이 없었고, 그 결과 CLI 로는 gap 없는 Plan 이 나오지 않았다. 성공 경로가
+    파이썬 직접 호출뿐이면 공개된 것은 제품이 아니라 그 제품의 일부다."""
     parser = argparse.ArgumentParser(description="Compile an approved BootstrapRequest into a deterministic plan.")
     parser.add_argument("--request", required=True, type=Path, help="BootstrapRequest JSON")
     parser.add_argument("--verification", required=True, type=Path, help="VerificationCommand list JSON")
     parser.add_argument("--optional", nargs="*", default=[], help="optional artifacts to include")
     parser.add_argument("--operation-id", required=True,
                         help="the bootstrap operation id; a retry must reuse it (PRD §16.3)")
+    parser.add_argument("--stack", default=None,
+                        help="toolchain when the request does not name one; a conflict with the request is refused")
+    parser.add_argument("--ci-values", type=Path, default=None,
+                        help="JSON object of CI template values; without it a stack-bearing request leaves a gap")
+    parser.add_argument("--environment", type=Path, default=None,
+                        help="an EnvironmentObservation to bind; its snapshot id enters the plan, its bytes do not")
+    parser.add_argument("--observe", action="store_true",
+                        help="observe the environment locally (no remote reads) and bind that observation")
     args = parser.parse_args(argv)
 
     request = json.loads(args.request.read_text(encoding="utf-8"))
     commands = json.loads(args.verification.read_text(encoding="utf-8"))
+    ci_values = json.loads(args.ci_values.read_text(encoding="utf-8")) if args.ci_values else None
+    if args.environment and args.observe:
+        print(json.dumps({"error": "--environment and --observe both supply the observation; pass one"},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
     try:
+        environment = None
+        if args.environment:
+            environment = json.loads(args.environment.read_text(encoding="utf-8"))
+        elif args.observe:
+            # 포트 없이 관측한다. 원격 이름은 "확인하지 않았다" 로 남고, 그 사실이 그대로
+            # 적힌다 — CLI 가 네트워크를 여는 것은 이 명령의 약속이 아니다.
+            environment = observe_environment(request)
         compiled = compile_plan(request, commands, requested_optional=args.optional,
-                                operation_id=args.operation_id)
+                                operation_id=args.operation_id, stack=args.stack,
+                                ci_values=ci_values, environment=environment)
     except (PlanError, ValueError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
-    print(json.dumps({**compiled, "diffSummary": diff_summary(compiled)}, ensure_ascii=False, indent=2))
+    output = {**compiled, "diffSummary": diff_summary(compiled)}
+    if environment is not None:
+        output["environmentObservation"] = environment
+    print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 ENVIRONMENT_SCHEMA_ID = "repo-factory.environment-observation.v1"
@@ -396,3 +443,7 @@ def environment_snapshot_id(observation: Dict[str, Any]) -> str:
     그 id 를 참조하므로 Plan digest 까지 흔들린다 — §8.3 이 금지하는 바로 그것이다.
     """
     return digest(observation, volatile="strip")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

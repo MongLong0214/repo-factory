@@ -137,6 +137,18 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ("    if unverified:", "    if False:"),
         "killed_by": ["tests/test_slice4_result.py::test_an_unverified_receipt_is_refused_at_assembly_not_at_handoff"],
     },
+    {
+        "name": "the compiler validates the request it is given, not only the plan it produces",
+        "file": "scripts/plan.py",
+        "mutate": ("    validate_request(request)\n    profile = load_profile", "    profile = load_profile"),
+        "killed_by": ["tests/test_request_contract.py"],
+    },
+    {
+        "name": "a third-party import at module scope has to be a declared runtime dependency",
+        "file": "pyproject.toml",
+        "mutate": ('dependencies = [\n  "jsonschema==4.23.0",\n]', "dependencies = []"),
+        "killed_by": ["tests/test_declared_dependencies.py"],
+    },
 ]
 
 
@@ -183,8 +195,20 @@ def test_removing_the_guard_kills_a_named_test(guard: Dict[str, object], tree: P
 def test_every_guarded_file_appears_in_the_table():
     # A file full of refusals with no row is the state this whole file exists to end. The list is
     # explicit rather than derived, so adding a guarded module is a decision someone makes.
+    #
+    # Rows may also name a file outside this list — `pyproject.toml` declares the runtime
+    # dependency set, and the mutation that proves that guard has to edit the declaration. What
+    # is not allowed is a row naming a path that does not exist, which is how a mutation quietly
+    # stops applying to anything.
     guarded = {"scripts/plan.py", "scripts/apply.py", "scripts/publish.py",
                "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py"}
     covered = {str(g["file"]) for g in GUARDS}
 
-    assert guarded == covered, f"guarded files with no falsifiability row: {sorted(guarded - covered)}"
+    missing = sorted(guarded - covered)
+    assert not missing, f"guarded files with no falsifiability row: {missing}"
+
+    absent = sorted(path for path in covered if not (SKILL / path).exists())
+    assert not absent, (
+        f"falsifiability rows name paths that do not exist: {absent}. "
+        "A row against a missing file applies its mutation to nothing."
+    )
