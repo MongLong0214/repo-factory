@@ -30,15 +30,20 @@ jobs:
       # by path, so there is no package for setuptools to discover and `pip install -e .` fails
       # on the flat layout. pyproject.toml stays the one place the versions are declared, and
       # this reads them from it rather than repeating them here.
+      # Runtime dependencies and the test extra, both. Installing only the test extra is how
+      # `jsonschema` passed every test while a clean host running `scripts/plan.py` raised
+      # ModuleNotFoundError: the runner happened to have it for a reason unrelated to the runtime.
       - name: install python dependencies
         run: |
-          python - <<'PY' > /tmp/test-requirements.txt
+          python - <<'PY' > /tmp/requirements.txt
           import tomllib
           with open("pyproject.toml", "rb") as handle:
-              print("\n".join(tomllib.load(handle)["project"]["optional-dependencies"]["test"]))
+              project = tomllib.load(handle)["project"]
+          print("\n".join(project.get("dependencies", [])))
+          print("\n".join(project.get("optional-dependencies", {}).get("test", [])))
           PY
-          cat /tmp/test-requirements.txt
-          python -m pip install --disable-pip-version-check -r /tmp/test-requirements.txt
+          cat /tmp/requirements.txt
+          python -m pip install --disable-pip-version-check -r /tmp/requirements.txt
 
       - name: read the pinned control-plane commit
         id: pin

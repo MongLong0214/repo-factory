@@ -26,6 +26,12 @@
       "description": "Intent only. Public exposure is an owner gate regardless of what this says (PRD §7 Phase F).",
       "enum": ["private", "public"]
     },
+    "remoteOwner": {
+      "description": "The GitHub account the repositories are created under. Absent means the deployment default. It lives in the request rather than in deployment configuration because the Plan digest has to determine the effect: two identical requests must not compile to the same Plan and then create repositories under different accounts.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
+    },
     "ownerConstraints": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },

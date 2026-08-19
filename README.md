@@ -67,7 +67,7 @@ templates/kit/scripts/
   autopilot.py                        ready 계산, dispatch, lease, 복구, 롤백
   merge-broker.py                     머지 중재, exact-head, idempotency
   governance.py                       계약 검증, 온라인 상태 유도, manifest
-tests/                                298건
+tests/                                컴파일러·포트·계약 회귀
 ```
 
 ## 실행
@@ -100,7 +100,7 @@ python3 scripts/autopilot.py reconcile --root . --online
 ## 테스트
 
 ```bash
-python3 -m pytest tests/ -q     # 298건. unittest discover 는 parametrize 를 건너뛴다
+python3 -m pytest tests/ -q     # unittest discover 는 parametrize 를 건너뛴다
 ```
 
 ## 알려진 한계
