@@ -20,7 +20,17 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from apply import ReceiptLedger, apply_plan  # noqa: E402
+from apply import ReceiptLedger, apply_plan, authorized_plan_receipt  # noqa: E402
+
+
+def approval(plan_core, authority: str = "OWNER"):
+    """A receipt the approver would have produced for exactly this plan.
+
+    Built with the production helper so a test cannot approve a plan in a way a real caller
+    could not. Tests about tampering modify what this returns."""
+    return authorized_plan_receipt(plan_core, authority=authority, actor="owner:isaac",
+                                   approved_at="2026-08-19T09:00:00Z")
+
 from plan import compile_plan, diff_summary  # noqa: E402
 from publish import publish_receipt  # noqa: E402
 from result import build_result  # noqa: E402
@@ -173,14 +183,14 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
     identity = "github:MongLong0214/ledger"
     with tempfile.TemporaryDirectory() as scratch:
         book = Path(scratch) / "r.json"
-        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files", authorization=approval(compiled["planCore"]))
         ledger = ReceiptLedger(book)
         ledger.record(publish_receipt(compiled["planCore"], {
             "repositoryIdentity": identity, "head": "a" * 40, "branches": ["main", "dev"],
             "committedPaths": sorted(compiled["files"]),
             "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
         }, clock=lambda: "2026-08-19T10:00:00Z"))
-        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
+        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files", authorization=approval(compiled["planCore"]))
     receipts = before["receipts"] + after["receipts"]
     assert {r["operationId"] for r in receipts} == {
         op["operationId"] for op in compiled["planCore"]["githubOperations"]

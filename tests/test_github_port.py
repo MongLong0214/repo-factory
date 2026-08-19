@@ -12,7 +12,19 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from apply import OWNER_AUTHORIZATION_REQUIRED, ApplyError, ReceiptLedger, apply_plan  # noqa: E402
+from apply import (  # noqa: E402
+    OWNER_AUTHORIZATION_REQUIRED, ApplyError, ReceiptLedger, apply_plan, authorized_plan_receipt,
+)
+
+
+def approval(plan_core, authority: str = "OWNER"):
+    """A receipt the approver would have produced for exactly this plan.
+
+    Built with the production helper so a test cannot approve a plan in a way a real caller
+    could not. Tests about tampering modify what this returns."""
+    return authorized_plan_receipt(plan_core, authority=authority, actor="owner:isaac",
+                                   approved_at="2026-08-19T09:00:00Z")
+
 from github_port import GhCliPort, GhError, parse_identity  # noqa: E402
 
 
@@ -130,7 +142,7 @@ def test_a_hermes_plan_that_would_create_a_public_repository_is_refused(tmp_path
             raise AssertionError("nothing may be created under an insufficient authorization")
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan, NeverCalled(), ReceiptLedger(tmp_path / "r.json"))
+        apply_plan(plan, NeverCalled(), ReceiptLedger(tmp_path / "r.json"), authorization=approval(plan))
 
     assert caught.value.code == OWNER_AUTHORIZATION_REQUIRED
     assert caught.value.evidence["repositories"] == ["github:MongLong0214/alpha"]
@@ -160,7 +172,7 @@ def test_the_same_plan_under_owner_authorisation_proceeds(tmp_path):
             # compares the approved state against a stub that could never disagree with it.
             self.state[identity] = {"identity": identity, **spec}
 
-    result = apply_plan(plan, Fake(), ReceiptLedger(tmp_path / "r.json"))
+    result = apply_plan(plan, Fake(), ReceiptLedger(tmp_path / "r.json"), authorization=approval(plan))
 
     assert result["completed"] is True
 
