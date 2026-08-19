@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from render_ci import available_stacks, render
+from render_ci import available_stacks, effective_values, render
 
 __all__ = ["materialize", "MANIFEST_PATH", "CI_PATH", "SKELETONS", "ARTIFACT_EVIDENCE",
            "SPEC_PATH", "ADR_PATH", "ACCEPTANCE_PATH", "ROLLBACK_PATH", "artifact_coverage"]
@@ -192,14 +192,20 @@ def _rollback(project_id: str) -> str:
     ])
 
 
-def _python_skeleton(project_id: str) -> Dict[str, str]:
+def _python_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
     module = project_id.replace("-", "_")
     return {
         "pyproject.toml": (
             '[project]\n'
             f'name = "{project_id}"\n'
             'version = "0.1.0"\n'
-            'requires-python = ">=3.11"\n'
+            # CI 매트릭스 하한과 같은 값에서 나온다. 두 곳에서 따로 정하면 어긋나고,
+            # 어긋난 채로 생성 저장소의 첫 CI 가 빨간색이 된다 — 실측된 그 실패다.
+            f'requires-python = ">={values["RUNTIME_LOWER"]}"\n'
+            # 테스트 의존성을 선언한다. 선언 없이 설치 명령만 테스트를 부르면
+            # `No module named pytest` 로 죽는다 — 이것도 실측이다.
+            '\n[project.optional-dependencies]\n'
+            'test = ["pytest>=8"]\n'
             '\n[build-system]\n'
             'requires = ["setuptools>=68"]\n'
             'build-backend = "setuptools.build_meta"\n'
@@ -215,9 +221,11 @@ def _python_skeleton(project_id: str) -> Dict[str, str]:
     }
 
 
-def _go_skeleton(project_id: str, owner: str = "MongLong0214") -> Dict[str, str]:
+def _go_skeleton(project_id: str, values: Dict[str, str],
+                 owner: str = "MongLong0214") -> Dict[str, str]:
     return {
-        "go.mod": f"module github.com/{owner}/{project_id}\n\ngo 1.22\n",
+        "go.mod": (f"module github.com/{owner}/{project_id}\n\n"
+                   f"go {values['RUNTIME_LOWER']}\n"),
         "greet.go": ('package main\n\nimport "fmt"\n\n'
                      'func Greet(who string) string { return fmt.Sprintf("hello, %s", who) }\n\n'
                      'func main() { fmt.Println(Greet("world")) }\n'),
@@ -228,9 +236,11 @@ def _go_skeleton(project_id: str, owner: str = "MongLong0214") -> Dict[str, str]
     }
 
 
-def _rust_skeleton(project_id: str) -> Dict[str, str]:
+def _rust_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
     return {
-        "Cargo.toml": f'[package]\nname = "{project_id.replace("-", "_")}"\nversion = "0.1.0"\nedition = "2021"\n',
+        "Cargo.toml": (f'[package]\nname = "{project_id.replace("-", "_")}"\n'
+                       'version = "0.1.0"\nedition = "2021"\n'
+                       f'rust-version = "{values["RUNTIME_LOWER"]}"\n'),
         "src/lib.rs": ('pub fn greet(who: &str) -> String { format!("hello, {who}") }\n\n'
                        '#[cfg(test)]\nmod tests {\n    use super::greet;\n\n'
                        '    #[test]\n    fn greet_names_its_argument() {\n'
@@ -238,7 +248,7 @@ def _rust_skeleton(project_id: str) -> Dict[str, str]:
     }
 
 
-def _node_skeleton(project_id: str) -> Dict[str, str]:
+def _node_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
     """`npm install` 과 `npm test` 가 실제로 무언가를 하는 최소 골격.
 
     골격 없이 CI 를 만들면 워크플로는 렌더되는데 첫 실행이 빨간색이고, 그 빨간색은
@@ -249,6 +259,8 @@ def _node_skeleton(project_id: str) -> Dict[str, str]:
         "private": True,
         "type": "module",
         "main": "index.js",
+        # CI 매트릭스 하한과 같은 값. `engines` 는 약속이고, 확인하는 것이 없으면 거짓말이다.
+        "engines": {"node": f">={values['RUNTIME_LOWER']}"},
         "scripts": {"test": "node --test"},
     }
     return {
@@ -293,11 +305,14 @@ def materialize(
             raise ValueError(
                 f"no reviewed template for stack {stack!r}; available: {available_stacks()}"
             )
-        files[CI_PATH] = render(stack, ci_values or {})
+        # 골격과 CI 가 **같은 값 하나**를 읽는다. 따로 읽으면 생성물이 자기 CI 와 모순된다.
+        values = effective_values(stack, ci_values)
+        files[CI_PATH] = render(stack, values)
         skeleton = SKELETONS.get(stack)
         if skeleton is not None:
             # go.mod 의 module 경로는 소유자를 담는다 — 여기서도 요청이 정한 값을 쓴다.
-            files.update(skeleton(project_id, remote_owner) if stack == "go" else skeleton(project_id))
+            files.update(skeleton(project_id, values, remote_owner) if stack == "go"
+                         else skeleton(project_id, values))
 
     # 프로파일이 요구한 것만 만든다. §6.1 이 금지하는 것은 형식 충족용 문서 생성이므로,
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.

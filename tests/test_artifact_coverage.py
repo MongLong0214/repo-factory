@@ -15,6 +15,7 @@ from materialize import (  # noqa: E402
     artifact_coverage,
 )
 from plan import compile_plan, load_profile  # noqa: E402
+from render_ci import effective_values  # noqa: E402
 
 VER = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary", "cwd": ".",
         "timeoutSeconds": 600, "envAllowlist": ["CI"], "network": "deny", "required": True}]
@@ -101,7 +102,7 @@ def test_every_default_stack_has_a_runnable_skeleton(stack: str):
     # A workflow with nothing to run is a red first CI that blames the project for the
     # factory having built half a repository.
     assert stack in SKELETONS
-    files = SKELETONS[stack]("demo-project")
+    files = SKELETONS[stack]("demo-project", effective_values(stack))
     assert files, stack
     # Rust puts unit tests inside the module under `#[cfg(test)]`, so a path check would call a
     # conventional Rust crate untested. What matters is that something asserts.
@@ -121,3 +122,62 @@ def test_a_stack_with_a_skeleton_reports_no_skeleton_gap(stack: str):
                          operation_id="11111111-2222-3333-4444-555555555555")
 
     assert not any("skeleton" in gap for gap in result["unresolvedGaps"])
+
+
+# --- 생성물은 자기 CI 와 같은 사실을 말한다 -------------------------------------------
+
+# 생성 프로젝트가 런타임 하한을 선언하는 자리. 없으면 이 스택은 약속을 안 한 것이고,
+# 그건 검사할 것이 없다는 뜻이지 통과가 아니다.
+# 기본값과 반드시 다른 하한. 같으면 하드코딩을 구별하지 못한다.
+OVERRIDDEN_LOWER = {"python": "3.10", "go": "1.21", "rust": "1.75", "node": "18"}
+
+RUNTIME_DECLARATIONS = {
+    "python": ("pyproject.toml", r'requires-python = ">=([^"]+)"'),
+    "go": ("go.mod", r"^go (\S+)$"),
+    "rust": ("Cargo.toml", r'rust-version = "([^"]+)"'),
+    "node": ("package.json", r'"node":\s*">=([^"]+)"'),
+}
+
+
+@pytest.mark.parametrize("stack", sorted(RUNTIME_DECLARATIONS))
+def test_the_skeleton_declares_the_runtime_the_ci_matrix_actually_runs(stack: str):
+    """공장이 만든 프로젝트가 공장이 만든 CI 와 모순되면 안 된다.
+
+    실측: 생성된 `pyproject.toml` 이 `requires-python = ">=3.11"` 을 선언했고 CI 매트릭스
+    하한은 3.9 였다. 생성 저장소의 **첫 CI 가 빨간색**이었다 —
+    `Package 'rf-dogfood-c-python' requires a different Python: 3.9.25 not in '>=3.11'`.
+    두 값이 서로를 모르는 두 곳에서 나왔기 때문이고, 그것을 확인하는 것이 없었다.
+
+    `references/dogfooding-loop.md` §1 이 이름까지 붙여 경고하는 결함을 공장이 생성하고
+    있었다: 런타임 하한은 약속이고, 확인하는 것이 없으면 거짓말이 된다.
+    """
+    import re
+
+    path, pattern = RUNTIME_DECLARATIONS[stack]
+    # 기본값 하나만 보면 하드코딩된 값이 마침 기본값과 같을 때 통과한다 — 실제로 깨진
+    # 경우는 **호출자가 하한을 덮었을 때**이고, 그 경우가 여기 없으면 검사가 자기 대상을
+    # 안 쥔다. 덮어쓴 값으로도 본다.
+    for override in (None, {"RUNTIME_LOWER": OVERRIDDEN_LOWER[stack]}):
+        values = effective_values(stack, override)
+        files = SKELETONS[stack]("demo-project", values)
+        assert path in files, f"{stack} skeleton has no {path}"
+        found = re.search(pattern, files[path], re.MULTILINE)
+        assert found, f"{stack}: {path} declares no runtime lower bound"
+        assert found.group(1) == values["RUNTIME_LOWER"], (
+            f"{stack}: {path} claims {found.group(1)} and the CI matrix runs "
+            f"{values['RUNTIME_LOWER']}. One of them is a lie and CI is where it is discovered."
+        )
+
+
+def test_the_python_skeleton_declares_the_dependency_its_test_command_needs():
+    """실측: 3.12 잡이 `No module named pytest` 로 죽었다. 설치 명령은 프로젝트가 선언한
+    것만 설치할 수 있고, 프로젝트가 pytest 를 선언하지 않았다."""
+    values = effective_values("python")
+    files = SKELETONS["python"]("demo-project", values)
+
+    assert "pytest" in files["pyproject.toml"], "the test lane installs nothing that can run pytest"
+    # 설치 명령이 그 extra 를 실제로 부르는가. 선언만 하고 안 부르면 같은 자리에서 같이 죽는다.
+    assert "[test]" in values["INSTALL_CMD"], (
+        f"the skeleton declares a `test` extra and the install command does not ask for it: "
+        f"{values['INSTALL_CMD']!r}"
+    )

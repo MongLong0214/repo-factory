@@ -403,6 +403,19 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ('        if prior is not None and prior.get("verified"):', "        if False:"),
         "killed_by": ["tests/test_pipeline_cli.py::test_a_finished_genesis_push_resumes_instead_of_pushing_again"],
     },
+    {
+        "name": "the skeleton's runtime declaration comes from the CI values",
+        "file": "scripts/materialize.py",
+        "mutate": ('            f\'requires-python = ">={values["RUNTIME_LOWER"]}"\\n\'',
+                   '            \'requires-python = ">=3.11"\\n\''),
+        "killed_by": ["tests/test_artifact_coverage.py::test_the_skeleton_declares_the_runtime_the_ci_matrix_actually_runs"],
+    },
+    {
+        "name": "the python skeleton declares the dependency its test lane runs",
+        "file": "scripts/materialize.py",
+        "mutate": ('            \'test = ["pytest>=8"]\\n\'', '            \'test = []\\n\''),
+        "killed_by": ["tests/test_artifact_coverage.py::test_the_python_skeleton_declares_the_dependency_its_test_command_needs"],
+    },
 ]
 
 
@@ -503,7 +516,7 @@ def test_every_guarded_file_appears_in_the_table():
     # stops applying to anything.
     guarded = {"scripts/plan.py", "scripts/apply.py", "scripts/publish.py",
                "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py",
-               "scripts/authorize.py"}
+               "scripts/authorize.py", "scripts/materialize.py"}
     covered = {str(g["file"]) for g in GUARDS}
 
     missing = sorted(guarded - covered)

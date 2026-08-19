@@ -35,7 +35,7 @@ _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SETUP_ACTION = re.compile(r"uses:\s*(actions/setup-|dtolnay/rust-toolchain)")
 _ECHO_ONLY_STEP = re.compile(r"run:\s*echo\b[^\n]*$", re.MULTILINE)
 
-__all__ = ["CiRenderError", "available_stacks", "render", "ci_findings", "required_tokens"]
+__all__ = ["CiRenderError", "available_stacks", "render", "effective_values", "DEFAULT_VALUES", "ci_findings", "required_tokens"]
 
 
 class CiRenderError(ValueError):
@@ -60,8 +60,39 @@ def _template(stack: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# 스택별 기본값. 골격을 만드는 쪽과 CI 를 만드는 쪽이 **같은 사실을 두 곳에서 따로 말하던**
+# 것이 실측 결함이었다: 생성된 `pyproject.toml` 이 `requires-python = ">=3.11"` 을 선언하는데
+# CI 매트릭스 하한은 호출자가 준 3.9 였고, 생성 저장소의 첫 CI 가 빨간색이었다
+# (`Package requires a different Python: 3.9.25 not in '>=3.11'`). 그리고 3.12 잡은
+# `No module named pytest` 로 죽었다 — 설치 명령이 테스트 의존성을 모르는 명령이었기 때문이다.
+#
+# 기본값을 공장이 갖고, 호출자 값이 그 위에 덮인다. 그러면 `--ci-values` 없이도 생성물과 CI 가
+# 서로를 안다. 덮어쓰는 쪽이 어긋나게 만들 수는 여전히 있고, 그건 호출자가 아는 채로 하는 일이다.
+DEFAULT_VALUES: Dict[str, Dict[str, str]] = {
+    "node": {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22",
+             "INSTALL_CMD": "npm install", "TEST_CMD": "npm test",
+             "BUILD_CMD": "node --check index.js"},
+    "python": {"RUNTIME_LOWER": "3.11", "RUNTIME_LATEST": "3.13",
+               "INSTALL_CMD": 'python -m pip install -e ".[test]"',
+               "TEST_CMD": "python -m pytest -q",
+               "BUILD_CMD": "python -m compileall -q ."},
+    "go": {"RUNTIME_LOWER": "1.22", "RUNTIME_LATEST": "1.23",
+           "INSTALL_CMD": "go mod download", "TEST_CMD": "go test ./...",
+           "BUILD_CMD": "go build ./..."},
+    "rust": {"RUNTIME_LOWER": "1.77", "RUNTIME_LATEST": "stable",
+             "INSTALL_CMD": "cargo fetch", "TEST_CMD": "cargo test",
+             "BUILD_CMD": "cargo build"},
+}
+
+
+def effective_values(stack: str, values: Dict[str, str] = None) -> Dict[str, str]:
+    """공장의 기본값 위에 호출자 값을 덮은 것. 골격과 CI 가 **이것 하나**를 읽는다."""
+    return {**DEFAULT_VALUES.get(stack, {}), **(values or {})}
+
+
 def render(stack: str, values: Dict[str, str]) -> str:
     """토큰을 값으로 바꾸고, 모자란 값은 빈 문자열이 아니라 실패로 만든다."""
+    values = effective_values(stack, values)
     text = _template(stack)
     needed = set(_TOKEN.findall(text))
     missing = sorted(needed.difference(values))
