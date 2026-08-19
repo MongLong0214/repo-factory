@@ -416,6 +416,13 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ('            \'test = ["pytest>=8"]\\n\'', '            \'test = []\\n\''),
         "killed_by": ["tests/test_artifact_coverage.py::test_the_python_skeleton_declares_the_dependency_its_test_command_needs"],
     },
+    {
+        "name": "the required check names the app that must report it",
+        "file": "scripts/plan.py",
+        "mutate": ('                                 "integration_id": RULESET_CHECK_REPORTER_APP_ID}]}},',
+                   "                                 }]}},"),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_body_is_in_the_plan_and_not_only_its_name"],
+    },
 ]
 
 
