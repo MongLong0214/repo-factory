@@ -34,7 +34,7 @@ __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
     "UNKNOWN_PHASE", "UNSUPPORTED_INTENT", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
-    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED", "AUTHORIZATION_MISSING",
+    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED", "REMOTE_REFUSED", "AUTHORIZATION_MISSING",
     "AUTHORIZATION_INSUFFICIENT", "AUTHORIZATION_SPENT", "AUTHORITY_RANK",
     "authorized_plan_receipt",
     "PHASES",
@@ -46,6 +46,7 @@ PHASES = ("before-files", "after-files")
 AUTHORITY_RANK = {"HERMES": 0, "OWNER": 1}
 PUBLISH_OPERATION = "publish:{identity}"
 
+REMOTE_REFUSED = "REMOTE_REFUSED"
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
 PLAN_INTENT_CHANGED = "PLAN_INTENT_CHANGED"
 REREAD_MISMATCH = "REREAD_MISMATCH"
@@ -296,6 +297,19 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
     # `desiredState.private` 가 실행된다. 두 자리가 어긋나면 게이트가 승인한 것과 만들어질
     # 것이 다르고, 어느 쪽도 그 사실을 모른다.
     by_identity = {r["identity"]: r for r in plan.get("repositories", [])}
+
+    def refuse(operation_id: str, error: Exception, applied: List[Dict[str, Any]]) -> "ApplyError":
+        """포트가 올린 실패를 영수증과 함께 돌려준다.
+
+        포트 오류가 그대로 빠져나가면 이 계층이 존재하는 이유가 사라진다 — §16.4 는 일부만
+        성공했을 때 **완료된 것과 안전한 재개 지점을 그대로 보고**하라고 하는데, 예외가
+        위로 새면 그 목록이 스택 트레이스가 된다. 실측: private 저장소에 ruleset 을 만드는
+        403(GitHub Pro 필요)이 세 개의 검증된 영수증을 트레이스백 뒤에 묻었다.
+        """
+        return ApplyError(REMOTE_REFUSED,
+                          f"{operation_id} was refused by the remote: {str(error)[:300]}",
+                          applied, {"operationId": operation_id, "remote": str(error)[:300]})
+
     for operation in plan["githubOperations"]:
         if operation["resourceType"] != "repository":
             continue
@@ -405,7 +419,12 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              f"not perform; an intent nobody implements is not a plan that ran",
                              applied, {"operationId": operation_id, "intent": intent})
 
-        observed = port.observe(operation["resourceType"], operation["resourceIdentity"])
+        try:
+            observed = port.observe(operation["resourceType"], operation["resourceIdentity"])
+        except ApplyError:
+            raise
+        except Exception as error:
+            raise refuse(operation_id, error, applied) from error
         if intent == "create" and observed is not None:
             # 이름은 같은데 이 Bootstrap 의 영수증이 없다. 우리 것이라고 추정하지 않는다.
             raise ApplyError(RESOURCE_COLLISION,
@@ -425,13 +444,18 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         # 그 시각에 재조회는 아직 일어나지 않았다 — §16.2 가 요구하는 것은 재조회가 있었다는
         # 사실이고, 영수증은 그것이 언제였는지를 말해야 한다.
         created_at = now()
-        if intent == "create":
-            port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
-        else:
-            port.update(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
+        try:
+            if intent == "create":
+                port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
+            else:
+                port.update(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
 
-        # §16.2 — 다시 읽는다. 명령이 성공했다는 것과 원격이 기대대로라는 것은 다르다.
-        after = port.observe(operation["resourceType"], operation["resourceIdentity"])
+            # §16.2 — 다시 읽는다. 명령이 성공했다는 것과 원격이 기대대로라는 것은 다르다.
+            after = port.observe(operation["resourceType"], operation["resourceIdentity"])
+        except ApplyError:
+            raise
+        except Exception as error:
+            raise refuse(operation_id, error, applied) from error
         if after is None:
             raise ApplyError(REREAD_MISMATCH,
                              f"{operation['resourceIdentity']} is absent when re-read after a successful "

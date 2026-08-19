@@ -15,6 +15,7 @@ failure, not an omission.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -364,6 +365,24 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ("            verification_commands=commands,", "            verification_commands=verification_commands,"),
         "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
     },
+    {
+        "name": "a refused observation is reported with its receipts, not raised through",
+        "file": "scripts/apply.py",
+        "mutate": ('            raise refuse(operation_id, error, applied) from error\n        if intent == "create" and observed is not None:',
+                   '            raise\n        if intent == "create" and observed is not None:'),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_remote_that_will_not_answer_is_reported_the_same_way"],
+    },
+    {
+        "name": "a refused write is reported with its receipts, not raised through",
+        "file": "scripts/apply.py",
+        "mutate": ('            after = port.observe(operation["resourceType"], operation["resourceIdentity"])\n'
+                   '        except ApplyError:\n            raise\n        except Exception as error:\n'
+                   '            raise refuse(operation_id, error, applied) from error',
+                   '            after = port.observe(operation["resourceType"], operation["resourceIdentity"])\n'
+                   '        except ApplyError:\n            raise\n        except Exception as error:\n'
+                   '            raise'),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_remote_refusal_reports_the_receipts_and_a_resume_point"],
+    },
 ]
 
 
@@ -393,10 +412,7 @@ def test_removing_the_guard_kills_a_named_test(guard: Dict[str, object], tree: P
     )
     target.write_text(original.replace(find, replace, 1), encoding="utf-8")
     try:
-        done = subprocess.run(
-            [sys.executable, "-m", "pytest", "-x", "-q", *guard["killed_by"]],  # type: ignore[misc]
-            cwd=str(tree), capture_output=True, text=True, timeout=600,
-        )
+        done = _run_killing_tests(tree, guard["killed_by"])  # type: ignore[misc]
     finally:
         target.write_text(original, encoding="utf-8")
 
@@ -405,6 +421,56 @@ def test_removing_the_guard_kills_a_named_test(guard: Dict[str, object], tree: P
         "The test does not hold its own subject: it would pass whether or not the guard exists.\n"
         f"{done.stdout[-1200:]}"
     )
+
+
+def _run_killing_tests(tree: Path, killed_by) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-x", "-q", *killed_by],
+        cwd=str(tree), capture_output=True, text=True, timeout=600,
+        # 바이트코드를 쓰지 않는다. 이 하네스가 통과처럼 보이게 죽는 방식이 정확히 여기였다:
+        # `.pyc` 유효성은 (원본 mtime 초, 크기) 로 판정되는데, 한 파일에 대한 두 행이 **같은
+        # 길이의 문자열**을 지우면 크기가 같고, 연달아 돌면 초도 같다. 그러면 두 번째 행이
+        # 첫 번째 행의 뮤테이션으로 컴파일된 모듈을 실행한다 — 그 모듈에는 두 번째 가드가
+        # 멀쩡히 있으므로 테스트가 통과하고, 하네스는 "가드를 지웠는데 아무도 안 죽었다" 를
+        # 보고한다. 3회 중 2회 재현됐다.
+        #
+        # 검사가 자기 대상을 안 쥔 자리가 하나 더 있었고, 그게 이 파일이었다.
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+
+def test_a_row_is_measured_against_its_own_mutation_and_not_the_previous_one(tree: Path):
+    """두 행이 한 파일에서 **같은 길이**의 문자열을 지우면 크기가 같다. 연달아 돌면 mtime 의
+    초도 같아서, 파이썬이 앞 행의 뮤테이션으로 컴파일한 모듈을 뒤 행의 원본에 대해 유효하다고
+    본다. 뒤 행은 자기가 지운 가드가 살아 있는 모듈을 재고, 통과한다.
+
+    여기서는 mtime 을 명시적으로 맞춰 그 충돌을 확정적으로 만든다 — 실제로는 3회 중 2회만
+    재현됐고, **간헐적으로 통과처럼 보이는 가드 검사가 없는 것보다 나쁘다.**
+    """
+    rows = [g for g in GUARDS if g["file"] == "scripts/apply.py"]
+    pairs = [(a, b) for i, a in enumerate(rows) for b in rows[i + 1:]
+             if len(a["mutate"][0]) - len(a["mutate"][1]) == len(b["mutate"][0]) - len(b["mutate"][1])]
+    if not pairs:
+        pytest.skip("no two rows over one file currently delete the same number of bytes")
+    first, second = pairs[0]
+
+    target = tree / "scripts" / "apply.py"
+    original = target.read_text(encoding="utf-8")
+    stamp = target.stat().st_mtime
+    try:
+        for guard in (first, second):
+            find, replace = guard["mutate"]
+            target.write_text(original.replace(find, replace, 1), encoding="utf-8")
+            os.utime(target, (stamp, stamp))
+            done = _run_killing_tests(tree, guard["killed_by"])
+            assert done.returncode != 0, (
+                f"{guard['name']!r} was measured against a module it did not mutate.\n"
+                f"{done.stdout[-800:]}"
+            )
+            target.write_text(original, encoding="utf-8")
+            os.utime(target, (stamp, stamp))
+    finally:
+        target.write_text(original, encoding="utf-8")
 
 
 def test_every_guarded_file_appears_in_the_table():
