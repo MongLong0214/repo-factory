@@ -65,7 +65,7 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "the ruleset is planned after the files exist",
         "file": "scripts/plan.py",
-        "mutate": ('"phase": "after-files"}', '"phase": "before-files"}'),
+        "mutate": ('"phase": "after-files",', '"phase": "before-files",'),
         "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_is_planned_after_the_files_and_the_repository_before_them"],
     },
     {
@@ -148,6 +148,32 @@ GUARDS: List[Dict[str, object]] = [
         "file": "pyproject.toml",
         "mutate": ('dependencies = [\n  "jsonschema==4.23.0",\n]', "dependencies = []"),
         "killed_by": ["tests/test_declared_dependencies.py"],
+    },
+    {
+        "name": "the effect that gets created is the one inside the approved operation",
+        "file": "scripts/apply.py",
+        "mutate": ('port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])',
+                   'port.create(operation["resourceType"], operation["resourceIdentity"], {})'),
+        "killed_by": ["tests/test_slice3_apply.py"],
+    },
+    {
+        "name": "the approved exposure and the exposure that will be created must agree",
+        "file": "scripts/apply.py",
+        "mutate": ('if operation.get("desiredState", {}).get("private") != approved_private:',
+                   "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_an_operation_that_would_create_something_other_than_what_was_approved_is_refused"],
+    },
+    {
+        "name": "the post-write re-read compares the approved state, not only existence",
+        "file": "scripts/apply.py",
+        "mutate": ('gaps = _state_gap(operation["desiredState"], after)', "gaps = []"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_resource_created_in_a_state_the_plan_did_not_approve_is_refused"],
+    },
+    {
+        "name": "the ruleset body is in the plan, not only its name",
+        "file": "scripts/plan.py",
+        "mutate": ('"desiredState": ruleset_desired_state()}', '"desiredState": {}}'),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_body_is_in_the_plan_and_not_only_its_name"],
     },
 ]
 

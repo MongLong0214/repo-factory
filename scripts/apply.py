@@ -31,14 +31,18 @@ from canonical import digest
 
 __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
-    "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "OPERATION_NOT_IN_PLAN",
+    "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH",
     "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
 ]
 
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
 PLAN_INTENT_CHANGED = "PLAN_INTENT_CHANGED"
 REREAD_MISMATCH = "REREAD_MISMATCH"
-OPERATION_NOT_IN_PLAN = "OPERATION_NOT_IN_PLAN"
+# OPERATION_NOT_IN_PLAN is gone with the `specs` argument it guarded. It refused a creation
+# parameter naming an operation the plan did not contain — a real hole while the effect lived
+# outside the plan, and unreachable now that the only effect an operation can have is the one
+# written inside it. A refusal no input can reach is not protection; it is an answer of "yes"
+# to "is this checked?".
 OWNER_AUTHORIZATION_REQUIRED = "OWNER_AUTHORIZATION_REQUIRED"
 RESUMED_RESOURCE_ABSENT = "RESUMED_RESOURCE_ABSENT"
 
@@ -117,23 +121,76 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _state_gap(desired: Any, observed: Any, path: str = "") -> List[str]:
+    """승인된 상태가 관측된 상태 **안에** 있는지 본다.
+
+    같은지가 아니라 안에 있는지다. GitHub 은 우리가 안 적은 필드를 채워서 돌려주고
+    (`bypass_actors` 의 기본값, 규칙 파라미터의 기본값), 완전 일치를 요구하면 옳게 만들어진
+    리소스가 매번 불일치로 걸린다. Plan 이 말한 것만 대조하고, 말하지 않은 것은 판단하지
+    않는다 — 판단하지 않는다는 사실이 Plan 에 그대로 남아 있다.
+
+    규칙 목록은 순서가 아니라 `type` 으로 맞춘다. 같은 규칙 집합을 다른 순서로 돌려주는 것은
+    같은 보호이고, 그것을 위반으로 부르면 통과할 수 없는 검사가 된다."""
+    gaps: List[str] = []
+    if isinstance(desired, dict):
+        if not isinstance(observed, dict):
+            return [f"{path or '<root>'}: expected an object, observed {type(observed).__name__}"]
+        for key in sorted(desired):
+            here = f"{path}.{key}" if path else key
+            if key not in observed:
+                gaps.append(f"{here}: absent from the re-read")
+                continue
+            gaps.extend(_state_gap(desired[key], observed[key], here))
+        return gaps
+    if isinstance(desired, list):
+        if not isinstance(observed, list):
+            return [f"{path or '<root>'}: expected a list, observed {type(observed).__name__}"]
+        keyed = all(isinstance(item, dict) and "type" in item for item in desired)
+        if keyed:
+            by_type = {item.get("type"): item for item in observed if isinstance(item, dict)}
+            for item in desired:
+                kind = item["type"]
+                if kind not in by_type:
+                    gaps.append(f"{path}[type={kind}]: absent from the re-read")
+                    continue
+                gaps.extend(_state_gap(item, by_type[kind], f"{path}[type={kind}]"))
+            return gaps
+        if desired != observed:
+            gaps.append(f"{path or '<root>'}: approved {desired!r}, observed {observed!r}")
+        return gaps
+    if desired != observed:
+        gaps.append(f"{path or '<root>'}: approved {desired!r}, observed {observed!r}")
+    return gaps
+
+
 def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
-               *, specs: Dict[str, Dict[str, Any]] = None, clock=None,
-               phase: str = "before-files") -> Dict[str, Any]:
+               *, clock=None, phase: str = "before-files") -> Dict[str, Any]:
     """Plan 의 Operation 을 순서대로 수행하고 영수증 목록을 돌려준다.
 
-    `specs` 는 operationId → 생성 파라미터. Plan 에 없는 operationId 를 담고 있으면
-    거부한다 — Plan 밖의 쓰기가 spec 을 통해 새어드는 경로가 그것이다(§16.1)."""
-    specs = specs or {}
+    생성 파라미터는 Operation 의 `desiredState` 다. 한때 별도 `specs` 인자로 들어왔는데,
+    그러면 승인된 Plan digest 와 실제로 실행되는 effect 가 서로 다른 객체가 된다 — private
+    으로 승인된 Plan 이 public 저장소를 만들어도 digest 는 같았다(§16.1)."""
     # 시계는 주입 가능하지만 영수증마다 다시 읽힌다. 호출자가 값 하나를 건네고 그것이
     # createdAt 과 rereadAt 양쪽에 박히면, 일어나지 않은 시각의 재조회를 주장하게 된다.
     now = clock or _utc_now
-    planned = {op["operationId"]: op for op in plan["githubOperations"]}
-    stray = sorted(set(specs).difference(planned))
-    if stray:
-        raise ApplyError(OPERATION_NOT_IN_PLAN,
-                         f"spec supplied for operations the approved plan does not contain: {stray}",
-                         ledger.all(), {"operations": stray})
+    # 승인 게이트가 보는 값과 실제로 실행될 값이 같은 사실을 말하는지 본다. 저장소의
+    # 노출은 두 자리에 적힌다 — `repositories[].visibility` 를 게이트가 읽고 Operation 의
+    # `desiredState.private` 가 실행된다. 두 자리가 어긋나면 게이트가 승인한 것과 만들어질
+    # 것이 다르고, 어느 쪽도 그 사실을 모른다.
+    by_identity = {r["identity"]: r for r in plan.get("repositories", [])}
+    for operation in plan["githubOperations"]:
+        if operation["resourceType"] != "repository":
+            continue
+        repository = by_identity.get(operation["resourceIdentity"])
+        if repository is None:
+            continue
+        approved_private = repository.get("visibility") != "public"
+        if operation.get("desiredState", {}).get("private") != approved_private:
+            raise ApplyError(PLAN_INTENT_CHANGED,
+                             f"{operation['resourceIdentity']} is approved as "
+                             f"{repository.get('visibility')!r} and its operation would create it "
+                             f"private={operation.get('desiredState', {}).get('private')!r}",
+                             ledger.all(), {"operationId": operation["operationId"]})
 
     # RF-S25 — Hermes 가 승인한 Plan 이라도 Public 노출은 Owner 결정이다. 컴파일러가
     # 이미 authorization 을 OWNER 로 올리지만, 여기서 다시 본다. 계획을 만든 코드와
@@ -183,7 +240,7 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         # 그 시각에 재조회는 아직 일어나지 않았다 — §16.2 가 요구하는 것은 재조회가 있었다는
         # 사실이고, 영수증은 그것이 언제였는지를 말해야 한다.
         created_at = now()
-        port.create(operation["resourceType"], operation["resourceIdentity"], specs.get(operation_id, {}))
+        port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
 
         # §16.2 — 다시 읽는다. 명령이 성공했다는 것과 원격이 기대대로라는 것은 다르다.
         after = port.observe(operation["resourceType"], operation["resourceIdentity"])
@@ -191,6 +248,15 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
             raise ApplyError(REREAD_MISMATCH,
                              f"{operation['resourceIdentity']} is absent when re-read after a successful create",
                              applied, {"operationId": operation_id})
+
+        # §16.2 는 "다시 읽었다" 가 아니라 "기대한 것이 거기 있다" 를 요구한다. 존재만 확인하면
+        # `disabled` 로 만들어진 ruleset 과 `active` 로 만들어진 ruleset 이 같은 통과를 받는다.
+        gaps = _state_gap(operation["desiredState"], after)
+        if gaps:
+            raise ApplyError(REREAD_MISMATCH,
+                             f"{operation['resourceIdentity']} was created but does not match the "
+                             f"approved state: {'; '.join(gaps[:5])}",
+                             applied, {"operationId": operation_id, "gaps": gaps})
 
         receipt = _receipt(plan, operation, preexisting=False, before=None, after=after,
                            created_at=created_at, reread_at=now())

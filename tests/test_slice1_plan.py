@@ -313,6 +313,46 @@ def test_a_plan_without_an_observation_carries_no_reference():
     assert "environmentSnapshotId" not in compiled["planCore"]
 
 
+def test_the_ruleset_body_is_in_the_plan_and_not_only_its_name(tmp_path=None):
+    """A plan that carries only the ruleset's name approves a name. The protection it actually
+    provides — whether it is enforced, which refs it covers, which check it requires, who may
+    bypass it — decided the strength, and none of that entered the approved digest. Two plans
+    that differ only in `enforcement` had the same digest."""
+    core = compile_plan(REQUEST, VERIFICATION, stack="node", ci_values=CI_VALUES,
+                        operation_id="11111111-2222-3333-4444-555555555555")["planCore"]
+    ruleset = next(o for o in core["githubOperations"] if o["resourceType"] == "ruleset")
+    state = ruleset["desiredState"]
+
+    assert state["enforcement"] == "active"
+    assert state["target"] == "branch"
+    assert state["conditions"]["ref_name"]["include"] == ["refs/heads/main", "refs/heads/dev"]
+    assert state["bypass_actors"] == []
+    checks = next(r for r in state["rules"] if r["type"] == "required_status_checks")
+    assert checks["parameters"]["required_status_checks"] == [{"context": "project-ci"}]
+
+
+def test_the_repository_operation_states_the_exposure_it_will_create(tmp_path=None):
+    """The gate reads `repositories[].visibility`; the port writes the operation's state. Both
+    have to say the same thing, in the plan, or an approved private repository can be created
+    public without the digest moving."""
+    core = compile_plan(REQUEST, VERIFICATION, stack="node", ci_values=CI_VALUES,
+                        operation_id="11111111-2222-3333-4444-555555555555")["planCore"]
+    repository_op = next(o for o in core["githubOperations"] if o["resourceType"] == "repository")
+
+    assert repository_op["desiredState"] == {"private": True}
+    assert all(r["visibility"] == "private" for r in core["repositories"])
+
+
+def test_two_plans_that_differ_only_in_ruleset_strength_have_different_digests(tmp_path=None):
+    compiled = compile_plan(REQUEST, VERIFICATION, stack="node", ci_values=CI_VALUES,
+                            operation_id="11111111-2222-3333-4444-555555555555")["planCore"]
+    weakened = copy.deepcopy(compiled)
+    ruleset = next(o for o in weakened["githubOperations"] if o["resourceType"] == "ruleset")
+    ruleset["desiredState"]["enforcement"] = "disabled"
+
+    assert digest(compiled) != digest(weakened)
+
+
 def test_the_ruleset_is_planned_after_the_files_and_the_repository_before_them():
     # Asserted on the compiler's own output, not a hand-built plan: the phase is the compiler's
     # decision and a test that supplies its own phases proves nothing about it. A ruleset

@@ -141,7 +141,10 @@ class GhCliPort:
     def create(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
         owner, repo, ref = parse_identity(identity)
         if resource_type == "repository":
-            visibility = "--public" if spec.get("visibility") == "public" else "--private"
+            # Plan 의 어휘를 그대로 읽는다. 여기서 `visibility` 같은 다른 이름을 읽으면
+            # Plan 이 말한 것과 실행되는 것 사이에 번역이 하나 들어가고, 번역은 Plan 이
+            # private 이라고 적힌 채로 public 저장소가 만들어질 수 있는 자리다.
+            visibility = "--private" if spec.get("private", True) else "--public"
             argv = [self.gh, "repo", "create", f"{owner}/{repo}", visibility]
             if spec.get("description"):
                 argv += ["--description", str(spec["description"])]

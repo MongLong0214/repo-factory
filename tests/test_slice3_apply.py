@@ -11,7 +11,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    OPERATION_NOT_IN_PLAN, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
+    PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
     ApplyError, ReceiptLedger, apply_plan,
 )
 
@@ -34,13 +34,22 @@ class FakeGitHub:
             self.state[identity] = {"identity": identity, "type": resource_type, **spec}
 
 
-def plan(*names: str, request_digest: str = "sha256:" + "a" * 64) -> Dict[str, Any]:
+def plan(*names: str, request_digest: str = "sha256:" + "a" * 64,
+         desired: Dict[str, Any] = None, visibility: str = "private") -> Dict[str, Any]:
+    """`desiredState` 는 Operation 안에 있다. Plan 밖 인자로 옮기면 승인된 digest 가
+    실행될 effect 를 결정하지 못한다."""
     return {
         "bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
         "requestDigest": request_digest,
+        "repositories": [
+            {"role": "primary", "identity": f"github:MongLong0214/{n}", "visibility": visibility}
+            for n in names
+        ],
         "githubOperations": [
             {"operationId": f"create-repository:{n}", "resourceType": "repository",
-             "intent": "create", "resourceIdentity": f"github:MongLong0214/{n}"}
+             "intent": "create", "resourceIdentity": f"github:MongLong0214/{n}",
+             "desiredState": dict(desired) if desired is not None
+             else {"private": visibility != "public"}}
             for n in names
         ],
     }
@@ -114,16 +123,43 @@ def test_the_same_resource_under_a_changed_intent_is_refused(tmp_path):
 
 # --- RF-S24: plan-before-apply ---------------------------------------------------------
 
-def test_a_spec_for_an_unplanned_operation_is_refused_before_anything_is_written(tmp_path):
+def test_an_operation_that_would_create_something_other_than_what_was_approved_is_refused(tmp_path):
+    # The effect used to arrive in a separate `specs` argument, so an approved private plan and
+    # an executed public repository had the same plan digest — the gate read one object and the
+    # port wrote another. The effect is inside the operation now, and the two places that state
+    # a repository's exposure have to agree before anything is written.
     port = FakeGitHub()
+    smuggled = plan("alpha")
+    smuggled["githubOperations"][0]["desiredState"] = {"private": False}
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), port, ledger(tmp_path),
-                   specs={"create-repository:alpha": {}, "create-repository:smuggled": {"private": False}})
+        apply_plan(smuggled, port, ledger(tmp_path))
 
-    assert caught.value.code == OPERATION_NOT_IN_PLAN
-    assert "create-repository:smuggled" in caught.value.evidence["operations"]
+    assert caught.value.code == PLAN_INTENT_CHANGED
     assert port.creates == []
+
+
+def test_a_resource_created_in_a_state_the_plan_did_not_approve_is_refused(tmp_path):
+    # A re-read that only asks "is it there?" passes a ruleset created `disabled` exactly as it
+    # passes one created `active`. §16.2 asks whether what was approved is what is there.
+    class Drifting(FakeGitHub):
+        def create(self, resource_type, identity, spec):
+            self.creates.append(identity)
+            self.state[identity] = {**spec, "identity": identity, "enforcement": "disabled"}
+
+    port = Drifting()
+    drifted = plan("alpha")
+    drifted["githubOperations"] = [
+        {"operationId": "create-ruleset:alpha", "resourceType": "ruleset", "intent": "create",
+         "resourceIdentity": "github:MongLong0214/alpha#acp-managed-branches",
+         "desiredState": {"enforcement": "active", "target": "branch"}},
+    ]
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(drifted, port, ledger(tmp_path))
+
+    assert caught.value.code == REREAD_MISMATCH
+    assert any("enforcement" in gap for gap in caught.value.evidence["gaps"])
 
 
 # --- RF-S16: partial apply and deterministic resume ------------------------------------
@@ -240,7 +276,8 @@ def phased_plan(*names: str):
     core = plan(*names)
     core["githubOperations"] = [dict(op, phase="before-files") for op in core["githubOperations"]] + [
         {"operationId": f"create-ruleset:{n}", "resourceType": "ruleset", "intent": "create",
-         "resourceIdentity": f"github:MongLong0214/{n}#acp-managed-branches", "phase": "after-files"}
+         "resourceIdentity": f"github:MongLong0214/{n}#acp-managed-branches", "phase": "after-files",
+         "desiredState": {"enforcement": "active", "target": "branch"}}
         for n in names
     ]
     return core

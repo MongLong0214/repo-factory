@@ -77,9 +77,9 @@ def test_creating_a_repository_defaults_to_private():
     assert gh.seen[-1] == ["gh", "repo", "create", "MongLong0214/alpha", "--private"]
 
 
-def test_public_is_passed_through_only_when_the_spec_says_so():
+def test_public_is_passed_through_only_when_the_plan_state_says_so():
     gh = ScriptedGh([("repo create", (0, "", ""))])
-    GhCliPort(runner=gh).create("repository", "github:MongLong0214/alpha", {"visibility": "public"})
+    GhCliPort(runner=gh).create("repository", "github:MongLong0214/alpha", {"private": False})
 
     assert "--public" in gh.seen[-1]
 
@@ -118,7 +118,8 @@ def test_a_hermes_plan_that_would_create_a_public_repository_is_refused(tmp_path
         "authorization": "HERMES",
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/alpha", "visibility": "public"}],
         "githubOperations": [{"operationId": "create-repository:alpha", "resourceType": "repository",
-                              "intent": "create", "resourceIdentity": "github:MongLong0214/alpha"}],
+                              "intent": "create", "resourceIdentity": "github:MongLong0214/alpha",
+                              "desiredState": {"private": False}}],
     }
 
     class NeverCalled:
@@ -142,7 +143,8 @@ def test_the_same_plan_under_owner_authorisation_proceeds(tmp_path):
         "authorization": "OWNER",
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/alpha", "visibility": "public"}],
         "githubOperations": [{"operationId": "create-repository:alpha", "resourceType": "repository",
-                              "intent": "create", "resourceIdentity": "github:MongLong0214/alpha"}],
+                              "intent": "create", "resourceIdentity": "github:MongLong0214/alpha",
+                              "desiredState": {"private": False}}],
     }
 
     class Fake:
@@ -153,7 +155,10 @@ def test_the_same_plan_under_owner_authorisation_proceeds(tmp_path):
             return self.state.get(identity)
 
         def create(self, _t, identity, spec):
-            self.state[identity] = {"identity": identity}
+            # The created resource reflects what it was created with. A fake that drops `spec`
+            # cannot represent the thing it claims to have made, and the post-write re-read then
+            # compares the approved state against a stub that could never disagree with it.
+            self.state[identity] = {"identity": identity, **spec}
 
     result = apply_plan(plan, Fake(), ReceiptLedger(tmp_path / "r.json"))
 
