@@ -184,7 +184,11 @@
           "type": "string",
           "minLength": 1
         },
-        "phase": {
+        "desiredState": {
+    "description": "The effect this operation is approved to produce, written in the vocabulary the port observes with so the post-write re-read can compare the two without a translation between them. It is inside the operation because a plan digest that does not cover the effect does not determine it: an approved private repository and an executed public one had the same digest while the effect lived in a separate argument.",
+    "type": "object"
+  },
+  "phase": {
           "description": "When this operation runs relative to the genesis push. A ruleset that requires project-ci cannot exist before the commit that publishes the workflow — it would refuse the push that creates the repository's content.",
           "enum": [
             "before-files",

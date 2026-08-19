@@ -44,6 +44,39 @@ DEFAULT_REMOTE_OWNER = "MongLong0214"
 # id 는 GitHub 이 배정하므로 만들기 전에 우리가 쥘 수 있는 손잡이는 이름뿐이다.
 RULESET_NAME = "acp-managed-branches"
 
+# 보호할 브랜치. `dev` 는 통합 지점이고 `main` 은 릴리스 지점이다 — 둘 다 직접 푸시로
+# 제어평면을 우회할 수 있는 자리다.
+RULESET_REFS: Tuple[str, ...] = ("refs/heads/main", "refs/heads/dev")
+
+# 저장소가 요구하는 체크. Plan 이 싣는 워크플로의 job 이름과 같아야 하고, 그래서 ruleset 은
+# 파일 뒤에 만든다 — 이 체크를 요구하는 규칙이 워크플로보다 먼저 있으면 그 워크플로를 실어
+# 나르는 바로 그 푸시가 거부된다.
+RULESET_REQUIRED_CHECK = "project-ci"
+
+
+def ruleset_desired_state() -> Dict[str, Any]:
+    """승인이 승인하는 것은 이름이 아니라 이 몸통이다.
+
+    한동안 Plan 은 ruleset 의 **이름만** 실었고 실제 보호 강도 — enforcement, 어떤 ref 에
+    걸리는지, 어떤 체크를 요구하는지, 누가 우회할 수 있는지 — 는 Plan 밖 인자에서 왔다.
+    그러면 승인된 digest 는 "acp-managed-branches 라는 ruleset 을 만든다" 까지만 말하고,
+    그것이 `disabled` 로 만들어져도 같은 digest 다."""
+    return {
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": list(RULESET_REFS), "exclude": []}},
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "required_status_checks",
+             "parameters": {"strict_required_status_checks_policy": True,
+                            "required_status_checks": [{"context": RULESET_REQUIRED_CHECK}]}},
+        ],
+        # 비어 있음이 이 계획의 진술이다. 생략하면 "우회자를 정하지 않았다" 가 되고, 그 자리는
+        # Plan 밖에서 채워질 수 있다.
+        "bypass_actors": [],
+    }
+
 _SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
@@ -297,7 +330,11 @@ def compile_plan(
         "githubOperations": [
             {"operationId": f"create-repository:{r['name']}", "resourceType": "repository",
              "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}",
-             "phase": "before-files"}
+             "phase": "before-files",
+             # 관측 어휘로 적는다. 이 값은 사람이 읽으라고 있는 게 아니라 쓰기 뒤의 재조회와
+             # 대조하라고 있는 것이고, 대조하는 쪽 어휘로 적혀 있지 않으면 그 사이에 번역이
+             # 하나 끼어든다 — 번역은 두 값이 다른데 같아 보이게 만들 수 있는 자리다.
+             "desiredState": {"private": request["visibility"] != "public"}}
             for r in request["repositories"]
         ] + [
             # §9.4 의 저장소 쪽 방어선. 제어평면이 최종 권위지만, 네이티브 규칙이 없으면
@@ -307,7 +344,8 @@ def compile_plan(
             # 커밋보다 먼저 존재하면, 저장소에 내용을 넣는 바로 그 푸시를 거부한다.
             {"operationId": f"create-ruleset:{r['name']}", "resourceType": "ruleset",
              "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}#{RULESET_NAME}",
-             "phase": "after-files"}
+             "phase": "after-files",
+             "desiredState": ruleset_desired_state()}
             for r in request["repositories"]
         ],
         "branchContracts": [dict(c) for c in BRANCH_CONTRACTS],

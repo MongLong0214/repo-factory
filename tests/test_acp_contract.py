@@ -145,7 +145,10 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
             return self.state.get(identity)
 
         def create(self, _t, identity, spec):
-            self.state[identity] = {"identity": identity}
+            # The created resource reflects what it was created with. A fake that drops `spec`
+            # cannot represent the thing it claims to have made, and the post-write re-read then
+            # compares the approved state against a stub that could never disagree with it.
+            self.state[identity] = {"identity": identity, **spec}
 
     compiled = compile_plan(request_for("STANDARD", "ledger"), VER, stack="node",
                             ci_values=CI_VALUES, operation_id="11111111-2222-3333-4444-555555555555")
