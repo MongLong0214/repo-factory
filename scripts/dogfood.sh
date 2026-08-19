@@ -40,23 +40,9 @@ case "$STACK" in
   rust)   VERIFY='[{"id":"test","argv":["cargo","test"],"repositoryRole":"primary","cwd":".","timeoutSeconds":600,"envAllowlist":["CI"],"network":"deny","required":true}]' ;;
 esac
 
-# GUARDED 는 `security-command` 아티팩트를 요구하고, 그것은 **호출자가 대는 검증 명령**이다
-# (id 에 "security" 가 들어간 것). 공장이 만들어주지 않으므로, 대지 않으면 GUARDED 는
-# unresolvedGaps 로 멈춘다 — 그래서 한 번도 부트스트랩된 적이 없었다.
-#
-# 그런데 **genesis 시점에 돌 수 있는 내장 보안 명령이 없다.** 실측: `npm audit` 은
-# lockfile 을 요구하고(`ENOLOCK`), 갓 만들어진 저장소에는 없다. `--package-lock-only` 도
-# 같다. go·rust 의 취약점 검사는 별도 설치가 필요하다. 의존성이 하나도 없는 트리에
-# 의존성 감사를 거는 것이 애초에 맞지 않는다.
-#
-# 이름만 붙여 통과시키지 않는다. 아무것도 안 돌린 것과 같은 모양이 되고, 그건 이 프로젝트가
-# 계속 잡고 있는 결함이다. 답은 #42 다 — public 저장소에서 무료인 secret scanning 과
-# CodeQL default setup 은 lockfile 도 의존성도 요구하지 않고 genesis 에서 바로 켜진다.
-if [ "$PROFILE" = "GUARDED" ]; then
-  echo "GUARDED needs a security command that can run at genesis, and no toolchain ships one." >&2
-  echo "See issue #42: secret scanning and CodeQL are the factory-side answer." >&2
-  exit 2
-fi
+# GUARDED 의 `security-command` 는 이제 **공장이 계획하는 보안 통제**가 충족시킨다. 호출자가
+# 대는 검증 명령이 아니다 — genesis 시점에 돌 수 있는 내장 보안 명령이 없었고(`npm audit` 은
+# lockfile 을 요구한다), 그래서 GUARDED 는 한 번도 부트스트랩된 적이 없었다.
 printf '%s\n' "$VERIFY"    > "$OUT/verification.json"
 python3 - "$OUT/request.json" "$NAME" "$PROFILE" "$STACK" "$OWNER" <<'PY'
 import json, sys

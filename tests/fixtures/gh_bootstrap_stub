@@ -53,6 +53,12 @@ def main():
         world["repos"][slug] = {
             "full_name": slug, "default_branch": "main", "node_id": f"R_{len(world['repos'])}",
             "private": "--public" not in args,
+            # GitHub turns both on for a public repository. The stub starts them on for the same
+            # reason the real thing does, so the operation is a check rather than a switch.
+            "security_and_analysis": {
+                "secret_scanning": {"status": "enabled"},
+                "secret_scanning_push_protection": {"status": "enabled"},
+            },
         }
         save(path, world)
         return 0
@@ -74,6 +80,9 @@ def main():
         if repo is None:
             return not_found(route)
         if method == "PATCH":
+            body = json.loads(sys.stdin.read()) if "--input" in args else {}
+            if "security_and_analysis" in body:
+                repo["security_and_analysis"].update(body["security_and_analysis"])
             repo.update({k: v for k, v in field(args).items()})
             save(path, world)
         print(json.dumps(repo, ensure_ascii=False))

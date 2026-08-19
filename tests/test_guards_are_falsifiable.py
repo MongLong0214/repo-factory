@@ -423,6 +423,26 @@ GUARDS: List[Dict[str, object]] = [
                    "                                 }]}},"),
         "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_body_is_in_the_plan_and_not_only_its_name"],
     },
+    {
+        "name": "the security posture is planned before the files, not after",
+        "file": "scripts/plan.py",
+        "mutate": ('             "phase": "before-files",\n             "desiredState": security_desired_state()}',
+                   '             "phase": "after-files",\n             "desiredState": security_desired_state()}'),
+        "killed_by": ["tests/test_slice1_plan.py::test_push_protection_stands_before_the_push_it_protects"],
+    },
+    {
+        "name": "a planned security control is what satisfies the security artifact",
+        "file": "scripts/materialize.py",
+        "mutate": ("            ok = bool(security_controls) or any(", "            ok = False and any("),
+        "killed_by": ["tests/test_artifact_coverage.py::test_security_is_uncovered_when_nothing_plans_a_control"],
+    },
+    {
+        "name": "the port reads the security posture off the repository document",
+        "file": "scripts/github_port.py",
+        "mutate": ('                    "pushProtection": (analysis.get("secret_scanning_push_protection") or {}).get("status")}',
+                   '                    "pushProtection": "enabled"}'),
+        "killed_by": ["tests/test_github_port.py::test_the_port_reads_the_security_posture_it_was_asked_about"],
+    },
 ]
 
 

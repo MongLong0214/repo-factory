@@ -66,6 +66,15 @@ RULESET_CHECK_REPORTER_APP_ID = 15368
 DEFAULT_BRANCH = "dev"
 
 
+def security_desired_state() -> Dict[str, Any]:
+    """저장소가 가져야 할 보안 자세. public 저장소에서는 둘 다 기본 on 이므로 이 Operation 이
+    하는 일은 켜는 것이 아니라 **꺼져 있으면 잡는 것**이다 — 그리고 그것이 요점이다.
+
+    genesis push **앞**에 둔다. push protection 은 자격증명이 착지하는 것을 막는 것이고,
+    파일이 올라간 뒤에 켜면 그 첫 푸시는 보호받지 못한 채 지나간다. 순서가 곧 보증이다."""
+    return {"secretScanning": "enabled", "pushProtection": "enabled"}
+
+
 def ruleset_desired_state() -> Dict[str, Any]:
     """승인이 승인하는 것은 이름이 아니라 이 몸통이다.
 
@@ -326,7 +335,10 @@ def compile_plan(
 
     # 프로파일이 요구한 산출물이 실제로 만들어졌는지 본다. 이 검사가 없으면 `required`
     # 목록은 이름의 나열이고, 요구한 것이 없는 채로 Plan 이 완성된 것처럼 보인다.
-    _, uncovered = artifact_coverage(artifacts, files, manifest)
+    # 계획한 보안 통제가 `security-command` 를 충족시킨다. Plan 이 계획하지 않으면 충족되지
+    # 않는다 — 이 목록을 상수로 두면 검사가 자기 대상을 안 쥐게 된다.
+    security_controls = [f"enable-secret-scanning:{r['name']}" for r in request["repositories"]]
+    _, uncovered = artifact_coverage(artifacts, files, manifest, security_controls)
     if uncovered:
         gaps.append(f"selected artifacts were not produced: {sorted(uncovered)}")
     if stack is None:
@@ -363,6 +375,14 @@ def compile_plan(
              # 대조하라고 있는 것이고, 대조하는 쪽 어휘로 적혀 있지 않으면 그 사이에 번역이
              # 하나 끼어든다 — 번역은 두 값이 다른데 같아 보이게 만들 수 있는 자리다.
              "desiredState": {"private": request["visibility"] != "public"}}
+            for r in request["repositories"]
+        ] + [
+            {"operationId": f"enable-secret-scanning:{r['name']}", "resourceType": "setting",
+             "intent": "update", "resourceIdentity": f"github:{owner}/{r['name']}#secret-scanning",
+             # 파일보다 앞이다. push protection 이 genesis push 뒤에 서면 그 푸시는 보호
+             # 밖에서 지나간다.
+             "phase": "before-files",
+             "desiredState": security_desired_state()}
             for r in request["repositories"]
         ] + [
             # §9.4 의 저장소 쪽 방어선. 제어평면이 최종 권위지만, 네이티브 규칙이 없으면

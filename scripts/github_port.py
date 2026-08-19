@@ -37,6 +37,11 @@ class GhRateLimited(GhError):
     "괜찮다" 고 판단하면 틀린다."""
 
 
+# 이 포트가 이름으로 다루는 저장소 설정들. 목록에 없는 이름은 거부한다 — 조용히 저장소 문서
+# 전체를 설정으로 삼는 것보다 이름 하나가 빠졌다고 말하는 편이 낫다.
+SETTINGS: Tuple[str, ...] = ("default-branch", "secret-scanning")
+
+
 def parse_identity(identity: str) -> Tuple[str, str, Optional[str]]:
     """`github:owner/repo` 또는 `github:owner/repo#ref` 를 쪼갠다.
 
@@ -101,17 +106,25 @@ class GhCliPort:
                 "nodeId": observed.get("node_id"),
             }
         if resource_type == "setting":
-            # 하나의 설정만 다룬다. 이름을 안 대면 저장소 문서 전체가 설정이 되고, 그러면
+            # 이름 붙은 설정만 다룬다. 이름을 안 대면 저장소 문서 전체가 설정이 되고, 그러면
             # 재조회 대조가 star 수처럼 매 초 변하는 필드까지 비교한다.
-            if ref != "default-branch":
+            if ref not in SETTINGS:
                 raise GhError(
-                    f"the only repository setting this port observes is #default-branch: {identity!r}"
+                    f"the settings this port observes are {sorted(SETTINGS)}: {identity!r}"
                 )
             observed = self._api(f"repos/{owner}/{repo}")
             if observed is None:
                 return None
+            if ref == "default-branch":
+                return {"identity": identity, "resourceType": "setting",
+                        "defaultBranch": observed.get("default_branch")}
+            # public 저장소에서는 이 둘이 기본 on 이다. 그래서 이 Operation 이 하는 일은
+            # "켜는 것" 이 아니라 **꺼져 있으면 잡는 것** 이다 — Plan 이 승인한 보안 자세를
+            # 원격이 실제로 갖고 있는지 재조회가 확인한다.
+            analysis = observed.get("security_and_analysis") or {}
             return {"identity": identity, "resourceType": "setting",
-                    "defaultBranch": observed.get("default_branch")}
+                    "secretScanning": (analysis.get("secret_scanning") or {}).get("status"),
+                    "pushProtection": (analysis.get("secret_scanning_push_protection") or {}).get("status")}
         if resource_type == "branch":
             if not ref:
                 raise GhError(f"branch identity must name a ref: {identity!r}")
@@ -196,6 +209,20 @@ class GhCliPort:
 
     def update(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
         owner, repo, ref = parse_identity(identity)
+        if resource_type == "setting" and ref == "secret-scanning":
+            # Plan 의 어휘를 그대로 읽는다. API 의 이름(`secret_scanning`)으로 읽으면 Plan 이
+            # 말한 것과 실행되는 것 사이에 번역이 하나 끼고, 번역은 두 값이 다른데 같아 보이게
+            # 만들 수 있는 자리다.
+            body = {"security_and_analysis": {
+                "secret_scanning": {"status": spec["secretScanning"]},
+                "secret_scanning_push_protection": {"status": spec["pushProtection"]},
+            }}
+            argv = [self.gh, "api", "--method", "PATCH", f"repos/{owner}/{repo}", "--input", "-"]
+            self.calls.append(argv)
+            code, _, err = self.run(argv, json.dumps(body))
+            if code != 0:
+                raise GhError(f"setting secret scanning on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            return
         if resource_type == "setting" and ref == "default-branch":
             wanted = spec.get("defaultBranch")
             if not wanted:
