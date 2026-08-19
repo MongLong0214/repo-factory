@@ -94,9 +94,16 @@ def build_result(
         "unresolvedGaps": list(unresolved_gaps or []),
     }
 
-    overclaims = sorted(set(FORBIDDEN_CLAIMS).intersection(result))
-    if overclaims:
-        raise ResultError(f"a result may not assert activation facts: {overclaims}")
+    # 활성화 사실을 막는 검사가 여기 있었다. 지웠다 — 발동할 수 없었기 때문이다.
+    #
+    # `result` 는 명명된 인자에서 필드 단위로 조립되므로 호출자가 최상위 키를 넣을 경로가
+    # 없다. 그래서 그 검사는 어떤 입력으로도 실패하지 않았고, 있으나 없으나 같았다.
+    # 반증할 수 없는 가드는 안전이 아니라 안전해 보이는 것이다.
+    #
+    # 실제 강제는 받는 쪽에 있고 거기서는 도달 가능하다 — `parseRepoFactoryResult` 가 키의
+    # **존재**로 거부하며, 그 거부는 `tests/test_acp_contract.py` 의
+    # `test_the_control_plane_still_refuses_a_result_that_claims_activation` 이 확인한다.
+    # `FORBIDDEN_CLAIMS` 는 남는다: 그 목록이 받는 쪽과 같은지를 별도 테스트가 대조한다.
     return result
 
 
