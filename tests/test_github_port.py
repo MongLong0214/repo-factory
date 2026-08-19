@@ -156,3 +156,27 @@ def test_the_same_plan_under_owner_authorisation_proceeds(tmp_path):
     result = apply_plan(plan, Fake(), ReceiptLedger(tmp_path / "r.json"))
 
     assert result["completed"] is True
+
+
+def test_a_rate_limit_is_told_apart_from_a_broken_call():
+    # Measured on 2026-08-19: `gh api rate_limit` reported core 4954/5000 while repository
+    # existence checks were refused, because GitHub limits 404-producing requests separately.
+    # Reading the remaining core quota and concluding "fine" is therefore wrong, and a generic
+    # transport error makes a wait-and-retry look like something to fix.
+    from github_port import GhRateLimited
+
+    gh = ScriptedGh([("api repos/", (1, "", "gh: API rate limit exceeded for user ID 97578200."))])
+    port = GhCliPort(runner=gh)
+
+    with pytest.raises(GhRateLimited, match="not a defect"):
+        port.observe("repository", "github:MongLong0214/alpha")
+
+
+def test_a_rate_limit_is_still_not_read_as_absence():
+    # The important half: whatever kind of failure it is, it is not "the repository is free".
+    from github_port import GhError, GhRateLimited
+
+    gh = ScriptedGh([("api repos/", (1, "", "gh: API rate limit exceeded"))])
+    with pytest.raises(GhError):  # GhRateLimited is a GhError, so callers that catch the base still stop
+        GhCliPort(runner=gh).observe("repository", "github:MongLong0214/alpha")
+    assert issubclass(GhRateLimited, GhError)

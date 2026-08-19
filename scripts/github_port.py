@@ -19,13 +19,22 @@ import json
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-__all__ = ["GhError", "GhCliPort", "parse_identity"]
+__all__ = ["GhError", "GhRateLimited", "GhCliPort", "parse_identity"]
 
 Runner = Callable[[List[str]], Tuple[int, str, str]]
 
 
 class GhError(RuntimeError):
     """`gh` 가 예상 밖으로 실패했다. 404 는 실패가 아니라 '없다' 이므로 여기 오지 않는다."""
+
+
+class GhRateLimited(GhError):
+    """제한에 걸렸다. 이것을 일반 실패와 섞으면 "기다리면 되는 일" 이 "고쳐야 하는 일" 로 읽힌다.
+
+    실측(2026-08-19): 저장소 존재 확인은 없는 이름에 대해 404 를 만드는데, GitHub 은
+    404 를 만드는 요청에 코어와 별도인 2차 제한을 건다. `rate_limit` 이 core 4954/5000
+    을 보고하는 동안 같은 계정이 이 제한에 걸려 있었다. 즉 남은 코어 한도를 보고
+    "괜찮다" 고 판단하면 틀린다."""
 
 
 def parse_identity(identity: str) -> Tuple[str, str, Optional[str]]:
@@ -68,6 +77,12 @@ class GhCliPort:
         # 오류를 없음으로 읽으면 남의 저장소 위에 쓴다.
         if "404" in err or "Not Found" in err:
             return None
+        if "rate limit" in err.lower() or "secondary rate" in err.lower():
+            raise GhRateLimited(
+                f"gh api {path} is rate limited; existence checks produce 404s and GitHub limits "
+                f"those separately from the core quota. Wait and retry — this is not a defect. "
+                f"({err.strip()[:120]})"
+            )
         raise GhError(f"gh api {path} failed ({code}): {err.strip()[:200]}")
 
     def observe(self, resource_type: str, identity: str) -> Optional[Dict[str, Any]]:
