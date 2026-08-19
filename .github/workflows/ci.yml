@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: install python dependencies
-        run: python -m pip install --disable-pip-version-check pytest jsonschema
+        run: python -m pip install --disable-pip-version-check -e ".[test]"
 
       - name: read the pinned control-plane commit
         id: pin

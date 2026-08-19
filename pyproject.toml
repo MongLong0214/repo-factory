@@ -1,0 +1,19 @@
+# Test dependencies are pinned because CI installs them by name otherwise, and "whatever the
+# runner resolved that morning" is not a contract. The runtime scripts deliberately have no
+# third-party dependencies: a bootstrap compiler that cannot run on a stock interpreter is one
+# more thing to install before a project can be created.
+[project]
+name = "repo-factory"
+version = "1.1.0.dev0"
+description = "Project bootstrap compiler — seeds to a verifiable, portable repository contract"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest==8.3.4",
+  "jsonschema==4.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
