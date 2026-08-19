@@ -13,24 +13,54 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 from publish import PublishError, publish_files  # noqa: E402
 
+import hashlib
+
 FILES = {"README.md": "# demo\n", ".agent-control-plane/project.json": "{}\n"}
+IDENTITY = "github:MongLong0214/demo"
+REMOTE = "git@github.com:MongLong0214/demo.git"
 
 
-def local_runner(pushes: List[List[str]]):
-    """Runs git for real, but turns a push into a recorded no-op — there is no remote here."""
+def plan_for(files: Dict[str, str]) -> Dict[str, object]:
+    """The plan states the bytes, not only the paths. The publisher is bound to both."""
+    return {
+        "repositories": [{"role": "primary", "identity": IDENTITY, "visibility": "private"}],
+        "files": [
+            {"path": path,
+             "contentDigest": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+             "mode": "100644"}
+            for path, content in sorted(files.items())
+        ],
+    }
+
+
+def local_runner(pushes: List[List[str]], remote_heads: Dict[str, str] = None):
+    """Runs git for real, but turns a push into a recorded no-op and answers `ls-remote` as a
+    remote that accepted it would. `remote_heads` overrides that, which is how a push that
+    reported success without moving the remote gets represented."""
     def run(argv: List[str], cwd: Path) -> Tuple[int, str, str]:
         if argv[:2] == ["git", "push"] or argv[:3] == ["git", "remote", "add"]:
             pushes.append(argv)
             return 0, "", ""
+        if argv[:2] == ["git", "ls-remote"]:
+            done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd),
+                                  capture_output=True, text=True, timeout=60)
+            head = done.stdout.strip()
+            heads = remote_heads if remote_heads is not None else {"main": head, "dev": head}
+            return 0, "".join(f"{sha}\trefs/heads/{ref}\n" for ref, sha in heads.items()), ""
         done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=60)
         return done.returncode, done.stdout, done.stderr
     return run
 
 
-def publish(workdir: Path, files: Dict[str, str], pushes: List[List[str]]):
-    return publish_files(files, workdir=workdir, remote_url="git@example:demo.git",
+def publish(workdir: Path, files: Dict[str, str], pushes: List[List[str]],
+            *, plan: Dict[str, object] = None, remote_url: str = REMOTE,
+            remote_heads: Dict[str, str] = None):
+    return publish_files(files, plan=plan if plan is not None else plan_for(FILES),
+                         repository_identity=IDENTITY,
+                         workdir=workdir, remote_url=remote_url,
                          author_name="Test", author_email="test@example.com",
-                         message="feat: genesis", runner=local_runner(pushes))
+                         message="feat: genesis",
+                         runner=local_runner(pushes, remote_heads))
 
 
 def test_it_publishes_exactly_the_planned_paths(tmp_path):
@@ -70,7 +100,8 @@ def test_an_unplanned_file_stops_the_push_rather_than_being_reported_after_it(tm
         return done.returncode, done.stdout, done.stderr
 
     with pytest.raises(PublishError, match="unplanned"):
-        publish_files(FILES, workdir=workdir, remote_url="git@example:demo.git",
+        publish_files(FILES, plan=plan_for(FILES), repository_identity=IDENTITY,
+                      workdir=workdir, remote_url=REMOTE,
                       author_name="Test", author_email="test@example.com",
                       message="feat: genesis", runner=sneaky)
 
@@ -78,8 +109,9 @@ def test_an_unplanned_file_stops_the_push_rather_than_being_reported_after_it(tm
 
 
 def test_a_planned_path_that_escapes_the_target_is_refused(tmp_path):
+    escaping = {"../outside.txt": "no\n"}
     with pytest.raises(PublishError, match="escapes"):
-        publish(tmp_path / "tree", {"../outside.txt": "no\n"}, [])
+        publish(tmp_path / "tree", escaping, [], plan=plan_for(escaping))
 
 
 def test_main_is_pushed_before_dev(tmp_path):
@@ -91,3 +123,58 @@ def test_main_is_pushed_before_dev(tmp_path):
 
     ordered = [p[-1] for p in pushes if p[:2] == ["git", "push"]]
     assert ordered == ["main", "dev"]
+
+
+# --- the plan binds the bytes and the destination, not only the path set -----------------
+
+def test_content_rewritten_between_the_plan_and_the_commit_is_refused(tmp_path):
+    """The path set can match while the bytes do not. A global git filter, autocrlf, or a hook
+    is enough, and `git ls-files` cannot see any of them."""
+    pushes: List[List[str]] = []
+    workdir = tmp_path / "tree"
+
+    def rewriting(argv: List[str], cwd: Path):
+        if argv[:3] == ["git", "add", "-A"]:
+            (workdir / "README.md").write_text("# something else\n")
+        if argv[:2] == ["git", "push"] or argv[:3] == ["git", "remote", "add"]:
+            pushes.append(argv)
+            return 0, "", ""
+        if argv[:2] == ["git", "ls-remote"]:
+            return 0, "", ""
+        done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=60)
+        return done.returncode, done.stdout, done.stderr
+
+    with pytest.raises(PublishError, match="not the planned bytes"):
+        publish_files(FILES, plan=plan_for(FILES), repository_identity=IDENTITY,
+                      workdir=workdir, remote_url=REMOTE,
+                      author_name="Test", author_email="test@example.com",
+                      message="feat: genesis", runner=rewriting)
+
+    assert pushes == [], "nothing may reach the remote once the bytes are not the planned bytes"
+
+
+def test_a_remote_that_is_not_the_planned_repository_is_refused(tmp_path):
+    with pytest.raises(PublishError, match="the plan approved"):
+        publish(tmp_path / "tree", FILES, [], remote_url="git@github.com:someone-else/demo.git")
+
+
+def test_a_remote_this_publisher_cannot_read_is_refused_rather_than_assumed(tmp_path):
+    """"Could not tell" and "matches" are different facts. Writing them as one value is how an
+    unchecked destination reads as a checked one."""
+    with pytest.raises(PublishError, match="cannot tell"):
+        publish(tmp_path / "tree", FILES, [], remote_url="git@example:demo.git")
+
+
+def test_a_push_that_did_not_move_the_remote_is_refused(tmp_path):
+    """`git push` exiting 0 says the command did not fail. Whether the remote ref points at this
+    commit is something only the remote can answer."""
+    with pytest.raises(PublishError, match="does not carry the genesis commit"):
+        publish(tmp_path / "tree", FILES, [], remote_heads={"main": "b" * 40, "dev": "b" * 40})
+
+
+def test_the_result_states_which_repository_and_which_remote_heads(tmp_path):
+    result = publish(tmp_path / "tree", FILES, [])
+
+    assert result["repositoryIdentity"] == IDENTITY
+    assert set(result["remoteHeads"]) == {"main", "dev"}
+    assert all(head == result["head"] for head in result["remoteHeads"].values())

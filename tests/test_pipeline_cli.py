@@ -8,6 +8,7 @@ document describing something other than the thing that ships.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ SCRIPTS = SKILL / "scripts"
 OPERATION_ID = "11111111-2222-3333-4444-555555555555"
 
 STAGES = ["plan.py", "apply.py", "publish.py", "result.py"]
+REMOTE = "git@github.com:MongLong0214/demo.git"
 
 REQUEST = {
     "schema": "repo-factory.bootstrap-request.v1", "runId": "run-cli", "seed": "a demo project",
@@ -71,10 +73,23 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
 
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    # The publisher refuses a remote it cannot bind to the planned repository, so the test does
+    # not get an escape hatch in production code — it gives git a rewrite rule instead. The
+    # command sees the approved GitHub URL and the bytes land in a local bare repository.
+    rewritten = {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf",
+        "GIT_CONFIG_VALUE_0": REMOTE,
+    }
     published = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "compiled.json"),
-                     "--workdir", str(tmp_path / "work"), "--remote-url", str(bare),
-                     "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"])
+                     "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                     "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"],
+                    env=rewritten)
     assert published.returncode == 0, published.stderr[-600:]
+    heads = json.loads(published.stdout)
+    assert heads["repositoryIdentity"] == "github:MongLong0214/demo"
+    assert set(heads["remoteHeads"].values()) == {heads["head"]}
 
     landed = subprocess.run(["git", f"--git-dir={bare}", "ls-tree", "-r", "--name-only", "dev"],
                             capture_output=True, text=True, check=True)

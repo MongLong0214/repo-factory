@@ -19,7 +19,12 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any, Dict, List
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from canonical import digest  # noqa: E402
 
 __all__ = ["ResultError", "FORBIDDEN_CLAIMS", "build_result", "RESULT_SCHEMA_ID"]
 
@@ -46,6 +51,7 @@ def build_result(
     repositories: List[Dict[str, Any]],
     receipts: List[Dict[str, Any]],
     bootstrap_verification: List[Dict[str, Any]],
+    verification_commands: List[Dict[str, Any]],
     ci_evidence: List[Dict[str, Any]] = None,
     unresolved_gaps: List[str] = None,
 ) -> Dict[str, Any]:
@@ -53,6 +59,55 @@ def build_result(
         raise ResultError("a result with no external write receipt describes no bootstrap")
     if not bootstrap_verification:
         raise ResultError("a result with no bootstrap verification asserts a repository nobody ran")
+
+    # 계획된 Operation 전부에 영수증이 있어야 한다. 없으면 절반만 실행된 부트스트랩이 완료로
+    # 보고된다 — 실제로 그랬다: `after-files` 를 안 돌린 체인이 ruleset 영수증 없이 Result 를
+    # 조립했고 받는 쪽 파서가 통과시켰다. 파서는 모양을 보고 완결성은 여기서만 볼 수 있다.
+    planned = {op["operationId"] for op in plan.get("githubOperations", [])}
+    delivered = {r["operationId"] for r in receipts}
+    missing = sorted(planned - delivered)
+    if missing:
+        raise ResultError(
+            f"the plan has operations with no receipt: {missing}. A result assembled from a subset "
+            f"of the approved writes reports a bootstrap that did not finish."
+        )
+    unplanned = sorted(delivered - planned)
+    if unplanned:
+        raise ResultError(f"receipts name operations the approved plan does not contain: {unplanned}")
+
+    # 영수증이 이 Plan 것인지 본다. 같은 operationId 를 가진 다른 승인 아래의 영수증은
+    # 이 Plan 이 실행됐다는 증거가 아니다.
+    foreign = sorted({r["operationId"] for r in receipts
+                      if r.get("requestDigest") not in (None, plan.get("requestDigest"))})
+    if foreign:
+        raise ResultError(f"receipts were written under a different approved intent: {foreign}")
+
+    identities = {op["operationId"]: op.get("resourceIdentity") for op in plan.get("githubOperations", [])}
+    drifted = sorted(r["operationId"] for r in receipts
+                     if identities.get(r["operationId"]) not in (None, r.get("resourceIdentity")))
+    if drifted:
+        raise ResultError(f"receipts name a different resource than the plan approved: {drifted}")
+
+    # 남은 gap 을 실은 채로 완료를 보고하지 않는다. gap 은 "이건 못 만들었다" 의 정직한
+    # 기록이고, 정직한 기록과 완료 보고를 같은 문서에 담으면 받는 쪽이 둘 중 하나만 읽는다.
+    if unresolved_gaps:
+        raise ResultError(
+            f"a result may not carry unresolved gaps: {sorted(unresolved_gaps)}. "
+            "Report the gaps instead of reporting a completed bootstrap that has them."
+        )
+
+    # 명령 목록은 인자로 받는다. Plan 은 그 목록의 digest 만 싣기 때문에, Plan 에서 읽으려
+    # 하면 없는 키를 읽고 어떤 입력으로도 발동하지 않는 검사가 된다 — 반증할 수 없는 가드는
+    # 안전이 아니라 안전해 보이는 것이다.
+    if digest(verification_commands) != plan["verificationContractDigest"]:
+        raise ResultError(
+            "the verification commands handed to the result are not the ones the plan approved"
+        )
+    required_commands = {c["id"] for c in verification_commands if c.get("required")}
+    ran = {v["commandId"] for v in bootstrap_verification}
+    unrun = sorted(required_commands - ran)
+    if unrun:
+        raise ResultError(f"required verification commands have no result: {unrun}")
 
     unverified = [r["resourceIdentity"] for r in receipts if not r.get("verified") or not r.get("rereadAt")]
     if unverified:

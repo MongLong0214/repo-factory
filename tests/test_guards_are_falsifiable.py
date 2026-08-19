@@ -193,6 +193,36 @@ GUARDS: List[Dict[str, object]] = [
                    "# the entrypoint used to live here"),
         "killed_by": ["tests/test_pipeline_cli.py"],
     },
+    {
+        "name": "every planned operation must have a receipt before a result is assembled",
+        "file": "scripts/result.py",
+        "mutate": ("    missing = sorted(planned - delivered)", "    missing = []"),
+        "killed_by": ["tests/test_slice4_result.py::test_a_plan_operation_with_no_receipt_refuses_the_result"],
+    },
+    {
+        "name": "a result may not carry unresolved gaps",
+        "file": "scripts/result.py",
+        "mutate": ("    if unresolved_gaps:\n        raise ResultError(", "    if False:\n        raise ResultError("),
+        "killed_by": ["tests/test_slice4_result.py::test_a_result_may_not_carry_unresolved_gaps"],
+    },
+    {
+        "name": "the committed bytes are the planned bytes, not only the planned paths",
+        "file": "scripts/publish.py",
+        "mutate": ("        if landed != planned_digests[path]:", "        if False:"),
+        "killed_by": ["tests/test_publish.py::test_content_rewritten_between_the_plan_and_the_commit_is_refused"],
+    },
+    {
+        "name": "the push destination is the repository the plan approved",
+        "file": "scripts/publish.py",
+        "mutate": ("    if observed_identity != repository_identity:", "    if False:"),
+        "killed_by": ["tests/test_publish.py::test_a_remote_that_is_not_the_planned_repository_is_refused"],
+    },
+    {
+        "name": "the remote is re-read after the push rather than trusted to have moved",
+        "file": "scripts/publish.py",
+        "mutate": ("    if disagreeing:", "    if False:"),
+        "killed_by": ["tests/test_publish.py::test_a_push_that_did_not_move_the_remote_is_refused"],
+    },
 ]
 
 
