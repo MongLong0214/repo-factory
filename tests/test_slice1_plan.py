@@ -184,7 +184,11 @@ def test_the_diff_summary_names_the_owner_gates_it_would_cross():
     # The ruleset is planned too, and after the files: a rule requiring project-ci cannot
     # exist before the commit that publishes that workflow. The default branch is an operation
     # as well — push order decides which branch GitHub picks, and nothing re-reads what it did.
+    #
+    # Secret scanning comes **before** the files, and the order is the guarantee: push
+    # protection that stands up after the genesis push did not protect the genesis push.
     assert summary["githubOperations"] == ["create-repository:ledger-reconciler",
+                                           "enable-secret-scanning:ledger-reconciler",
                                            "set-default-branch:ledger-reconciler",
                                            "create-ruleset:ledger-reconciler"]
 
@@ -381,3 +385,20 @@ def test_the_ruleset_identity_carries_the_name_the_plan_chose():
     operations = {op["operationId"]: op for op in compiled()["planCore"]["githubOperations"]}
 
     assert operations["create-ruleset:ledger-reconciler"]["resourceIdentity"].endswith(f"#{RULESET_NAME}")
+
+
+def test_push_protection_stands_before_the_push_it_protects():
+    """secret scanning 은 파일보다 **앞** 단계다.
+
+    push protection 은 자격증명이 착지하는 것을 막는 것이다. genesis push 뒤에 켜면 그 첫
+    푸시 — 공장이 만든 파일 전부가 처음 올라가는 그 푸시 — 는 보호 밖에서 지나간다.
+    `after-files` 로 옮겨도 Plan 은 멀쩡해 보이고 영수증도 전부 검증되므로, 이 순서를 보는
+    것이 없으면 아무도 모른다."""
+    core = compiled()["planCore"]
+    phases = {o["operationId"]: o.get("phase") for o in core["githubOperations"]}
+
+    assert phases["enable-secret-scanning:ledger-reconciler"] == "before-files"
+    # 저장소가 있어야 그 설정이 존재한다 — 저장소 생성보다는 뒤여야 한다.
+    ids = [o["operationId"] for o in core["githubOperations"]]
+    assert ids.index("create-repository:ledger-reconciler") < ids.index(
+        "enable-secret-scanning:ledger-reconciler")

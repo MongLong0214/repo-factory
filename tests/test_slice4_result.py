@@ -50,6 +50,7 @@ class FakeGitHub:
     def __init__(self):
         self.state = {}
         self.defaults = {}
+        self.security = {}
 
     def observe(self, resource_type, identity):
         if resource_type == "setting" and identity.endswith("#default-branch"):
@@ -61,6 +62,15 @@ class FakeGitHub:
                 return None
             return {"identity": identity, "resourceType": "setting",
                     "defaultBranch": self.defaults.get(repository, "main")}
+        if resource_type == "setting" and identity.endswith("#secret-scanning"):
+            # GitHub turns both on by default for a public repository, so the honest fake starts
+            # them on. That is what makes the operation a **check** rather than a switch.
+            repository = identity.split("#", 1)[0]
+            if repository not in self.state:
+                return None
+            return {"identity": identity, "resourceType": "setting",
+                    **self.security.get(repository,
+                                        {"secretScanning": "enabled", "pushProtection": "enabled"})}
         return self.state.get(identity)
 
     def create(self, resource_type, identity, spec):
@@ -69,6 +79,9 @@ class FakeGitHub:
     def update(self, resource_type, identity, spec):
         if resource_type == "setting" and identity.endswith("#default-branch"):
             self.defaults[identity.split("#", 1)[0]] = spec["defaultBranch"]
+            return
+        if resource_type == "setting" and identity.endswith("#secret-scanning"):
+            self.security[identity.split("#", 1)[0]] = dict(spec)
             return
         raise AssertionError(f"no update is implemented for {resource_type}")
 

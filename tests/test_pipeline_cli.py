@@ -219,8 +219,9 @@ def test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied(t
     assert applied.returncode == 0, applied.stderr[-800:]
     outcome = json.loads(applied.stdout)
     assert outcome["completed"] is True
-    assert [r["operationId"] for r in outcome["receipts"]] == ["create-repository:demo"]
-    assert outcome["receipts"][0]["verified"] is True
+    assert [r["operationId"] for r in outcome["receipts"]] == [
+        "create-repository:demo", "enable-secret-scanning:demo"]
+    assert all(r["verified"] for r in outcome["receipts"])
 
 
 def test_apply_refuses_on_the_command_line_when_nothing_approved_the_plan(tmp_path):

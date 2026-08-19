@@ -50,16 +50,31 @@ def test_simple_and_standard_are_fully_covered():
         assert compiled(profile)["unresolvedGaps"] == [], profile
 
 
-def test_guarded_says_so_when_no_security_command_was_supplied():
-    # The profile requires one; the caller supplies the commands. Producing a file named
-    # "security" would satisfy the list while verifying nothing.
-    gaps = compiled("GUARDED")["unresolvedGaps"]
+def test_guarded_is_covered_because_the_factory_plans_a_security_control():
+    """GUARDED 는 호출자의 툴체인에 기대지 않는다.
 
-    assert any("security-command" in gap for gap in gaps)
+    한동안 `security-command` 는 호출자가 대는 검증 명령으로만 충족됐고, 그래서 GUARDED 는
+    **한 번도 부트스트랩된 적이 없었다** — genesis 시점에 돌 수 있는 내장 보안 명령이 없다.
+    실측: `npm audit` 은 lockfile 을 요구하고(`ENOLOCK`) 갓 만든 저장소에는 없다. 의존성이
+    하나도 없는 트리에 의존성 감사를 거는 것이 애초에 맞지 않았다.
+
+    저장소가 보안 통제를 갖는다는 것은 공장이 계획하고 재조회로 확인할 수 있는 사실이다."""
+    assert compiled("GUARDED")["unresolvedGaps"] == []
 
 
-def test_guarded_is_covered_once_the_security_command_exists():
-    assert compiled("GUARDED", commands=VER + [SECURITY])["unresolvedGaps"] == []
+def test_security_is_uncovered_when_nothing_plans_a_control():
+    """계획한 통제도 없고 호출자가 댄 명령도 없으면 충족되지 않는다.
+
+    이게 없으면 `security-command` 는 무엇을 넣어도 통과하는 칸이 된다 — 요구 목록에 이름만
+    있고 아무것도 안 보는 상태로 돌아간다."""
+    manifest = {"verificationCommands": [{"id": "test"}]}
+
+    _, missing = artifact_coverage(["security-command"], {}, manifest, security_controls=[])
+    assert missing == ["security-command"]
+
+    covered, _ = artifact_coverage(["security-command"], {}, manifest,
+                                   security_controls=["enable-secret-scanning:demo"])
+    assert covered == ["security-command"]
 
 
 def test_a_profile_only_gets_the_documents_it_asks_for():

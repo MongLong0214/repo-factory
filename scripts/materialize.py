@@ -116,8 +116,18 @@ def _agents(project_id: str, commands: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]):
-    """(충족, 미충족). 미충족은 조용히 넘어가지 않고 unresolvedGaps 로 올라간다."""
+def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any],
+                      security_controls: List[str] = None):
+    """(충족, 미충족). 미충족은 조용히 넘어가지 않고 unresolvedGaps 로 올라간다.
+
+    `security_controls` 는 **Plan 이 계획한** 보안 통제 Operation 의 id 목록이다. 한동안
+    `security-command` 는 호출자가 대는 검증 명령으로만 충족됐고, 그래서 GUARDED 는 한 번도
+    부트스트랩된 적이 없었다 — genesis 시점에 돌 수 있는 내장 보안 명령이 없기 때문이다
+    (`npm audit` 은 lockfile 을 요구하고, 갓 만든 저장소에는 없다). 의존성이 하나도 없는
+    트리에 의존성 감사를 거는 것이 애초에 맞지 않았다.
+
+    저장소가 보안 통제를 갖는다는 것은 공장이 계획하고 재조회로 확인할 수 있는 사실이다.
+    호출자의 툴체인에 무엇이 설치돼 있는가가 아니라."""
     satisfied, missing = [], []
     for artifact in artifacts:
         kind, target = ARTIFACT_EVIDENCE.get(artifact, ("unknown", None))
@@ -126,7 +136,8 @@ def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]
         elif kind == "manifest":
             ok = bool(manifest.get(target))
         elif kind == "security":
-            ok = any("security" in c["id"] for c in manifest.get("verificationCommands", []))
+            ok = bool(security_controls) or any(
+                "security" in c["id"] for c in manifest.get("verificationCommands", []))
         elif kind == "handoff":
             ok = True
         elif kind == "unimplemented":

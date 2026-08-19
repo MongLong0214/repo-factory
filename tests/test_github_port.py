@@ -241,3 +241,45 @@ def test_a_ruleset_identity_without_a_name_is_refused():
         port.observe("ruleset", "github:MongLong0214/alpha")
     with pytest.raises(GhError, match="must name the ruleset"):
         port.create("ruleset", "github:MongLong0214/alpha", {})
+
+
+def test_the_port_reads_the_security_posture_it_was_asked_about():
+    """관측이 Plan 의 어휘로 나와야 한다. API 이름(`secret_scanning`)을 그대로 흘리면 재조회
+    대조가 번역을 하나 거치고, 번역은 두 값이 다른데 같아 보이게 만들 수 있는 자리다."""
+    body = json.dumps({
+        "default_branch": "dev", "private": False, "node_id": "R_1",
+        "security_and_analysis": {
+            "secret_scanning": {"status": "enabled"},
+            "secret_scanning_push_protection": {"status": "disabled"},
+            "dependabot_security_updates": {"status": "disabled"},
+        },
+    })
+    port = GhCliPort(runner=ScriptedGh([("api repos/", (0, body, ""))]))
+
+    observed = port.observe("setting", "github:MongLong0214/alpha#secret-scanning")
+
+    # push protection 이 꺼진 것을 꺼졌다고 읽어야 한다. 상수를 돌려주면 이 Operation 은
+    # 어떤 원격 상태에도 통과하고, 재조회가 아무것도 안 보는 칸이 된다.
+    assert observed == {"identity": "github:MongLong0214/alpha#secret-scanning",
+                        "resourceType": "setting",
+                        "secretScanning": "enabled", "pushProtection": "disabled"}
+
+
+def test_writing_the_security_posture_sends_the_api_its_own_names():
+    port = GhCliPort(runner=(scripted := ScriptedGh([("api --method PATCH", (0, "{}", ""))])))
+
+    port.update("setting", "github:MongLong0214/alpha#secret-scanning",
+                {"secretScanning": "enabled", "pushProtection": "enabled"})
+
+    assert scripted.seen[-1] == ["gh", "api", "--method", "PATCH", "repos/MongLong0214/alpha",
+                                 "--input", "-"]
+    assert json.loads(scripted.stdin[-1]) == {"security_and_analysis": {
+        "secret_scanning": {"status": "enabled"},
+        "secret_scanning_push_protection": {"status": "enabled"}}}
+
+
+def test_a_setting_this_port_does_not_name_is_refused():
+    port = GhCliPort(runner=ScriptedGh([]))
+
+    with pytest.raises(GhError, match="settings this port observes"):
+        port.observe("setting", "github:MongLong0214/alpha#whatever-else")
