@@ -144,6 +144,11 @@ class GhCliPort:
                 "enforcement": full.get("enforcement"),
                 "conditions": full.get("conditions"),
                 "rules": full.get("rules"),
+                # 누가 이 ruleset 을 우회할 수 있는가. Plan 은 `bypass_actors: []` 를 승인한다 —
+                # 아무도 우회하지 못한다는 주장이다. 그 필드를 안 읽으면 재조회가 그 주장을
+                # 확인하지 못하고, 실제로는 `create-ruleset` 이 매번 REREAD_MISMATCH 로 죽었다:
+                # 승인된 상태에 있는 키가 관측에 없으면 그것은 gap 이다.
+                "bypass_actors": full.get("bypass_actors"),
             }
         raise GhError(
             f"no observation is implemented for resourceType {resource_type!r}; "

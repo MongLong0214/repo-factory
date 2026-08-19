@@ -336,6 +336,34 @@ GUARDS: List[Dict[str, object]] = [
                    '            plan, authority="OWNER", actor=args.actor, approved_at=approved_at,'),
         "killed_by": ["tests/test_pipeline_cli.py::test_the_approval_receipt_binds_to_the_plan_it_was_issued_over"],
     },
+    {
+        "name": "the ruleset re-read reads who may bypass it",
+        "file": "scripts/github_port.py",
+        "mutate": ('                "bypass_actors": full.get("bypass_actors"),', "                "),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
+    },
+    {
+        "name": "the genesis push counts as a write the result must account for",
+        "file": "scripts/result.py",
+        "mutate": ('    planned = {op["operationId"] for op in plan.get("githubOperations", [])} | set(genesis)',
+                   '    planned = {op["operationId"] for op in plan.get("githubOperations", [])}'),
+        "killed_by": ["tests/test_slice4_result.py::test_the_genesis_receipt_reaches_the_receiver_in_the_shape_it_accepts"],
+    },
+    {
+        "name": "the receipt is narrowed to the width the receiver accepts",
+        "file": "scripts/result.py",
+        "mutate": ('        "externalWriteReceipts": [{k: r[k] for k in RECEIPT_FIELDS if k in r} for r in receipts],',
+                   '        "externalWriteReceipts": list(receipts),'),
+        # Not the contract test: it skips without a control-plane checkout, and a row whose
+        # killing test can skip reports "the guard is gone and nothing noticed" as a pass.
+        "killed_by": ["tests/test_slice4_result.py::test_the_genesis_receipt_reaches_the_receiver_in_the_shape_it_accepts"],
+    },
+    {
+        "name": "the command line hands the approved verification contract to the result",
+        "file": "scripts/result.py",
+        "mutate": ("            verification_commands=commands,", "            verification_commands=verification_commands,"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
+    },
 ]
 
 

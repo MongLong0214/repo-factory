@@ -120,11 +120,19 @@ python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
 커밋에 세션 식별자를 남기지 않는다. 생성 저장소는 공개일 수 있고, 그 경우 트레일러는
 저장소 안에 운영 정보를 넣는 것이 된다.
 
-### 4. Result
+### 5. Result
 
 ```bash
-python3 scripts/result.py --input result-input.json
+python3 scripts/result.py --input result-input.json \
+  --verification verification.json
 ```
+
+`--verification` 은 Plan 을 컴파일할 때 쓴 그 목록이다. Plan 은 digest 만 싣기 때문에,
+Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인된 계약과 같은지를 여기서
+대조한다. 다른 목록을 대면 거부한다.
+
+원장을 그대로 넘긴다 — genesis 영수증까지. 파일을 올린 push 는 외부 쓰기이고, 그 행을
+빼고 세면 파일이 한 번도 안 올라간 부트스트랩이 완료로 보고된다.
 
 제어평면이 받는 문서다. **활성화를 주장하지 않는다** — 공장은 저장소를 만들었을 뿐
 그 저장소가 제어평면 위에서 돈다고 말할 수 있는 위치에 있지 않다. 받는 쪽이

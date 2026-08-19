@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ def approval(plan_core, authority: str = "OWNER"):
 
 from plan import compile_plan, diff_summary  # noqa: E402
 from publish import publish_receipt  # noqa: E402
-from result import FORBIDDEN_CLAIMS, ResultError, build_result  # noqa: E402
+from result import FORBIDDEN_CLAIMS, RECEIPT_FIELDS, ResultError, build_result  # noqa: E402
 
 ACP_SRC = Path(os.environ.get("ACP_SRC", Path.home() / "projects/agent-control-plane/src"))
 PARSE_CHECK = SKILL / "tests" / "fixtures" / "acp-parse-check.mts"
@@ -102,7 +103,11 @@ def chain_parts() -> tuple:
         }, clock=lambda: "2026-08-19T10:00:00Z"))
         published = ledger.get(f"publish:{IDENTITY}")
         after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files", authorization=approval(compiled["planCore"]))
-    return compiled, before["receipts"] + after["receipts"]
+        # 원장 전체를 읽는다. 앞뒤 단계의 반환값만 이어붙이면 genesis 영수증이 빠지는데,
+        # 그것이 곧 Result 가 검사해야 할 행이다 — 빼고 넘기면 검사는 자기 대상을 안 갖는다.
+        # (원장을 `with` 밖에서 읽으면 임시 디렉토리가 이미 사라져 빈 목록이 된다.)
+        recorded = ReceiptLedger(book).all()
+    return compiled, recorded
 
 
 def result_args(**overrides) -> dict:
@@ -188,6 +193,31 @@ def test_the_forbidden_claim_list_matches_the_receiving_side():
     block = text.split("const FORBIDDEN_CLAIMS = [", 1)[1].split("]", 1)[0]
     theirs = {line.strip().strip('",') for line in block.splitlines() if '"' in line}
     assert set(FORBIDDEN_CLAIMS) == theirs
+
+
+def test_the_receipt_fields_match_the_receiving_schema():
+    """The receiver's receipt schema is `.strict()`, and the ledger row is wider than it.
+
+    The genesis receipt carries `committedPaths`, `branches`, `head`, `remoteHeads`. Handing
+    those over rejects the whole result — the receipt is narrowed on the way out, and this is
+    what notices when the two sides stop agreeing on the width.
+    """
+    source = (ACP_SRC / "bootstrap" / "repo-factory-result.ts")
+    if not source.is_file():
+        pytest.skip("the control plane checkout is unavailable")
+    text = source.read_text(encoding="utf-8")
+    block = text.split("const externalWriteReceiptSchema = z", 1)[1].split(".strict()", 1)[0]
+    theirs = set(re.findall(r"^\s{4}([A-Za-z][A-Za-z0-9]*):", block, re.MULTILINE))
+    assert theirs, "the receiving receipt schema could not be read"
+    assert set(RECEIPT_FIELDS) == theirs
+
+
+def test_the_genesis_receipt_reaches_the_receiver_in_the_shape_it_accepts():
+    receipts = whole_chain()["externalWriteReceipts"]
+    genesis = [r for r in receipts if r["resourceType"] == "genesis-commit"]
+    assert len(genesis) == 1, "the push that put the files there is not in the result"
+    assert set(genesis[0]) <= set(RECEIPT_FIELDS)
+    assert genesis[0]["verified"] is True
 
 
 def test_a_local_checkout_path_is_a_proposal_and_defaults_to_absent():

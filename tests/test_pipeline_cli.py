@@ -54,20 +54,22 @@ def test_every_pipeline_stage_answers_on_the_command_line(stage):
 
 
 def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
-    """plan → apply → publish, each as a process, with the file set coming from the plan."""
-    (tmp_path / "request.json").write_text(json.dumps(REQUEST), encoding="utf-8")
-    (tmp_path / "verification.json").write_text(json.dumps(VERIFICATION), encoding="utf-8")
-    (tmp_path / "ci.json").write_text(json.dumps(CI_VALUES), encoding="utf-8")
+    """Every stage as a process, from the request to a result the control plane would accept.
 
-    compiled = run([str(SCRIPTS / "plan.py"),
-                    "--request", str(tmp_path / "request.json"),
-                    "--verification", str(tmp_path / "verification.json"),
-                    "--ci-values", str(tmp_path / "ci.json"),
-                    "--operation-id", OPERATION_ID])
-    assert compiled.returncode == 0, compiled.stderr[-600:]
-    document = json.loads(compiled.stdout)
+    Two stages were dead here and `--help` passed for both: `apply.py` never handed the approval
+    receipt to the gate that requires it, and `result.py` never handed `build_result` the
+    verification contract it compares against the plan. Both were reachable only by running the
+    command for real, which nothing did.
+    """
+    plan_path = _compile(tmp_path)
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
     assert document["unresolvedGaps"] == [], document["unresolvedGaps"]
-    (tmp_path / "compiled.json").write_text(compiled.stdout, encoding="utf-8")
+    stub, env = _gh_stub(tmp_path)
+
+    issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan_path),
+                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+    assert issued.returncode == 0, issued.stderr[-600:]
+    (tmp_path / "auth.json").write_text(issued.stdout, encoding="utf-8")
 
     staged = run([str(SCRIPTS / "apply.py"), "--plan", str(tmp_path / "compiled.json"),
                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "after-files", "--dry-run"])
@@ -78,6 +80,12 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     by_id = {op["operationId"]: op for op in would}
     assert by_id["create-ruleset:demo"]["desiredState"]["enforcement"] == "active"
     assert by_id["set-default-branch:demo"]["desiredState"]["defaultBranch"] == "dev"
+
+    created = run([str(SCRIPTS / "apply.py"), "--plan", str(plan_path),
+                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "before-files",
+                   "--gh", str(stub), "--authorization", str(tmp_path / "auth.json")], env=env)
+    assert created.returncode == 0, created.stderr[:800]
+    assert _created(tmp_path) == ["MongLong0214/demo"]
 
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
@@ -115,26 +123,56 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     assert genesis[0]["verified"] is True
     assert genesis[0]["head"] == heads["head"]
 
+    after = run([str(SCRIPTS / "apply.py"), "--plan", str(plan_path),
+                 "--ledger", str(tmp_path / "receipts.json"), "--phase", "after-files",
+                 "--gh", str(stub), "--authorization", str(tmp_path / "auth.json")], env=env)
+    assert after.returncode == 0, after.stderr[:800]
+    assert [r["operationId"] for r in json.loads(after.stdout)["receipts"]] == [
+        "set-default-branch:demo", "create-ruleset:demo"]
 
-# A gh that only knows how to not-have a repository, create one, and then have it. The point is
-# to reach `apply_plan` as a process — the approval gate refuses before any of this is called,
-# which is exactly what nothing was measuring.
-GH_STUB = """#!/bin/sh
-STATE="$GH_STUB_STATE"
-case "$1 $2" in
-  "repo create")
-    printf '%s\\n' "$3" >> "$STATE/created"; exit 0 ;;
-esac
-if [ "$1" = "api" ]; then
-  path="$2"; [ "$path" = "--method" ] && exit 0
-  repo=$(printf '%s' "$path" | sed -n 's#^repos/\\([^/]*/[^/]*\\)$#\\1#p')
-  if [ -n "$repo" ] && grep -qx "$repo" "$STATE/created" 2>/dev/null; then
-    printf '{"default_branch":"main","private":true,"node_id":"R_stub"}\\n'; exit 0
-  fi
-  echo "gh: Not Found (HTTP 404)" >&2; exit 1
-fi
-echo "gh stub: unhandled $*" >&2; exit 1
-"""
+    # Assembling the result is where a half-run bootstrap is caught: every planned operation has
+    # to carry a receipt. Running it before `after-files` is the state that used to be reported
+    # as a finished bootstrap.
+    ledger = json.loads((tmp_path / "receipts.json").read_text(encoding="utf-8"))
+    (tmp_path / "result-in.json").write_text(json.dumps({
+        "runId": REQUEST["runId"], "plan": document["planCore"],
+        "planDigest": document["diffSummary"]["planDigest"],
+        "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
+                          "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
+        "receipts": ledger,
+        "bootstrapVerification": [{"commandId": "test", "repositoryIdentity": "github:MongLong0214/demo",
+                                   "exactHead": heads["head"], "status": "PASS"}],
+    }), encoding="utf-8")
+
+    assembled = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                     "--verification", str(tmp_path / "verification.json")])
+    assert assembled.returncode == 0, assembled.stdout[-600:] + assembled.stderr[-600:]
+    result = json.loads(assembled.stdout)
+    assert result["runId"] == REQUEST["runId"]
+    assert result["unresolvedGaps"] == []
+
+
+def test_result_refuses_on_the_command_line_when_the_contract_is_not_the_approved_one(tmp_path):
+    """The plan carries only the contract's digest, so the list handed back has to match it."""
+    plan_path = _compile(tmp_path)
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    substituted = [{**VERIFICATION[0], "argv": ["npm", "run", "something-else"]}]
+    (tmp_path / "other-verification.json").write_text(json.dumps(substituted), encoding="utf-8")
+    (tmp_path / "result-in.json").write_text(json.dumps({
+        "runId": REQUEST["runId"], "plan": document["planCore"],
+        "planDigest": document["diffSummary"]["planDigest"],
+        "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
+                          "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
+        "receipts": [], "bootstrapVerification": [],
+    }), encoding="utf-8")
+
+    done = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                "--verification", str(tmp_path / "other-verification.json")])
+    assert done.returncode == 1
+    assert "error" in json.loads(done.stdout)
+
+
+GH_STUB = SKILL / "tests" / "fixtures" / "gh_bootstrap_stub"
 
 
 def _compile(tmp_path, operation_id=OPERATION_ID, name="compiled.json"):
@@ -152,11 +190,13 @@ def _compile(tmp_path, operation_id=OPERATION_ID, name="compiled.json"):
 
 
 def _gh_stub(tmp_path):
-    stub = tmp_path / "gh"
-    stub.write_text(GH_STUB, encoding="utf-8")
-    stub.chmod(0o755)
-    (tmp_path / "ghstate").mkdir(exist_ok=True)
-    return stub, {**os.environ, "GH_STUB_STATE": str(tmp_path / "ghstate")}
+    """The stub keeps its world in a file, so a write is visible to the re-read that follows."""
+    return GH_STUB, {**os.environ, "GH_BOOTSTRAP_STUB_WORLD": str(tmp_path / "world.json")}
+
+
+def _created(tmp_path):
+    world = tmp_path / "world.json"
+    return list(json.loads(world.read_text(encoding="utf-8"))["repos"]) if world.exists() else []
 
 
 def test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied(tmp_path):
@@ -191,7 +231,7 @@ def test_apply_refuses_on_the_command_line_when_nothing_approved_the_plan(tmp_pa
                    "--gh", str(stub)], env=env)
     assert applied.returncode == 1
     assert json.loads(applied.stderr)["error"] == "AUTHORIZATION_MISSING"
-    assert not (tmp_path / "ghstate" / "created").exists(), "it refused after writing"
+    assert _created(tmp_path) == [], "it refused after writing"
 
 
 def test_apply_refuses_a_receipt_issued_over_a_different_plan(tmp_path):
@@ -212,7 +252,7 @@ def test_apply_refuses_a_receipt_issued_over_a_different_plan(tmp_path):
                   env=env)
     assert applied.returncode == 1
     assert json.loads(applied.stderr)["error"] == "AUTHORIZATION_MISSING"
-    assert not (tmp_path / "ghstate" / "created").exists(), "it refused after writing"
+    assert _created(tmp_path) == [], "it refused after writing"
 
 
 def test_the_approval_receipt_binds_to_the_plan_it_was_issued_over(tmp_path):
