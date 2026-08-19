@@ -1,0 +1,40 @@
+{
+  "capture": "Slice 5 dogfood — one SIMPLE Node repository, genesis to accepted RepoFactoryResult",
+  "capturedAt": "2026-08-19T10:35:00Z",
+  "repository": "github:MongLong0214/rf-dogfood-node",
+  "visibility": "private",
+  "planDigest": "sha256:88615d7ac00300a292f15bd7628210edd729bf48a53fbfa6d5b248721d6eaa14",
+  "authorization": "HERMES",
+  "publishedHead": "e4370dd86750f6ec2b0b40c661801c9cb1e2d907",
+  "branches": [
+    "main",
+    "dev"
+  ],
+  "defaultBranch": "dev",
+  "plannedFiles": [
+    ".agent-control-plane/project.json",
+    ".github/workflows/project-ci.yml",
+    "AGENTS.md",
+    "README.md",
+    "index.js",
+    "package.json",
+    "test/smoke.test.js"
+  ],
+  "unresolvedGaps": [],
+  "ci": {
+    "checkName": "project-ci",
+    "conclusion": "PASS",
+    "runs": 2,
+    "head": "e4370dd86750f6ec2b0b40c661801c9cb1e2d907"
+  },
+  "controlPlaneVerdict": {
+    "allowed": true,
+    "reasonCode": "OK",
+    "parser": "src/bootstrap/repo-factory-result.ts :: parseRepoFactoryResult"
+  },
+  "defectsFoundByThisRun": [
+    "setup-node/setup-python/setup-go `cache:` hard-requires a lockfile a genesis repository does not have; the first run died on 'Dependencies lock file is not found'",
+    "apply resumed from a receipt without re-observing the resource, so a deleted repository would have been reported as completed"
+  ],
+  "resultDigest": "sha256:5948348d3e41c3efee89dab4cdcd9e625df781ba5f7acfbde69eadba3ec09c1a"
+}

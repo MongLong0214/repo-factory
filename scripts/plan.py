@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
-from materialize import materialize  # noqa: E402
+from materialize import SKELETONS, materialize  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 PROFILES = SKILL / "profiles"
@@ -153,6 +153,10 @@ def compile_plan(
     if stack is None:
         # §14.1 — 모르는 스택을 Node 로 조용히 대체하지 않는다. 못 만든 것은 못 만들었다고 적는다.
         gaps.append("stack-specific CI was not rendered: no stack was resolved for this request")
+    elif stack not in SKELETONS:
+        # 워크플로는 있는데 실행할 프로젝트가 없다. 첫 CI 가 빨간 것은 프로젝트의 문제가
+        # 아니라 공장이 절반만 만들었다는 뜻이므로, 그렇게 적는다.
+        gaps.append(f"no project skeleton exists for stack {stack!r}; CI will run against an empty tree")
 
     core = {
         "schema": "repo-factory.bootstrap-plan.v2",

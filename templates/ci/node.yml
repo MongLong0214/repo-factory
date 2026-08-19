@@ -25,10 +25,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # No package-manager cache at genesis: the setup actions hard-fail when it is
+      # enabled and no lockfile exists, and a repository at genesis has none. Measured on
+      # the first dogfood run — "Dependencies lock file is not found". Caching is worth
+      # adding once there are dependencies to cache.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.runtime }}
-          cache: "{{PACKAGE_MANAGER}}"
       - name: install dependencies
         run: {{INSTALL_CMD}}
       - name: test

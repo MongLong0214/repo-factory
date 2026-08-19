@@ -172,3 +172,19 @@ def test_a_receipt_is_written_before_the_next_operation_is_attempted(tmp_path):
         apply_plan(plan("alpha", "beta"), port, book)
 
     assert ReceiptLedger(book.path).get("create-repository:alpha") is not None
+
+
+def test_a_receipt_for_a_resource_that_no_longer_exists_is_not_a_resume(tmp_path):
+    # A receipt says a write happened, not that its result is still there. Trusting it without
+    # looking reports a deleted repository as completed, and every later step builds on that.
+    from apply import RESUMED_RESOURCE_ABSENT
+
+    book = ledger(tmp_path)
+    apply_plan(plan("alpha"), FakeGitHub(), book)
+
+    vanished = FakeGitHub()  # the remote no longer has it
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), vanished, ReceiptLedger(book.path))
+
+    assert caught.value.code == RESUMED_RESOURCE_ABSENT
+    assert vanished.creates == [], "a disagreement between ledger and remote is not fixed by writing"

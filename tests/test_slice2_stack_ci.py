@@ -13,8 +13,8 @@ sys.path.insert(0, str(SKILL / "scripts"))
 from render_ci import CiRenderError, available_stacks, ci_findings, render, required_tokens  # noqa: E402
 
 VALUES = {
-    "node": {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "PACKAGE_MANAGER": "npm",
-             "INSTALL_CMD": "npm ci", "TEST_CMD": "npm test", "BUILD_CMD": "npm run build"},
+    "node": {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22",
+             "INSTALL_CMD": "npm install", "TEST_CMD": "npm test", "BUILD_CMD": "npm run build"},
     "python": {"RUNTIME_LOWER": "3.11", "RUNTIME_LATEST": "3.13",
                "INSTALL_CMD": "pip install -e .[dev]", "TEST_CMD": "pytest -q", "BUILD_CMD": "python -m build"},
     "go": {"RUNTIME_LOWER": "1.22", "RUNTIME_LATEST": "1.23",
@@ -56,7 +56,7 @@ def test_the_check_the_control_plane_waits_on_is_the_job_name(stack: str):
 # --- the gate finds each shape §14.1 names ---------------------------------------------
 
 def test_an_unresolved_token_is_a_finding():
-    broken = rendered("node").replace("npm ci", "{{INSTALL_CMD}}")
+    broken = rendered("node").replace("npm install", "{{INSTALL_CMD}}")
     assert ("UNRESOLVED_TOKEN", "INSTALL_CMD") in ci_findings(broken)
 
 
@@ -84,7 +84,7 @@ def test_an_action_tag_instead_of_a_sha_is_a_finding():
 
 def test_a_setup_step_that_only_echoes_is_a_finding():
     broken = rendered("node").replace(
-        "      - name: install dependencies\n        run: npm ci",
+        "      - name: install dependencies\n        run: npm install",
         '      - name: install dependencies\n        run: echo "replace me"',
     )
     assert "PLACEHOLDER_ECHO" in [c for c, _ in ci_findings(broken)]
@@ -122,3 +122,14 @@ def test_an_empty_command_is_refused_because_it_verifies_nothing():
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
 def test_every_stack_declares_the_values_it_needs(stack: str):
     assert set(required_tokens(stack)) <= set(VALUES[stack]), "the fixture is missing a token the template requires"
+
+
+def test_no_genesis_template_demands_a_lockfile_it_does_not_produce():
+    # Measured, not reasoned: the first dogfood run died on "Dependencies lock file is not
+    # found" because setup-node's cache option hard-requires one and a repository at genesis
+    # has none. A template that cannot be green on the commit that creates it is not a template.
+    for stack in ["node", "python", "go", "rust"]:
+        text = rendered(stack)
+        # rust-cache is the exception: it tolerates a tree with no Cargo.lock.
+        enabled = [line for line in text.splitlines() if line.strip().startswith("cache:")]
+        assert not enabled, f"{stack} enables a package-manager cache that presumes a lockfile: {enabled}"
