@@ -175,3 +175,49 @@ def test_the_control_plane_still_refuses_a_result_that_claims_activation():
 
     assert verdict["allowed"] is False
     assert verdict["reasonCode"] == "BOOTSTRAP_RESULT_OVERCLAIMS_ACTIVATION"
+
+
+# --- the fields a generated repository must carry for the control plane to use it -------
+
+def test_the_manifest_declares_its_ci_workflow_as_a_first_activation():
+    # Without ciWorkflows the control plane cannot attribute the repository's project-ci: the
+    # check reads as `unapproved` and post-merge verification never passes. The digest cannot be
+    # filled here — approval belongs to activation — so the pair states "not approved yet"
+    # explicitly. `approvedDigest: null` on its own does not parse, deliberately: it used to mean
+    # both "not approved yet" and "anything is fine", and a manifest could activate cleanly while
+    # being unable to ever merge.
+    compiled = compile_plan(request_for("SIMPLE"), VER, stack="node", ci_values=CI_VALUES,
+                            operation_id="11111111-2222-3333-4444-555555555555")
+    workflows = compiled["projectManifest"]["ciWorkflows"]
+
+    assert workflows == [{
+        "path": ".github/workflows/project-ci.yml",
+        "checkName": "project-ci",
+        "repositoryRole": "primary",
+        "approvedDigest": None,
+        "unapprovedFirstActivation": True,
+    }]
+    assert run_check("acp-manifest-check.mts", compiled["projectManifest"])["allowed"] is True
+
+
+def test_no_workflow_is_declared_when_none_was_rendered():
+    # Declaring a workflow that is not in the repository would make post-merge verification
+    # require a check nothing publishes — a manifest that can never be satisfied.
+    compiled = compile_plan(request_for("SIMPLE"), VER,
+                            operation_id="11111111-2222-3333-4444-555555555555")
+
+    assert compiled["projectManifest"]["ciWorkflows"] == []
+    assert any("stack-specific CI" in gap for gap in compiled["unresolvedGaps"])
+
+
+@pytest.mark.parametrize("profile,mode", [("SIMPLE", "preferred"), ("STANDARD", "required"),
+                                          ("GUARDED", "required")])
+def test_the_profile_commitlore_policy_reaches_the_manifest(profile: str, mode: str):
+    # §18. The profile decided this at plan time; without it in the manifest the generated
+    # repository carries no record of the decision and nothing downstream can act on it.
+    commands = VER + ([dict(VER[0], id="security")] if profile == "GUARDED" else [])
+    compiled = compile_plan(request_for(profile), commands, stack="node", ci_values=CI_VALUES,
+                            operation_id="11111111-2222-3333-4444-555555555555")
+
+    assert compiled["projectManifest"]["commitlore"] == {"mode": mode}
+    assert run_check("acp-manifest-check.mts", compiled["projectManifest"])["allowed"] is True
