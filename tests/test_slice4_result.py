@@ -15,7 +15,17 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from apply import ReceiptLedger, apply_plan  # noqa: E402
+from apply import ReceiptLedger, apply_plan, authorized_plan_receipt  # noqa: E402
+
+
+def approval(plan_core, authority: str = "OWNER"):
+    """A receipt the approver would have produced for exactly this plan.
+
+    Built with the production helper so a test cannot approve a plan in a way a real caller
+    could not. Tests about tampering modify what this returns."""
+    return authorized_plan_receipt(plan_core, authority=authority, actor="owner:isaac",
+                                   approved_at="2026-08-19T09:00:00Z")
+
 from plan import compile_plan, diff_summary  # noqa: E402
 from publish import publish_receipt  # noqa: E402
 from result import FORBIDDEN_CLAIMS, ResultError, build_result  # noqa: E402
@@ -80,7 +90,7 @@ def chain_parts() -> tuple:
     port = FakeGitHub()
     with tempfile.TemporaryDirectory() as scratch:
         book = Path(scratch) / "receipts.json"
-        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files", authorization=approval(compiled["planCore"]))
         # The genesis push sits between the phases and leaves its own receipt, which is what
         # `after-files` reads to know the workflow the ruleset requires is actually in the
         # repository. Without it the later phase refuses rather than running out of order.
@@ -91,7 +101,7 @@ def chain_parts() -> tuple:
             "remoteHeads": {"main": HEAD, "dev": HEAD},
         }, clock=lambda: "2026-08-19T10:00:00Z"))
         published = ledger.get(f"publish:{IDENTITY}")
-        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
+        after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files", authorization=approval(compiled["planCore"]))
     return compiled, before["receipts"] + after["receipts"]
 
 

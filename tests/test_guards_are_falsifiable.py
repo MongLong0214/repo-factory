@@ -298,6 +298,30 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ("os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600", "os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644"),
         "killed_by": ["tests/test_slice3_apply.py::test_the_ledger_is_not_world_readable"],
     },
+    {
+        "name": "a plan without an approval receipt is refused before the remote is read",
+        "file": "scripts/apply.py",
+        "mutate": ("    _check_authorization(plan, authorization, ledger)", "    pass"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_plan_with_no_approval_receipt_is_refused_before_the_remote_is_read"],
+    },
+    {
+        "name": "an approval covers one exact plan digest",
+        "file": "scripts/apply.py",
+        "mutate": ('if receipt.get("planDigest") != stated:', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_an_approval_for_a_different_plan_is_refused"],
+    },
+    {
+        "name": "a lesser authority cannot cover a plan that needs a greater one",
+        "file": "scripts/apply.py",
+        "mutate": ('if held < AUTHORITY_RANK.get(required, 1):', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_hermes_approval_cannot_cover_a_plan_that_needs_the_owner"],
+    },
+    {
+        "name": "a revoked or superseded approval is spent",
+        "file": "scripts/apply.py",
+        "mutate": ('if receipt.get("revoked") or receipt.get("supersededBy"):', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_revoked_or_superseded_approval_is_refused"],
+    },
 ]
 
 

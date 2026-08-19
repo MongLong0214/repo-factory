@@ -34,12 +34,16 @@ __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
     "UNKNOWN_PHASE", "UNSUPPORTED_INTENT", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
-    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED",
+    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED", "AUTHORIZATION_MISSING",
+    "AUTHORIZATION_INSUFFICIENT", "AUTHORIZATION_SPENT", "AUTHORITY_RANK",
+    "authorized_plan_receipt",
     "PHASES",
     "PUBLISH_OPERATION",
 ]
 
 PHASES = ("before-files", "after-files")
+# OWNER 가 HERMES 를 덮는다. 반대는 아니다.
+AUTHORITY_RANK = {"HERMES": 0, "OWNER": 1}
 PUBLISH_OPERATION = "publish:{identity}"
 
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
@@ -50,6 +54,9 @@ REREAD_MISMATCH = "REREAD_MISMATCH"
 # outside the plan, and unreachable now that the only effect an operation can have is the one
 # written inside it. A refusal no input can reach is not protection; it is an answer of "yes"
 # to "is this checked?".
+AUTHORIZATION_MISSING = "AUTHORIZATION_MISSING"
+AUTHORIZATION_INSUFFICIENT = "AUTHORIZATION_INSUFFICIENT"
+AUTHORIZATION_SPENT = "AUTHORIZATION_SPENT"
 LEDGER_CORRUPT = "LEDGER_CORRUPT"
 RESUMED_RESOURCE_DRIFTED = "RESUMED_RESOURCE_DRIFTED"
 PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
@@ -205,8 +212,77 @@ def _state_gap(desired: Any, observed: Any, path: str = "") -> List[str]:
     return gaps
 
 
+def authorized_plan_receipt(plan: Dict[str, Any], *, authority: str, actor: str,
+                            approved_at: str, session_id: str = None,
+                            binding_generation: int = None,
+                            source_receipt: str = None) -> Dict[str, Any]:
+    """승인자가 만드는 문서. Plan 을 고치면 `planDigest` 가 더 이상 그 Plan 을 안 가리킨다."""
+    if authority not in AUTHORITY_RANK:
+        raise ApplyError(AUTHORIZATION_INSUFFICIENT, f"unknown authority {authority!r}", [], {})
+    receipt = {
+        "schema": "repo-factory.authorized-plan-receipt.v1",
+        "planDigest": digest(plan),
+        "bootstrapOperationId": plan["bootstrapOperationId"],
+        "authority": authority,
+        "approvedBy": {"actor": actor},
+        "approvedAt": approved_at,
+    }
+    if session_id is not None:
+        receipt["approvedBy"]["sessionId"] = session_id
+    if binding_generation is not None:
+        receipt["approvedBy"]["bindingGeneration"] = binding_generation
+    if source_receipt is not None:
+        receipt["sourceReceipt"] = source_receipt
+    return receipt
+
+
+def _check_authorization(plan: Dict[str, Any], receipt: Optional[Dict[str, Any]],
+                         ledger: ReceiptLedger) -> None:
+    """승인은 Plan 안의 문자열이 아니라 Plan 을 가리키는 별개의 문서다.
+
+    `authorization: "OWNER"` 가 Plan 안에 있으면, 그 값을 고치고 다시 digest 한 Plan 은
+    스스로를 승인한 것과 구별되지 않는다. 승인자가 만드는 영수증은 **어떤 digest 를**
+    승인했는지를 말하므로, Plan 을 고치면 그 승인이 더 이상 이 Plan 을 가리키지 않는다.
+
+    서명은 아니다. 이 파일을 쓸 수 있는 사람은 승인을 주장할 수 있다. 이것이 사는 것은
+    주장이 **별개의 아티팩트**가 되고, 행위자·시각·묶인 digest 를 갖고, 읽는 쪽이 눈앞의
+    Plan 과 대조할 수 있다는 것이다."""
+    required = plan.get("authorization", "OWNER")
+    if receipt is None:
+        raise ApplyError(AUTHORIZATION_MISSING,
+                         f"this plan needs a {required} approval receipt and none was supplied; "
+                         f"a plan asserting its own authority is not an approval",
+                         ledger.all(), {"required": required})
+    stated = digest(plan)
+    if receipt.get("planDigest") != stated:
+        raise ApplyError(AUTHORIZATION_MISSING,
+                         f"the approval receipt covers {receipt.get('planDigest')} and this plan "
+                         f"digests to {stated}",
+                         ledger.all(), {"approved": receipt.get("planDigest"), "plan": stated})
+    if receipt.get("bootstrapOperationId") != plan["bootstrapOperationId"]:
+        raise ApplyError(AUTHORIZATION_MISSING,
+                         "the approval receipt was issued for a different bootstrap operation",
+                         ledger.all(), {"operationId": receipt.get("bootstrapOperationId")})
+    held = AUTHORITY_RANK.get(str(receipt.get("authority")), -1)
+    if held < AUTHORITY_RANK.get(required, 1):
+        raise ApplyError(AUTHORIZATION_INSUFFICIENT,
+                         f"this plan needs {required} and the receipt carries "
+                         f"{receipt.get('authority')!r}",
+                         ledger.all(), {"required": required, "held": receipt.get("authority")})
+    if receipt.get("revoked") or receipt.get("supersededBy"):
+        raise ApplyError(AUTHORIZATION_SPENT,
+                         "the approval receipt has been revoked or superseded",
+                         ledger.all(), {"supersededBy": receipt.get("supersededBy"),
+                                        "revoked": bool(receipt.get("revoked"))})
+    if not receipt.get("approvedAt") or not (receipt.get("approvedBy") or {}).get("actor"):
+        raise ApplyError(AUTHORIZATION_MISSING,
+                         "the approval receipt does not say who approved it, or when",
+                         ledger.all(), {})
+
+
 def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
-               *, clock=None, phase: str = "before-files") -> Dict[str, Any]:
+               *, authorization: Dict[str, Any] = None, clock=None,
+               phase: str = "before-files") -> Dict[str, Any]:
     """Plan 의 Operation 을 순서대로 수행하고 영수증 목록을 돌려준다.
 
     생성 파라미터는 Operation 의 `desiredState` 다. 한때 별도 `specs` 인자로 들어왔는데,
@@ -244,6 +320,10 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
             raise ApplyError(OWNER_AUTHORIZATION_REQUIRED,
                              "a Hermes-authorised plan may not create public repositories",
                              ledger.all(), {"repositories": public})
+
+    # 원격을 읽기 전에 권한을 본다. 읽는 것도 부작용이 있는 호출이고, 무엇보다 승인 없이
+    # 시작한 실행은 어디까지 갔든 승인 없이 간 것이다.
+    _check_authorization(plan, authorization, ledger)
 
     # 모르는 단계는 빈 목록이 아니라 거부다. 오타 하나가 staged 를 0개로 만들고, 0개는
     # 전부 끝났다는 뜻으로 읽혀서 `completed: true` 가 나온다 — 아무것도 안 하고 완료를

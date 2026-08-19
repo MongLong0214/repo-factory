@@ -12,10 +12,21 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
+    AUTHORIZATION_INSUFFICIENT, AUTHORIZATION_MISSING, AUTHORIZATION_SPENT,
     LEDGER_CORRUPT, PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
     RESUMED_RESOURCE_ABSENT, RESUMED_RESOURCE_DRIFTED, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
-    ApplyError, ReceiptLedger, apply_plan,
+    ApplyError, ReceiptLedger, apply_plan, authorized_plan_receipt,
 )
+
+
+def approval(plan_core, authority: str = "OWNER"):
+    """A receipt the approver would have produced for exactly this plan.
+
+    Built with the production helper so a test cannot approve a plan in a way a real caller
+    could not. Tests about tampering modify what this returns."""
+    return authorized_plan_receipt(plan_core, authority=authority, actor="owner:isaac",
+                                   approved_at="2026-08-19T09:00:00Z")
+
 
 
 class FakeGitHub:
@@ -65,7 +76,7 @@ def ledger(tmp_path: Path) -> ReceiptLedger:
 
 def test_every_applied_resource_carries_a_verified_receipt(tmp_path):
     port = FakeGitHub()
-    result = apply_plan(plan("alpha", "beta"), port, ledger(tmp_path))
+    result = apply_plan(plan("alpha", "beta"), port, ledger(tmp_path), authorization=approval(plan("alpha", "beta")))
 
     assert result["completed"] is True
     assert [r["resourceIdentity"] for r in result["receipts"]] == [
@@ -79,7 +90,7 @@ def test_a_successful_create_that_is_absent_on_reread_is_not_a_completion(tmp_pa
     port = FakeGitHub(vanish=["github:MongLong0214/alpha"])
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), port, ledger(tmp_path))
+        apply_plan(plan("alpha"), port, ledger(tmp_path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == REREAD_MISMATCH
     assert port.creates == ["github:MongLong0214/alpha"], "the create was issued; the reread is what failed"
@@ -92,7 +103,7 @@ def test_an_unrelated_resource_of_the_same_name_is_a_collision_and_changes_nothi
     port = FakeGitHub(existing={"github:MongLong0214/alpha": {"identity": "someone else's"}})
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), port, ledger(tmp_path))
+        apply_plan(plan("alpha"), port, ledger(tmp_path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == RESOURCE_COLLISION
     assert port.creates == [], "nothing may be written on top of a resource we cannot claim"
@@ -102,9 +113,9 @@ def test_an_unrelated_resource_of_the_same_name_is_a_collision_and_changes_nothi
 def test_a_resource_we_already_verified_is_resumed_rather_than_recreated(tmp_path):
     book = ledger(tmp_path)
     port = FakeGitHub()
-    apply_plan(plan("alpha"), port, book)
+    apply_plan(plan("alpha"), port, book, authorization=approval(plan("alpha")))
 
-    again = apply_plan(plan("alpha"), port, ReceiptLedger(book.path))
+    again = apply_plan(plan("alpha"), port, ReceiptLedger(book.path), authorization=approval(plan("alpha")))
 
     assert port.creates == ["github:MongLong0214/alpha"], "resume must not write a second time"
     assert again["completed"] is True
@@ -115,10 +126,10 @@ def test_the_same_resource_under_a_changed_intent_is_refused(tmp_path):
     # §16.3 requires the same operation *and* the same intent. A plan that changed is not a
     # resume, and treating it as one applies an approval to something else.
     book = ledger(tmp_path)
-    apply_plan(plan("alpha"), FakeGitHub(), book)
+    apply_plan(plan("alpha"), FakeGitHub(), book, authorization=approval(plan("alpha")))
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha", request_digest="sha256:" + "b" * 64), FakeGitHub(), ReceiptLedger(book.path))
+        apply_plan(plan("alpha", request_digest="sha256:" + "b" * 64), FakeGitHub(), ReceiptLedger(book.path), authorization=approval(plan("alpha", request_digest="sha256:" + "b" * 64)))
 
     assert caught.value.code == PLAN_INTENT_CHANGED
 
@@ -135,7 +146,7 @@ def test_an_operation_that_would_create_something_other_than_what_was_approved_i
     smuggled["githubOperations"][0]["desiredState"] = {"private": False}
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(smuggled, port, ledger(tmp_path))
+        apply_plan(smuggled, port, ledger(tmp_path), authorization=approval(smuggled))
 
     assert caught.value.code == PLAN_INTENT_CHANGED
     assert port.creates == []
@@ -158,7 +169,7 @@ def test_a_resource_created_in_a_state_the_plan_did_not_approve_is_refused(tmp_p
     ]
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(drifted, port, ledger(tmp_path))
+        apply_plan(drifted, port, ledger(tmp_path), authorization=approval(drifted))
 
     assert caught.value.code == REREAD_MISMATCH
     assert any("enforcement" in gap for gap in caught.value.evidence["gaps"])
@@ -171,7 +182,7 @@ def test_a_partial_apply_reports_what_completed_rather_than_claiming_atomicity(t
     port = FakeGitHub(existing={"github:MongLong0214/beta": {"identity": "not ours"}})
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha", "beta"), port, ledger(tmp_path))
+        apply_plan(plan("alpha", "beta"), port, ledger(tmp_path), authorization=approval(plan("alpha", "beta")))
 
     assert caught.value.code == RESOURCE_COLLISION
     assert [r["resourceIdentity"] for r in caught.value.receipts] == ["github:MongLong0214/alpha"]
@@ -181,13 +192,13 @@ def test_resume_after_a_partial_apply_starts_from_the_verified_receipt(tmp_path)
     book = ledger(tmp_path)
     blocked = FakeGitHub(existing={"github:MongLong0214/beta": {"identity": "not ours"}})
     with pytest.raises(ApplyError):
-        apply_plan(plan("alpha", "beta"), blocked, book)
+        apply_plan(plan("alpha", "beta"), blocked, book, authorization=approval(plan("alpha", "beta")))
 
     # The collision is resolved out of band; the same plan is run again against a fresh process.
     # `alpha` is carried across exactly as round one left it — a stand-in that merely has the same
     # identity is a different resource, and a resume that accepts it is resuming something else.
     cleared = FakeGitHub(existing={"github:MongLong0214/alpha": blocked.state["github:MongLong0214/alpha"]})
-    result = apply_plan(plan("alpha", "beta"), cleared, ReceiptLedger(book.path))
+    result = apply_plan(plan("alpha", "beta"), cleared, ReceiptLedger(book.path), authorization=approval(plan("alpha", "beta")))
 
     assert result["completed"] is True
     assert cleared.creates == ["github:MongLong0214/beta"], "alpha is resumed from its receipt, not rebuilt"
@@ -195,7 +206,7 @@ def test_resume_after_a_partial_apply_starts_from_the_verified_receipt(tmp_path)
 
 def test_the_ledger_survives_the_process_that_wrote_it(tmp_path):
     book = ledger(tmp_path)
-    apply_plan(plan("alpha"), FakeGitHub(), book)
+    apply_plan(plan("alpha"), FakeGitHub(), book, authorization=approval(plan("alpha")))
 
     reloaded = ReceiptLedger(book.path)
 
@@ -209,7 +220,7 @@ def test_a_receipt_is_written_before_the_next_operation_is_attempted(tmp_path):
     book = ledger(tmp_path)
     port = FakeGitHub(existing={"github:MongLong0214/beta": {"identity": "not ours"}})
     with pytest.raises(ApplyError):
-        apply_plan(plan("alpha", "beta"), port, book)
+        apply_plan(plan("alpha", "beta"), port, book, authorization=approval(plan("alpha", "beta")))
 
     assert ReceiptLedger(book.path).get("create-repository:alpha") is not None
 
@@ -220,11 +231,11 @@ def test_a_receipt_for_a_resource_that_no_longer_exists_is_not_a_resume(tmp_path
     from apply import RESUMED_RESOURCE_ABSENT
 
     book = ledger(tmp_path)
-    apply_plan(plan("alpha"), FakeGitHub(), book)
+    apply_plan(plan("alpha"), FakeGitHub(), book, authorization=approval(plan("alpha")))
 
     vanished = FakeGitHub()  # the remote no longer has it
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), vanished, ReceiptLedger(book.path))
+        apply_plan(plan("alpha"), vanished, ReceiptLedger(book.path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == RESUMED_RESOURCE_ABSENT
     assert vanished.creates == [], "a disagreement between ledger and remote is not fixed by writing"
@@ -236,7 +247,7 @@ def test_the_receipt_states_when_each_observation_happened(tmp_path):
     ticks = iter(["2026-08-19T00:00:01Z", "2026-08-19T00:00:02Z"])
     port = FakeGitHub()
 
-    result = apply_plan(plan("alpha"), port, ledger(tmp_path), clock=lambda: next(ticks))
+    result = apply_plan(plan("alpha"), port, ledger(tmp_path), clock=lambda: next(ticks), authorization=approval(plan("alpha")))
     receipt = result["receipts"][0]
 
     assert receipt["createdAt"] == "2026-08-19T00:00:01Z"
@@ -245,7 +256,7 @@ def test_the_receipt_states_when_each_observation_happened(tmp_path):
 
 
 def test_a_default_clock_still_produces_a_usable_receipt(tmp_path):
-    result = apply_plan(plan("alpha"), FakeGitHub(), ledger(tmp_path))
+    result = apply_plan(plan("alpha"), FakeGitHub(), ledger(tmp_path), authorization=approval(plan("alpha")))
     receipt = result["receipts"][0]
 
     assert receipt["createdAt"].endswith("Z") and receipt["rereadAt"].endswith("Z")
@@ -262,7 +273,7 @@ def test_a_ledger_write_that_dies_leaves_the_previous_one_readable(tmp_path, mon
 
     book = ledger(tmp_path)
     first = FakeGitHub()
-    apply_plan(plan("alpha"), first, book)
+    apply_plan(plan("alpha"), first, book, authorization=approval(plan("alpha")))
     intact = book.path.read_text(encoding="utf-8")
 
     monkeypatch.setattr(apply_module.os, "replace",
@@ -271,7 +282,7 @@ def test_a_ledger_write_that_dies_leaves_the_previous_one_readable(tmp_path, mon
     # operation whose receipt write dies.
     resumed = FakeGitHub(existing={"github:MongLong0214/alpha": first.state["github:MongLong0214/alpha"]})
     with pytest.raises(OSError):
-        apply_plan(plan("alpha", "beta"), resumed, ReceiptLedger(book.path))
+        apply_plan(plan("alpha", "beta"), resumed, ReceiptLedger(book.path), authorization=approval(plan("alpha", "beta")))
 
     assert book.path.read_text(encoding="utf-8") == intact, "the previous ledger was damaged"
     assert len(_json.loads(book.path.read_text(encoding="utf-8"))) == 1
@@ -295,7 +306,7 @@ def test_only_the_named_phase_is_applied(tmp_path):
     port = FakeGitHub()
     book = ledger(tmp_path)
 
-    before = apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+    before = apply_plan(phased_plan("alpha"), port, book, phase="before-files", authorization=approval(phased_plan("alpha")))
 
     assert [r["operationId"] for r in before["receipts"]] == ["create-repository:alpha"]
     assert before["completed"] is True
@@ -315,10 +326,10 @@ def genesis_receipt(name: str) -> Dict[str, Any]:
 def test_the_later_phase_applies_against_the_same_ledger(tmp_path):
     port = FakeGitHub()
     book = ledger(tmp_path)
-    apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+    apply_plan(phased_plan("alpha"), port, book, phase="before-files", authorization=approval(phased_plan("alpha")))
     book.record(genesis_receipt("alpha"))
 
-    after = apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files")
+    after = apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files", authorization=approval(phased_plan("alpha")))
 
     assert [r["operationId"] for r in after["receipts"]] == ["create-ruleset:alpha"]
     assert "github:MongLong0214/alpha#acp-managed-branches" in port.creates
@@ -331,7 +342,7 @@ def test_the_later_phase_refuses_while_the_earlier_one_is_unfinished(tmp_path):
     # could apply after-files first, and a ruleset requiring project-ci that exists before the
     # commit carrying that workflow refuses the very push that gives the repository content.
     with pytest.raises(ApplyError) as caught:
-        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-files")
+        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-files", authorization=approval(phased_plan("alpha")))
 
     assert caught.value.code == PHASE_OUT_OF_ORDER
     assert "create-repository:alpha" in caught.value.evidence["waitingOn"]
@@ -340,10 +351,10 @@ def test_the_later_phase_refuses_while_the_earlier_one_is_unfinished(tmp_path):
 def test_the_later_phase_refuses_until_the_genesis_commit_is_published(tmp_path):
     port = FakeGitHub()
     book = ledger(tmp_path)
-    apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+    apply_plan(phased_plan("alpha"), port, book, phase="before-files", authorization=approval(phased_plan("alpha")))
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files")
+        apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files", authorization=approval(phased_plan("alpha")))
 
     assert caught.value.code == PHASE_OUT_OF_ORDER
     assert caught.value.evidence["waitingOn"] == ["github:MongLong0214/alpha"]
@@ -353,7 +364,7 @@ def test_a_phase_the_plan_does_not_have_is_refused_rather_than_reported_complete
     # An unknown phase staged zero operations, and zero staged operations satisfied
     # `completed = len(applied) == len(staged)`. A typo reported a finished bootstrap.
     with pytest.raises(ApplyError) as caught:
-        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-file")
+        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-file", authorization=approval(phased_plan("alpha")))
 
     assert caught.value.code == UNKNOWN_PHASE
 
@@ -391,7 +402,7 @@ class SettingGitHub(FakeGitHub):
 def test_an_update_changes_the_resource_and_is_re_read_against_the_approved_state(tmp_path):
     port = SettingGitHub()
 
-    result = apply_plan(setting_plan("alpha"), port, ledger(tmp_path))
+    result = apply_plan(setting_plan("alpha"), port, ledger(tmp_path), authorization=approval(setting_plan("alpha")))
 
     assert port.default == "dev"
     assert result["receipts"][0]["preexisting"] is True
@@ -402,14 +413,14 @@ def test_an_update_against_something_absent_is_refused_rather_than_creating_it(t
     # An update is approval to change a thing, not approval to bring it into existence — those
     # are different decisions and only one of them was made.
     with pytest.raises(ApplyError) as caught:
-        apply_plan(setting_plan("alpha"), SettingGitHub(present=False), ledger(tmp_path))
+        apply_plan(setting_plan("alpha"), SettingGitHub(present=False), ledger(tmp_path), authorization=approval(setting_plan("alpha")))
 
     assert caught.value.code == RESUMED_RESOURCE_ABSENT
 
 
 def test_an_update_the_remote_ignored_is_refused(tmp_path):
     with pytest.raises(ApplyError) as caught:
-        apply_plan(setting_plan("alpha"), SettingGitHub(honours=False), ledger(tmp_path))
+        apply_plan(setting_plan("alpha"), SettingGitHub(honours=False), ledger(tmp_path), authorization=approval(setting_plan("alpha")))
 
     assert caught.value.code == REREAD_MISMATCH
 
@@ -419,7 +430,7 @@ def test_an_intent_this_applier_does_not_perform_is_refused(tmp_path):
     core["githubOperations"][0]["intent"] = "delete"
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(core, SettingGitHub(), ledger(tmp_path))
+        apply_plan(core, SettingGitHub(), ledger(tmp_path), authorization=approval(core))
 
     assert caught.value.code == UNSUPPORTED_INTENT
 
@@ -473,7 +484,7 @@ def test_a_receipt_that_names_a_different_resource_is_not_a_resume(tmp_path):
                         [valid_row(resourceIdentity="github:MongLong0214/somewhere-else")])
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path))
+        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == PLAN_INTENT_CHANGED
     assert "resourceIdentity" in caught.value.evidence["fields"]
@@ -483,7 +494,7 @@ def test_a_receipt_that_never_claimed_a_verified_reread_is_not_a_resume(tmp_path
     path = write_ledger(tmp_path / "receipts.json", [valid_row(verified=False)])
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path))
+        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == PLAN_INTENT_CHANGED
 
@@ -493,17 +504,111 @@ def test_a_resource_that_drifted_since_its_receipt_is_refused(tmp_path):
     # present, and an existence check resumes straight past that.
     book = ledger(tmp_path)
     port = FakeGitHub()
-    apply_plan(plan("alpha"), port, book)
+    apply_plan(plan("alpha"), port, book, authorization=approval(plan("alpha")))
     port.state["github:MongLong0214/alpha"]["private"] = False
 
     with pytest.raises(ApplyError) as caught:
-        apply_plan(plan("alpha"), port, ReceiptLedger(book.path))
+        apply_plan(plan("alpha"), port, ReceiptLedger(book.path), authorization=approval(plan("alpha")))
 
     assert caught.value.code == RESUMED_RESOURCE_DRIFTED
 
 
 def test_the_ledger_is_not_world_readable(tmp_path):
     book = ledger(tmp_path)
-    apply_plan(plan("alpha"), FakeGitHub(), book)
+    apply_plan(plan("alpha"), FakeGitHub(), book, authorization=approval(plan("alpha")))
 
     assert book.path.stat().st_mode & 0o077 == 0, "the ledger records what was created where"
+
+
+# --- approval is a document the approver makes, not a field in the document approved ------
+
+def test_a_plan_with_no_approval_receipt_is_refused_before_the_remote_is_read(tmp_path):
+    class NeverRead(FakeGitHub):
+        def observe(self, *_):
+            raise AssertionError("nothing may be read before authority is settled")
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), NeverRead(), ledger(tmp_path), authorization=None)
+
+    assert caught.value.code == AUTHORIZATION_MISSING
+
+
+def test_an_approval_for_a_different_plan_is_refused(tmp_path):
+    # This is what makes approval more than a string in the plan. Editing `authorization` and
+    # re-digesting used to be indistinguishable from being approved; now the approval names the
+    # digest it covers, so an edited plan is no longer the plan that was approved.
+    approved = approval(plan("alpha"))
+    edited = plan("alpha")
+    edited["githubOperations"][0]["desiredState"] = {"private": False}
+    edited["repositories"][0]["visibility"] = "public"
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(edited, FakeGitHub(), ledger(tmp_path), authorization=approved)
+
+    assert caught.value.code == AUTHORIZATION_MISSING
+
+
+def test_a_hermes_approval_cannot_cover_a_plan_that_needs_the_owner(tmp_path):
+    core = plan("alpha")
+    core["authorization"] = "OWNER"
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, FakeGitHub(), ledger(tmp_path), authorization=approval(core, "HERMES"))
+
+    assert caught.value.code == AUTHORIZATION_INSUFFICIENT
+
+
+def test_an_owner_approval_covers_a_plan_that_only_needs_hermes(tmp_path):
+    core = plan("alpha")
+    core["authorization"] = "HERMES"
+
+    result = apply_plan(core, FakeGitHub(), ledger(tmp_path), authorization=approval(core, "OWNER"))
+
+    assert result["completed"] is True
+
+
+def test_a_revoked_or_superseded_approval_is_refused(tmp_path):
+    core = plan("alpha")
+    revoked = dict(approval(core), revoked=True)
+    superseded = dict(approval(core), supersededBy="sha256:" + "b" * 64)
+
+    for spent in (revoked, superseded):
+        with pytest.raises(ApplyError) as caught:
+            apply_plan(core, FakeGitHub(), ledger(tmp_path / str(id(spent))), authorization=spent)
+        assert caught.value.code == AUTHORIZATION_SPENT
+
+
+def test_an_approval_that_names_nobody_is_refused(tmp_path):
+    core = plan("alpha")
+    anonymous = dict(approval(core))
+    anonymous["approvedBy"] = {}
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, FakeGitHub(), ledger(tmp_path), authorization=anonymous)
+
+    assert caught.value.code == AUTHORIZATION_MISSING
+
+
+def test_an_approval_issued_for_another_bootstrap_operation_is_refused(tmp_path):
+    core = plan("alpha")
+    borrowed = dict(approval(core), bootstrapOperationId="99999999-8888-7777-6666-555555555555")
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, FakeGitHub(), ledger(tmp_path), authorization=borrowed)
+
+    assert caught.value.code == AUTHORIZATION_MISSING
+
+
+def test_the_receipt_the_builder_makes_satisfies_the_schema_it_ships():
+    """A guard pointed at a document nobody validates against is a guard on a shape nobody has."""
+    import json as _json
+    from jsonschema import Draft202012Validator
+
+    schema = _json.loads((SKILL / "schemas" / "authorized-plan-receipt.schema.json")
+                         .read_text(encoding="utf-8"))
+    receipt = authorized_plan_receipt(plan("alpha"), authority="OWNER", actor="owner:isaac",
+                                      approved_at="2026-08-19T09:00:00Z",
+                                      session_id="s-1", binding_generation=3,
+                                      source_receipt="acp:gate:abc")
+
+    assert sorted(Draft202012Validator(schema).iter_errors(receipt), key=str) == []

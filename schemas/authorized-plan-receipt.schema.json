@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repo-factory/schemas/authorized-plan-receipt.schema.json",
+  "title": "AuthorizedPlanReceipt",
+  "description": "Proof that some authority approved one exact plan. It is produced by the approver and names the digest it approved, so approval stops being a field inside the document under approval — a plan cannot raise its own authorisation by rewriting a string and re-digesting itself. It is not a signature: anyone who can write this file can claim an approval. What it buys is that the claim is a separate artifact with a named actor, a time, and a digest it is bound to, which a reader can check against the plan in front of them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "planDigest", "bootstrapOperationId", "authority", "approvedBy", "approvedAt"],
+  "properties": {
+    "schema": { "const": "repo-factory.authorized-plan-receipt.v1" },
+    "planDigest": {
+      "description": "The digest of the exact planCore this approval covers.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "bootstrapOperationId": { "type": "string", "minLength": 1 },
+    "authority": {
+      "description": "OWNER outranks HERMES. A HERMES approval cannot cover a plan the compiler raised to OWNER.",
+      "enum": ["OWNER", "HERMES"]
+    },
+    "approvedBy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor"],
+      "properties": {
+        "actor": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "bindingGeneration": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "approvedAt": { "type": "string", "minLength": 1 },
+    "sourceReceipt": {
+      "description": "Where the approval came from, when it came from somewhere that issues its own receipts.",
+      "type": "string",
+      "minLength": 1
+    },
+    "revoked": { "type": "boolean" },
+    "supersededBy": {
+      "description": "The digest of the approval that replaced this one. Present means this approval is spent.",
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
