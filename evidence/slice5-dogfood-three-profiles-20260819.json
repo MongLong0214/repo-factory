@@ -1,4 +1,17 @@
 {
+  "SUPERSEDED": "This capture overstates what ran. Each run's ledger holds one receipt — create-repository — and no genesis, default-branch, or ruleset receipt, so the per-run `unresolvedGaps: []` and `controlPlaneVerdict` below were not produced by scripts/result.py. They could not have been: result.py's command line raised TypeError, create-ruleset could never pass its post-write re-read, and build_result refused the genesis receipt that every real ledger carries. All three are fixed in PR #37. Kept rather than deleted because the repositories and heads it names are real; what is not evidenced is completion. Replaced by the re-run capture.",
+  "supersededAt": "2026-08-19",
+  "ledgersAsCaptured": {
+    ".rf-state/dogfood.json": [
+      "create-repository:rf-dogfood-node"
+    ],
+    ".rf-state/rf-dogfood-python.json": [
+      "create-repository:rf-dogfood-python"
+    ],
+    ".rf-state/rf-dogfood-go.json": [
+      "create-repository:rf-dogfood-go"
+    ]
+  },
   "capture": "Factory-side bootstrap and receiver shape acceptance, once per profile (SIMPLE, STANDARD, GUARDED)",
   "capturedAt": "2026-08-19T12:20:00Z",
   "verdictSource": "agent-control-plane src/bootstrap/repo-factory-result.ts :: parseRepoFactoryResult",
