@@ -322,6 +322,20 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ('if receipt.get("revoked") or receipt.get("supersededBy"):', "if False:"),
         "killed_by": ["tests/test_slice3_apply.py::test_a_revoked_or_superseded_approval_is_refused"],
     },
+    {
+        "name": "the command line hands the approval receipt to the gate that requires it",
+        "file": "scripts/apply.py",
+        "mutate": ("                             authorization=authorization, phase=args.phase)",
+                   "                             authorization=None, phase=args.phase)"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied"],
+    },
+    {
+        "name": "the approval receipt names the authority it was issued under",
+        "file": "scripts/authorize.py",
+        "mutate": ('            plan, authority=args.authority, actor=args.actor, approved_at=approved_at,',
+                   '            plan, authority="OWNER", actor=args.actor, approved_at=approved_at,'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_approval_receipt_binds_to_the_plan_it_was_issued_over"],
+    },
 ]
 
 
@@ -374,7 +388,8 @@ def test_every_guarded_file_appears_in_the_table():
     # is not allowed is a row naming a path that does not exist, which is how a mutation quietly
     # stops applying to anything.
     guarded = {"scripts/plan.py", "scripts/apply.py", "scripts/publish.py",
-               "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py"}
+               "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py",
+               "scripts/authorize.py"}
     covered = {str(g["file"]) for g in GUARDS}
 
     missing = sorted(guarded - covered)

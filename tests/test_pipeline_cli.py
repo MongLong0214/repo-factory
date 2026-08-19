@@ -4,6 +4,12 @@
 called them as Python functions — the same reason `plan.py` could ship without a way to supply
 CI values and nobody noticed. A published skill whose middle stages have no command line is a
 document describing something other than the thing that ships.
+
+Then the command line existed and its only real path was dead. Approval became a document the
+approver makes, `apply_plan` grew a required `authorization` argument, and `apply.py` was never
+taught to supply one — so every non-dry invocation refused with AUTHORIZATION_MISSING before it
+read anything. The test here covered `--dry-run`, which returns before the approval gate is
+reached. **A stage is covered at the depth the test enters it, not at the depth it is named.**
 """
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ SKILL = Path(__file__).resolve().parent.parent
 SCRIPTS = SKILL / "scripts"
 OPERATION_ID = "11111111-2222-3333-4444-555555555555"
 
-STAGES = ["plan.py", "apply.py", "publish.py", "result.py"]
+STAGES = ["plan.py", "authorize.py", "apply.py", "publish.py", "result.py"]
 REMOTE = "git@github.com:MongLong0214/demo.git"
 
 REQUEST = {
@@ -108,6 +114,129 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     assert [row["operationId"] for row in genesis] == ["publish:github:MongLong0214/demo"]
     assert genesis[0]["verified"] is True
     assert genesis[0]["head"] == heads["head"]
+
+
+# A gh that only knows how to not-have a repository, create one, and then have it. The point is
+# to reach `apply_plan` as a process — the approval gate refuses before any of this is called,
+# which is exactly what nothing was measuring.
+GH_STUB = """#!/bin/sh
+STATE="$GH_STUB_STATE"
+case "$1 $2" in
+  "repo create")
+    printf '%s\\n' "$3" >> "$STATE/created"; exit 0 ;;
+esac
+if [ "$1" = "api" ]; then
+  path="$2"; [ "$path" = "--method" ] && exit 0
+  repo=$(printf '%s' "$path" | sed -n 's#^repos/\\([^/]*/[^/]*\\)$#\\1#p')
+  if [ -n "$repo" ] && grep -qx "$repo" "$STATE/created" 2>/dev/null; then
+    printf '{"default_branch":"main","private":true,"node_id":"R_stub"}\\n'; exit 0
+  fi
+  echo "gh: Not Found (HTTP 404)" >&2; exit 1
+fi
+echo "gh stub: unhandled $*" >&2; exit 1
+"""
+
+
+def _compile(tmp_path, operation_id=OPERATION_ID, name="compiled.json"):
+    (tmp_path / "request.json").write_text(json.dumps(REQUEST), encoding="utf-8")
+    (tmp_path / "verification.json").write_text(json.dumps(VERIFICATION), encoding="utf-8")
+    (tmp_path / "ci.json").write_text(json.dumps(CI_VALUES), encoding="utf-8")
+    done = run([str(SCRIPTS / "plan.py"),
+                "--request", str(tmp_path / "request.json"),
+                "--verification", str(tmp_path / "verification.json"),
+                "--ci-values", str(tmp_path / "ci.json"),
+                "--operation-id", operation_id])
+    assert done.returncode == 0, done.stderr[-600:]
+    (tmp_path / name).write_text(done.stdout, encoding="utf-8")
+    return tmp_path / name
+
+
+def _gh_stub(tmp_path):
+    stub = tmp_path / "gh"
+    stub.write_text(GH_STUB, encoding="utf-8")
+    stub.chmod(0o755)
+    (tmp_path / "ghstate").mkdir(exist_ok=True)
+    return stub, {**os.environ, "GH_STUB_STATE": str(tmp_path / "ghstate")}
+
+
+def test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied(tmp_path):
+    """The documented invocation, run as a process, past the approval gate and into a write.
+
+    Without this the whole non-dry command line could be dead and every test still passed:
+    `--dry-run` returns before `apply_plan`, and every other caller was Python.
+    """
+    plan = _compile(tmp_path)
+    stub, env = _gh_stub(tmp_path)
+
+    issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan),
+                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+    assert issued.returncode == 0, issued.stderr[-600:]
+    (tmp_path / "auth.json").write_text(issued.stdout, encoding="utf-8")
+
+    applied = run([str(SCRIPTS / "apply.py"), "--plan", str(plan),
+                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "before-files",
+                   "--gh", str(stub), "--authorization", str(tmp_path / "auth.json")], env=env)
+    assert applied.returncode == 0, applied.stderr[-800:]
+    outcome = json.loads(applied.stdout)
+    assert outcome["completed"] is True
+    assert [r["operationId"] for r in outcome["receipts"]] == ["create-repository:demo"]
+    assert outcome["receipts"][0]["verified"] is True
+
+
+def test_apply_refuses_on_the_command_line_when_nothing_approved_the_plan(tmp_path):
+    plan = _compile(tmp_path)
+    stub, env = _gh_stub(tmp_path)
+    applied = run([str(SCRIPTS / "apply.py"), "--plan", str(plan),
+                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "before-files",
+                   "--gh", str(stub)], env=env)
+    assert applied.returncode == 1
+    assert json.loads(applied.stderr)["error"] == "AUTHORIZATION_MISSING"
+    assert not (tmp_path / "ghstate" / "created").exists(), "it refused after writing"
+
+
+def test_apply_refuses_a_receipt_issued_over_a_different_plan(tmp_path):
+    """Presence is not the check. The receipt names a digest, and that digest has to be this one."""
+    mine = _compile(tmp_path, name="mine.json")
+    other = _compile(tmp_path, operation_id="99999999-8888-7777-6666-555555555555",
+                     name="other.json")
+    stub, env = _gh_stub(tmp_path)
+
+    issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(other),
+                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+    assert issued.returncode == 0, issued.stderr[-600:]
+    (tmp_path / "other-auth.json").write_text(issued.stdout, encoding="utf-8")
+
+    applied = run([str(SCRIPTS / "apply.py"), "--plan", str(mine),
+                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "before-files",
+                   "--gh", str(stub), "--authorization", str(tmp_path / "other-auth.json")],
+                  env=env)
+    assert applied.returncode == 1
+    assert json.loads(applied.stderr)["error"] == "AUTHORIZATION_MISSING"
+    assert not (tmp_path / "ghstate" / "created").exists(), "it refused after writing"
+
+
+def test_the_approval_receipt_binds_to_the_plan_it_was_issued_over(tmp_path):
+    plan = _compile(tmp_path)
+    issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan),
+                  "--authority", "OWNER", "--actor", "owner:isaac",
+                  "--session-id", "s-1", "--binding-generation", "3"])
+    assert issued.returncode == 0, issued.stderr[-600:]
+    receipt = json.loads(issued.stdout)
+    document = json.loads(plan.read_text(encoding="utf-8"))
+    # The digest the approver signs off on is the one the compiler already showed them.
+    assert receipt["planDigest"] == document["diffSummary"]["planDigest"]
+    assert receipt["bootstrapOperationId"] == OPERATION_ID
+    assert receipt["approvedBy"] == {"actor": "owner:isaac", "sessionId": "s-1",
+                                     "bindingGeneration": 3}
+    assert receipt["approvedAt"].endswith("Z")
+
+    hermes = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan),
+                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+    assert hermes.returncode == 0, hermes.stderr[-600:]
+    # The authority is the approver's to state, not the tool's to choose. Issuing OWNER for a
+    # HERMES approval would let the weaker approval satisfy a plan that asked for the owner,
+    # and OWNER outranks HERMES so the gate downstream would never notice.
+    assert json.loads(hermes.stdout)["authority"] == "HERMES"
 
 
 def test_publish_refuses_a_plan_document_that_carries_no_files(tmp_path):

@@ -472,6 +472,9 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--plan", required=True, type=Path, help="compiler output, or a plan core")
     parser.add_argument("--ledger", required=True, type=Path, help="receipt ledger path; reused on resume")
     parser.add_argument("--phase", default="before-files", choices=["before-files", "after-files"])
+    parser.add_argument("--authorization", type=Path, default=None,
+                        help="the approval receipt covering this plan, from scripts/authorize.py; "
+                             "a plan cannot approve itself, so without this no write is attempted")
     parser.add_argument("--gh", default="gh", help="the gh executable to invoke")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the operations this phase would perform and write nothing")
@@ -483,10 +486,23 @@ def main(argv: List[str] = None) -> int:
         print(json.dumps({"phase": args.phase, "wouldApply": staged}, ensure_ascii=False, indent=2))
         return 0
 
+    # 승인은 Plan 밖의 문서다. 이 인자가 없으면 `apply_plan` 이 어떤 원격 읽기보다 먼저
+    # 거부한다 — 한동안 CLI 가 이것을 아예 안 넘겨서, 문서가 적어둔 실행 경로가 항상
+    # AUTHORIZATION_MISSING 으로 죽었다. 통과하던 것은 `--dry-run` 뿐이었고, 그 경로는
+    # 승인 게이트에 닿기 전에 반환한다.
+    authorization = None
+    if args.authorization is not None:
+        try:
+            authorization = json.loads(args.authorization.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"cannot read the approval receipt: {error}", file=sys.stderr)
+            return 2
+
     from github_port import GhCliPort  # 지연 import — dry-run 은 gh 를 요구하지 않는다
 
     try:
-        outcome = apply_plan(plan, GhCliPort(gh=args.gh), ReceiptLedger(args.ledger), phase=args.phase)
+        outcome = apply_plan(plan, GhCliPort(gh=args.gh), ReceiptLedger(args.ledger),
+                             authorization=authorization, phase=args.phase)
     except ApplyError as error:
         print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence,
                           "receipts": error.receipts}, ensure_ascii=False), file=sys.stderr)
