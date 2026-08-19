@@ -33,7 +33,7 @@ REQUEST = {
     "bootstrapProfile": "STANDARD",
     "priority": "NORMAL",
     "repositories": [{"role": "primary", "name": "demo", "stack": "node"}],
-    "visibility": "private",
+    "visibility": "public",
     "origin": {"channel": "cli"},
 }
 

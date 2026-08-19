@@ -38,7 +38,7 @@ REQUEST = {
     "schema": "repo-factory.bootstrap-request.v1", "runId": "run-e2e", "seed": "a ledger reconciler",
     "bootstrapProfile": "STANDARD", "priority": "NORMAL",
     "repositories": [{"role": "primary", "name": "ledger-reconciler"}],
-    "visibility": "private", "origin": {"channel": "cli", "requestedAt": "2026-08-19T09:00:00Z"},
+    "visibility": "public", "origin": {"channel": "cli", "requestedAt": "2026-08-19T09:00:00Z"},
 }
 VERIFICATION = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary", "cwd": ".",
                  "timeoutSeconds": 1200, "envAllowlist": ["CI"], "network": "deny", "required": True}]

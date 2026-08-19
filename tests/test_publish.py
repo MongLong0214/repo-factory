@@ -23,7 +23,7 @@ REMOTE = "git@github.com:MongLong0214/demo.git"
 def plan_for(files: Dict[str, str]) -> Dict[str, object]:
     """The plan states the bytes, not only the paths. The publisher is bound to both."""
     return {
-        "repositories": [{"role": "primary", "identity": IDENTITY, "visibility": "private"}],
+        "repositories": [{"role": "primary", "identity": IDENTITY, "visibility": "public"}],
         "files": [
             {"path": path,
              "contentDigest": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),

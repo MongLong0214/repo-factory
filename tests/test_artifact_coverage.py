@@ -28,7 +28,7 @@ def compiled(profile: str, commands=None, **kwargs):
     request = {"schema": "repo-factory.bootstrap-request.v1", "runId": "r", "seed": "a demo project",
                "bootstrapProfile": profile, "priority": "NORMAL",
                "repositories": [{"role": "primary", "name": "demo"}],
-               "visibility": "private", "origin": {"channel": "cli"}}
+               "visibility": "public", "origin": {"channel": "cli"}}
     return compile_plan(request, commands or VER, stack="node", ci_values=CI,
                         operation_id="11111111-2222-3333-4444-555555555555", **kwargs)
 
@@ -114,7 +114,7 @@ def test_a_stack_with_a_skeleton_reports_no_skeleton_gap(stack: str):
     request = {"schema": "repo-factory.bootstrap-request.v1", "runId": "r", "seed": "demo",
                "bootstrapProfile": "SIMPLE", "priority": "NORMAL",
                "repositories": [{"role": "primary", "name": "demo"}],
-               "visibility": "private", "origin": {"channel": "cli"}}
+               "visibility": "public", "origin": {"channel": "cli"}}
     values = {"RUNTIME_LOWER": "1", "RUNTIME_LATEST": "2", "INSTALL_CMD": "true",
               "TEST_CMD": "true", "BUILD_CMD": "true"}
     result = compile_plan(copy.deepcopy(request), VER, stack=stack, ci_values=values,

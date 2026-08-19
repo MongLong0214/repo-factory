@@ -77,7 +77,7 @@ def request_for(profile: str, name: str = "demo") -> dict:
     return {"schema": "repo-factory.bootstrap-request.v1", "runId": "contract", "seed": "a demo",
             "bootstrapProfile": profile, "priority": "NORMAL",
             "repositories": [{"role": "primary", "name": name}],
-            "visibility": "private", "origin": {"channel": "cli"}}
+            "visibility": "public", "origin": {"channel": "cli"}}
 
 
 # --- the pin itself --------------------------------------------------------------------

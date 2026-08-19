@@ -391,6 +391,18 @@ GUARDS: List[Dict[str, object]] = [
                    '            raise'),
         "killed_by": ["tests/test_slice3_apply.py::test_a_remote_refusal_reports_the_receipts_and_a_resume_point"],
     },
+    {
+        "name": "a visibility this factory cannot finish is refused at compile time",
+        "file": "scripts/plan.py",
+        "mutate": ('    if request.get("visibility") != "public":', "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_a_plan_this_factory_cannot_finish_is_not_compiled"],
+    },
+    {
+        "name": "publish resumes rather than pushing a second genesis",
+        "file": "scripts/publish.py",
+        "mutate": ('        if prior is not None and prior.get("verified"):', "        if False:"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_a_finished_genesis_push_resumes_instead_of_pushing_again"],
+    },
 ]
 
 

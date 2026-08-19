@@ -23,7 +23,7 @@
       "items": { "$ref": "#/$defs/repositoryIntent" }
     },
     "visibility": {
-      "description": "Intent only. Public exposure is an owner gate regardless of what this says (PRD §7 Phase F).",
+      "description": "Intent only, and this factory finishes only `public`. Public exposure is an owner gate regardless of what this says (PRD \u00a77 Phase F). `private` stays in the enum so the compiler can refuse it with a reason rather than a schema error: every profile plans a branch ruleset, and rulesets on private repositories require GitHub Pro.",
       "enum": ["private", "public"]
     },
     "remoteOwner": {
