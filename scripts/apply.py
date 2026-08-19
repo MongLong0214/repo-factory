@@ -161,6 +161,10 @@ def _receipt(plan: Dict[str, Any], operation: Dict[str, Any], *, preexisting: bo
         "preexisting": preexisting,
         "beforeStateDigest": digest(before, volatile="allow") if before is not None else None,
         "afterStateDigest": digest(after, volatile="allow"),
+        # 원격이 주는 안정적 식별자. 이름은 재사용되지만 이것은 아니다 — 같은 이름의
+        # 저장소가 지워지고 다시 만들어졌으면 여기가 달라지고, 그것이 §16.3 이 막으려는
+        # "남의 것 위에 쓴다" 의 유일한 관측 가능한 신호다.
+        "resourceFingerprint": after.get("nodeId") or after.get("id"),
         "createdAt": created_at,
         "rereadAt": reread_at,
         "verified": True,
@@ -404,11 +408,32 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                                  applied, {"operationId": operation_id})
             # 있다는 것과 그때 그대로라는 것은 다르다. 그 사이 누가 ruleset 을 `disabled` 로
             # 바꿔놨어도 존재 검사만으로는 재개가 통과한다.
-            if digest(still_there, volatile="allow") != prior["afterStateDigest"]:
+            #
+            # 다만 **과거 관측 전체와의 일치**를 요구하면 안 된다. 그러면 같은 Plan 의 다음
+            # Operation 이 바꾼 필드 때문에 재개가 거부된다 — 실측: `create-repository` 는
+            # `default_branch: main` 을 기록하고, 그 다음 `set-default-branch` 가 `dev` 로
+            # 바꾼다. 그 시점부터 이 부트스트랩은 **자기가 한 일 때문에** 재개할 수 없었다.
+            # §16.3 의 멱등성 주장이 첫 after-files 이후로는 성립하지 않았다는 뜻이다.
+            #
+            # 재개가 확인해야 하는 것은 둘이다: 같은 리소스인가, 그리고 **이 Operation 이
+            # 승인한 것**이 아직 유효한가. Plan 이 의견을 갖지 않은 필드는 이 Operation 의
+            # 소관이 아니다.
+            fingerprint = still_there.get("nodeId") or still_there.get("id")
+            recorded = prior.get("resourceFingerprint")
+            # `None` 은 이 필드가 생기기 전에 쓰인 영수증이다. 그때로 되돌아가 지문을 만들 수는
+            # 없고, 없는 값을 불일치로 부르면 그 원장은 영원히 재개 불가가 된다.
+            if recorded is not None and fingerprint is not None and recorded != fingerprint:
+                raise ApplyError(RESUMED_RESOURCE_DRIFTED,
+                                 f"{operation['resourceIdentity']} exists but is not the resource "
+                                 f"this receipt was written for; the name was reused",
+                                 applied, {"operationId": operation_id,
+                                           "recorded": recorded, "observed": fingerprint})
+            drift = _state_gap(operation["desiredState"], still_there)
+            if drift:
                 raise ApplyError(RESUMED_RESOURCE_DRIFTED,
                                  f"{operation['resourceIdentity']} is present but no longer in the "
-                                 f"state its receipt recorded",
-                                 applied, {"operationId": operation_id})
+                                 f"state its receipt approved: {'; '.join(drift[:5])}",
+                                 applied, {"operationId": operation_id, "gaps": drift})
             applied.append(prior)
             continue
 
