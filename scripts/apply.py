@@ -30,7 +30,7 @@ from canonical import digest
 __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "OPERATION_NOT_IN_PLAN",
-    "OWNER_AUTHORIZATION_REQUIRED",
+    "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
 ]
 
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
@@ -38,6 +38,7 @@ PLAN_INTENT_CHANGED = "PLAN_INTENT_CHANGED"
 REREAD_MISMATCH = "REREAD_MISMATCH"
 OPERATION_NOT_IN_PLAN = "OPERATION_NOT_IN_PLAN"
 OWNER_AUTHORIZATION_REQUIRED = "OWNER_AUTHORIZATION_REQUIRED"
+RESUMED_RESOURCE_ABSENT = "RESUMED_RESOURCE_ABSENT"
 
 
 class ApplyError(RuntimeError):
@@ -136,7 +137,15 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                 raise ApplyError(PLAN_INTENT_CHANGED,
                                  f"{operation_id} was applied under a different approved intent",
                                  applied, {"operationId": operation_id})
-            # §16.3 — 같은 Operation, 같은 Intent, 같은 Resource. 재개이지 재실행이 아니다.
+            # §16.3 은 같은 **Resource** 도 요구한다. 영수증은 과거에 썼다는 증거이지
+            # 지금 있다는 증거가 아니다 — 그 사이 지워졌을 수 있고, 다시 읽지 않으면
+            # 사라진 저장소를 완료로 보고한다.
+            still_there = port.observe(operation["resourceType"], operation["resourceIdentity"])
+            if still_there is None:
+                raise ApplyError(RESUMED_RESOURCE_ABSENT,
+                                 f"{operation['resourceIdentity']} has a verified receipt but is "
+                                 f"absent from the remote; the ledger and the world disagree",
+                                 applied, {"operationId": operation_id})
             applied.append(prior)
             continue
 

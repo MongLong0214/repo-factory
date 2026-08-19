@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from render_ci import available_stacks, render
 
-__all__ = ["materialize", "MANIFEST_PATH", "CI_PATH"]
+__all__ = ["materialize", "MANIFEST_PATH", "CI_PATH", "SKELETONS"]
 
 MANIFEST_PATH = ".agent-control-plane/project.json"
 CI_PATH = ".github/workflows/project-ci.yml"
@@ -81,6 +81,38 @@ def _agents(project_id: str, commands: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _node_skeleton(project_id: str) -> Dict[str, str]:
+    """`npm install` 과 `npm test` 가 실제로 무언가를 하는 최소 골격.
+
+    골격 없이 CI 를 만들면 워크플로는 렌더되는데 첫 실행이 빨간색이고, 그 빨간색은
+    프로젝트의 문제가 아니라 공장이 저장소를 반만 만들었다는 뜻이다."""
+    package = {
+        "name": project_id,
+        "version": "0.1.0",
+        "private": True,
+        "type": "module",
+        "main": "index.js",
+        "scripts": {"test": "node --test"},
+    }
+    return {
+        "package.json": json.dumps(package, indent=2, sort_keys=True) + "\n",
+        "index.js": "export const greet = (who) => `hello, ${who}`;\n",
+        "test/smoke.test.js": (
+            'import { strictEqual } from "node:assert";\n'
+            'import { test } from "node:test";\n'
+            '\n'
+            'import { greet } from "../index.js";\n'
+            '\n'
+            'test("greet names its argument", () => {\n'
+            '  strictEqual(greet("world"), "hello, world");\n'
+            '});\n'
+        ),
+    }
+
+
+SKELETONS = {"node": _node_skeleton}
+
+
 def materialize(
     manifest: Dict[str, Any],
     *,
@@ -102,4 +134,7 @@ def materialize(
                 f"no reviewed template for stack {stack!r}; available: {available_stacks()}"
             )
         files[CI_PATH] = render(stack, ci_values or {})
+        skeleton = SKELETONS.get(stack)
+        if skeleton is not None:
+            files.update(skeleton(project_id))
     return files
