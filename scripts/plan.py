@@ -20,6 +20,7 @@ import hashlib
 import json
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -123,6 +124,10 @@ def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def remote_owner(request: Dict[str, Any]) -> str:
     """요청이 정하고, 없으면 배포 기본값. 어느 쪽인지가 Plan 에 남는다."""
     owner = (request.get("origin") or {}).get("remoteOwner") or request.get("remoteOwner")
@@ -196,6 +201,7 @@ def compile_plan(
     operation_id: str,
     stack: str = None,
     ci_values: Dict[str, str] = None,
+    environment: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """`operation_id` 는 호출자가 대야 한다.
 
@@ -271,6 +277,10 @@ def compile_plan(
         "verificationContractDigest": verification_digest,
         "projectManifestDigest": manifest_digest,
     }
+    if environment is not None:
+        # 참조만 한다. 관측 바이트는 Plan 에 들어가지 않고, id 는 사실만 세므로 같은
+        # 사실을 다시 관측해도 Plan digest 는 움직이지 않는다.
+        core["environmentSnapshotId"] = environment_snapshot_id(environment)
     # 우리가 싣고 다니는 스키마로 우리 산출물을 검사한다. 없으면 잘못된 Plan 이 apply 까지
     # 가서 거기서 죽고, 스키마를 가진 경계는 그냥 지나친다.
     invalid = sorted(Draft202012Validator(_plan_schema()).iter_errors(core), key=str)
@@ -319,3 +329,55 @@ def main(argv: List[str] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+ENVIRONMENT_SCHEMA_ID = "repo-factory.environment-observation.v1"
+
+
+def observe_environment(
+    request: Dict[str, Any],
+    *,
+    port=None,
+    runtime_versions: Dict[str, str] = None,
+    clock=None,
+) -> Dict[str, Any]:
+    """§8.2 의 변동 가능한 관측. Plan 과 나란히 서고 Plan 안에 들어가지 않는다.
+
+    Plan 은 "무엇을 만들 것인가" 이고 이것은 "지금 무엇이 참인가" 다. 둘을 한 문서에 두면
+    같은 의도를 두 번 컴파일한 결과가 서로 다른 digest 를 갖고, 승인이 승인한 것을 다시
+    가리키지 못한다.
+
+    `port` 가 있으면 원격 이름 가용성을 실제로 읽는다. 없으면 못 봤다고 적는다 —
+    `None` 은 "비어 있다" 가 아니라 "확인하지 않았다" 이고, 그 둘을 같은 값으로 적으면
+    관측되지 않은 것이 관측된 것처럼 읽힌다.
+    """
+    owner = remote_owner(request)
+    repositories = []
+    for repo in request["repositories"]:
+        identity = f"github:{owner}/{repo['name']}"
+        available = None
+        if port is not None:
+            try:
+                available = port.observe("repository", identity) is None
+            except Exception as error:  # noqa: BLE001 - the reason is recorded, not swallowed
+                repositories.append({"identity": identity, "remoteNameAvailable": None,
+                                     "notObserved": str(error)[:160]})
+                continue
+        repositories.append({"identity": identity, "remoteNameAvailable": available})
+
+    return {
+        "schema": ENVIRONMENT_SCHEMA_ID,
+        "observedAt": (clock or _utc_now)(),
+        "remoteOwner": owner,
+        "repositories": repositories,
+        "runtime": dict(runtime_versions or {}),
+    }
+
+
+def environment_snapshot_id(observation: Dict[str, Any]) -> str:
+    """관측의 **사실**만 센다.
+
+    `observedAt` 을 포함하면 같은 사실을 두 번 관측한 것이 서로 다른 id 가 되고, Plan 이
+    그 id 를 참조하므로 Plan digest 까지 흔들린다 — §8.3 이 금지하는 바로 그것이다.
+    """
+    return digest(observation, volatile="strip")

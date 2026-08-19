@@ -232,3 +232,79 @@ def test_the_deployment_default_is_used_when_the_request_says_nothing():
     compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
 
     assert compiled["planCore"]["repositories"][0]["identity"].startswith("github:MongLong0214/")
+
+
+# --- EnvironmentObservation (PRD §8.2) --------------------------------------------------
+
+def test_observing_the_same_facts_twice_gives_the_same_snapshot_id():
+    # If observedAt reached the id, the plan that references it would change every time the
+    # same environment was looked at — which is the property §8.3 forbids, arriving through the
+    # reference rather than through the bytes.
+    from plan import environment_snapshot_id, observe_environment
+
+    first = observe_environment(REQUEST, clock=lambda: "2026-08-19T00:00:00Z")
+    later = observe_environment(REQUEST, clock=lambda: "2026-12-25T23:59:59Z")
+
+    assert first["observedAt"] != later["observedAt"]
+    assert environment_snapshot_id(first) == environment_snapshot_id(later)
+
+
+def test_a_changed_fact_gives_a_different_snapshot_id():
+    from plan import environment_snapshot_id, observe_environment
+
+    class Taken:
+        def observe(self, _type, _identity):
+            return {"identity": "someone else's"}
+
+    class Free:
+        def observe(self, _type, _identity):
+            return None
+
+    taken = observe_environment(REQUEST, port=Taken(), clock=lambda: "2026-08-19T00:00:00Z")
+    free = observe_environment(REQUEST, port=Free(), clock=lambda: "2026-08-19T00:00:00Z")
+
+    assert taken["repositories"][0]["remoteNameAvailable"] is False
+    assert free["repositories"][0]["remoteNameAvailable"] is True
+    assert environment_snapshot_id(taken) != environment_snapshot_id(free)
+
+
+def test_an_unobserved_name_is_recorded_as_unobserved_not_as_available():
+    # None means "not looked at". Writing it as False or True would make an unchecked name read
+    # as a checked one, and the plan would rest on an observation nobody made.
+    from plan import observe_environment
+
+    unchecked = observe_environment(REQUEST, clock=lambda: "2026-08-19T00:00:00Z")
+
+    assert unchecked["repositories"][0]["remoteNameAvailable"] is None
+
+
+def test_a_port_that_fails_records_why_rather_than_guessing():
+    from plan import observe_environment
+
+    class Broken:
+        def observe(self, _type, _identity):
+            raise RuntimeError("rate limited")
+
+    observed = observe_environment(REQUEST, port=Broken(), clock=lambda: "2026-08-19T00:00:00Z")
+
+    assert observed["repositories"][0]["remoteNameAvailable"] is None
+    assert "rate limited" in observed["repositories"][0]["notObserved"]
+
+
+def test_the_plan_references_the_observation_and_stays_stable_across_re_observation():
+    from plan import observe_environment
+
+    early = observe_environment(REQUEST, clock=lambda: "2026-08-19T00:00:00Z")
+    late = observe_environment(REQUEST, clock=lambda: "2026-12-25T23:59:59Z")
+
+    a = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP, environment=early)
+    b = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP, environment=late)
+
+    assert a["planCore"]["environmentSnapshotId"].startswith("sha256:")
+    assert digest(a["planCore"]) == digest(b["planCore"])
+
+
+def test_a_plan_without_an_observation_carries_no_reference():
+    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, operation_id=FIXED_OP)
+
+    assert "environmentSnapshotId" not in compiled["planCore"]
