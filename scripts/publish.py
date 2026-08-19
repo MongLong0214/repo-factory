@@ -226,6 +226,22 @@ def publish_files(
             "remoteHeads": {b: remote_heads.get(b) for b in (release_branch, default_branch)}}
 
 
+
+def _remote_heads(workdir: Path, remote_url: str) -> Optional[Dict[str, str]]:
+    """원격이 지금 가리키는 브랜치들. 읽지 못하면 `None` — "못 읽었다" 와 "비어 있다" 는 다르다."""
+    scratch = workdir.parent / f"{workdir.name}.lsremote"
+    scratch.mkdir(parents=True, exist_ok=True)
+    code, listed, _ = _run(["git", "ls-remote", "--heads", remote_url], scratch)
+    if code != 0:
+        return None
+    heads = {}
+    for line in listed.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            heads[parts[1][len("refs/heads/"):]] = parts[0]
+    return heads
+
+
 def main(argv: List[str] = None) -> int:
     """계획된 바이트를 빈 저장소에 올린다.
 
@@ -267,6 +283,36 @@ def main(argv: List[str] = None) -> int:
                              ensure_ascii=False), file=sys.stderr)
             return 2
         identity = repositories[0]["identity"]
+    # 이미 밀었는가. `apply` 에는 재개 이야기가 있는데 genesis 푸시에는 없었다 — 완료된
+    # 부트스트랩을 다시 돌리면 원격이 앞서 있어서 `git push` 가 거부하고, 그 거부가 이름
+    # 없는 git 오류로 그대로 올라왔다. 원장은 이 질문에 답할 수 있는 자리다.
+    if args.ledger is not None and Path(args.ledger).is_file():
+        from apply import ReceiptLedger
+
+        prior = ReceiptLedger(args.ledger).get(f"publish:{identity}")
+        if prior is not None and prior.get("verified"):
+            landed = sorted(prior.get("committedPaths") or [])
+            if landed != sorted(files):
+                # 같은 저장소에 이미 다른 파일 집합이 착지해 있다. 두 번째 genesis 는 없다.
+                print(json.dumps({"error": "this repository already carries a genesis commit from "
+                                           "a different file set; a second genesis is not a resume",
+                                  "landed": landed, "planned": sorted(files)},
+                                 ensure_ascii=False), file=sys.stderr)
+                return 1
+            # 영수증이 과거의 푸시를 말한다. 지금 원격이 거기 있는지는 다시 읽어서 본다.
+            current = _remote_heads(Path(args.workdir), args.remote_url)
+            if current is not None and current == dict(prior["remoteHeads"]):
+                print(json.dumps({k: prior[k] for k in
+                                  ("head", "remoteHeads", "committedPaths", "branches")}
+                                 | {"repositoryIdentity": identity, "resumed": True},
+                                 ensure_ascii=False, indent=2))
+                return 0
+            print(json.dumps({"error": "the ledger records a genesis push that the remote no longer "
+                                       "matches; the repository moved since the receipt was written",
+                              "receipt": prior["remoteHeads"], "remote": current},
+                             ensure_ascii=False), file=sys.stderr)
+            return 1
+
     try:
         heads = publish_files(
             files,

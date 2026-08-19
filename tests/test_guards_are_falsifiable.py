@@ -288,10 +288,18 @@ GUARDS: List[Dict[str, object]] = [
         "killed_by": ["tests/test_slice3_apply.py::test_a_receipt_that_names_a_different_resource_is_not_a_resume"],
     },
     {
-        "name": "a resumed resource must be in the state its receipt recorded",
+        "name": "a resumed resource still satisfies what its operation approved",
         "file": "scripts/apply.py",
-        "mutate": ('if digest(still_there, volatile="allow") != prior["afterStateDigest"]:', "if False:"),
+        "mutate": ('            drift = _state_gap(operation["desiredState"], still_there)',
+                   '            drift = []'),
         "killed_by": ["tests/test_slice3_apply.py::test_a_resource_that_drifted_since_its_receipt_is_refused"],
+    },
+    {
+        "name": "a resumed resource is the same resource, not the same name",
+        "file": "scripts/apply.py",
+        "mutate": ("            if recorded is not None and fingerprint is not None and recorded != fingerprint:",
+                   "            if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_name_reused_by_a_different_resource_is_refused"],
     },
     {
         "name": "the ledger is written 0600",
@@ -382,6 +390,18 @@ GUARDS: List[Dict[str, object]] = [
                    '        except ApplyError:\n            raise\n        except Exception as error:\n'
                    '            raise'),
         "killed_by": ["tests/test_slice3_apply.py::test_a_remote_refusal_reports_the_receipts_and_a_resume_point"],
+    },
+    {
+        "name": "a visibility this factory cannot finish is refused at compile time",
+        "file": "scripts/plan.py",
+        "mutate": ('    if request.get("visibility") != "public":', "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_a_plan_this_factory_cannot_finish_is_not_compiled"],
+    },
+    {
+        "name": "publish resumes rather than pushing a second genesis",
+        "file": "scripts/publish.py",
+        "mutate": ('        if prior is not None and prior.get("verified"):', "        if False:"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_a_finished_genesis_push_resumes_instead_of_pushing_again"],
     },
 ]
 

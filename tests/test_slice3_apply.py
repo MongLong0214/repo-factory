@@ -54,7 +54,10 @@ class FakeGitHub:
         self.creates.append(identity)
         # `vanish` 는 명령이 성공했는데 원격에 없는 경우다. exit 0 이 증거가 아닌 이유.
         if identity not in self.vanish:
-            self.state[identity] = {"identity": identity, "type": resource_type, **spec}
+            # 실제 포트처럼 안정적 식별자를 함께 돌려준다. 이것 없이는 이름 재사용 검사가
+            # 어떤 입력으로도 발동하지 않는다 — 지문이 항상 None 이면 항상 통과한다.
+            self.state[identity] = {"identity": identity, "type": resource_type,
+                                    "nodeId": f"R_{identity}", **spec}
 
 
 def plan(*names: str, request_digest: str = "sha256:" + "a" * 64,
@@ -658,3 +661,38 @@ def test_a_remote_that_will_not_answer_is_reported_the_same_way(tmp_path):
     assert caught.value.code == REMOTE_REFUSED
     assert [r["operationId"] for r in caught.value.receipts] == ["create-repository:alpha"]
     assert caught.value.evidence["operationId"] == "create-repository:beta"
+
+
+def test_a_name_reused_by_a_different_resource_is_refused(tmp_path):
+    """이름은 재사용된다. 지워지고 다시 만들어진 저장소는 같은 이름의 **남의 것**이고,
+    §16.3 이 막으려는 것이 정확히 그 경우다."""
+    book = ledger(tmp_path)
+    port = FakeGitHub()
+    apply_plan(plan("alpha"), port, book, authorization=approval(plan("alpha")))
+    port.state["github:MongLong0214/alpha"]["nodeId"] = "R_somebody_else"
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), port, ReceiptLedger(book.path), authorization=approval(plan("alpha")))
+
+    assert caught.value.code == RESUMED_RESOURCE_DRIFTED
+    assert "name was reused" in str(caught.value)
+
+
+def test_a_field_this_plan_itself_changed_does_not_block_the_resume(tmp_path):
+    """재개 검사가 과거 관측 전체와의 일치를 요구하면, 같은 Plan 의 다음 Operation 이 바꾼
+    필드 때문에 부트스트랩이 **자기가 한 일 때문에** 재개할 수 없게 된다.
+
+    실측: `create-repository` 가 `defaultBranch: main` 을 기록하고, `set-default-branch` 가
+    `dev` 로 바꾼 뒤로 그 부트스트랩은 재개 불가였다. §16.3 의 멱등성 주장이 첫 after-files
+    이후에는 성립하지 않았다."""
+    book = ledger(tmp_path)
+    port = FakeGitHub()
+    apply_plan(plan("alpha"), port, book, authorization=approval(plan("alpha")))
+    # 이 Operation 의 `desiredState` 에 없는 필드. Plan 은 여기에 의견을 갖지 않는다.
+    port.state["github:MongLong0214/alpha"]["defaultBranch"] = "dev"
+
+    resumed = apply_plan(plan("alpha"), port, ReceiptLedger(book.path),
+                         authorization=approval(plan("alpha")))
+
+    assert resumed["completed"] is True
+    assert [r["operationId"] for r in resumed["receipts"]] == ["create-repository:alpha"]

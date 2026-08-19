@@ -32,7 +32,7 @@ REQUEST = {
     "bootstrapProfile": "STANDARD",
     "priority": "NORMAL",
     "repositories": [{"role": "primary", "name": "ledger-reconciler"}],
-    "visibility": "private",
+    "visibility": "public",
     "origin": {"channel": "cli", "requestedAt": "2026-08-19T09:00:00Z"},
 }
 
@@ -123,15 +123,19 @@ def test_the_tier_hint_does_not_reach_the_committed_manifest():
 
 # --- human gate (PRD §7 Phase F) -------------------------------------------------------
 
-def test_hermes_may_authorise_a_private_reversible_setup():
-    assert compiled()["humanGate"]["authorization"] == "HERMES"
-    assert compiled()["planCore"]["authorization"] == "HERMES"
+def test_a_plan_this_factory_cannot_finish_is_not_compiled(tmp_path=None):
+    """모든 프로필이 ruleset 을 계획하고, private 저장소의 ruleset 은 GitHub Pro 를 요구한다.
+    이 배포는 Pro 를 쓰지 않으므로 private Plan 은 **반드시** after-files 에서 죽는다 —
+    그때는 이미 원격 저장소가 하나 실재한다. 만들 수 없는 것은 계획하지 않는다."""
+    private = copy.deepcopy(REQUEST)
+    private["visibility"] = "private"
+
+    with pytest.raises(PlanError, match="public repositories"):
+        compiled(private)
 
 
 def test_public_exposure_is_an_owner_decision_even_when_the_request_asked_for_it():
-    public = copy.deepcopy(REQUEST)
-    public["visibility"] = "public"
-    result = compiled(public)
+    result = compiled()
 
     assert result["humanGate"]["authorization"] == "OWNER"
     assert [r["gate"] for r in result["humanGate"]["reasons"]] == ["public-exposure"]
@@ -335,14 +339,14 @@ def test_the_ruleset_body_is_in_the_plan_and_not_only_its_name(tmp_path=None):
 
 def test_the_repository_operation_states_the_exposure_it_will_create(tmp_path=None):
     """The gate reads `repositories[].visibility`; the port writes the operation's state. Both
-    have to say the same thing, in the plan, or an approved private repository can be created
-    public without the digest moving."""
+    have to say the same thing, in the plan, or the exposure under approval and the exposure
+    created are two different facts and the digest cannot tell them apart."""
     core = compile_plan(REQUEST, VERIFICATION, stack="node", ci_values=CI_VALUES,
                         operation_id="11111111-2222-3333-4444-555555555555")["planCore"]
     repository_op = next(o for o in core["githubOperations"] if o["resourceType"] == "repository")
 
-    assert repository_op["desiredState"] == {"private": True}
-    assert all(r["visibility"] == "private" for r in core["repositories"])
+    assert repository_op["desiredState"] == {"private": False}
+    assert all(r["visibility"] == "public" for r in core["repositories"])
 
 
 def test_two_plans_that_differ_only_in_ruleset_strength_have_different_digests(tmp_path=None):

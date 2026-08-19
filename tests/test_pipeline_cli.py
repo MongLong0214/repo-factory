@@ -32,7 +32,7 @@ REQUEST = {
     "schema": "repo-factory.bootstrap-request.v1", "runId": "run-cli", "seed": "a demo project",
     "bootstrapProfile": "STANDARD", "priority": "NORMAL",
     "repositories": [{"role": "primary", "name": "demo", "stack": "node"}],
-    "visibility": "private", "remoteOwner": "MongLong0214", "origin": {"channel": "cli"},
+    "visibility": "public", "remoteOwner": "MongLong0214", "origin": {"channel": "cli"},
 }
 VERIFICATION = [
     {"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary", "cwd": ".",
@@ -67,7 +67,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     stub, env = _gh_stub(tmp_path)
 
     issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan_path),
-                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+                  "--authority", "OWNER", "--actor", "owner:isaac"])
     assert issued.returncode == 0, issued.stderr[-600:]
     (tmp_path / "auth.json").write_text(issued.stdout, encoding="utf-8")
 
@@ -209,7 +209,7 @@ def test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied(t
     stub, env = _gh_stub(tmp_path)
 
     issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan),
-                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+                  "--authority", "OWNER", "--actor", "owner:isaac"])
     assert issued.returncode == 0, issued.stderr[-600:]
     (tmp_path / "auth.json").write_text(issued.stdout, encoding="utf-8")
 
@@ -242,7 +242,7 @@ def test_apply_refuses_a_receipt_issued_over_a_different_plan(tmp_path):
     stub, env = _gh_stub(tmp_path)
 
     issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(other),
-                  "--authority", "HERMES", "--actor", "hermes:ceo"])
+                  "--authority", "OWNER", "--actor", "owner:isaac"])
     assert issued.returncode == 0, issued.stderr[-600:]
     (tmp_path / "other-auth.json").write_text(issued.stdout, encoding="utf-8")
 
@@ -277,6 +277,60 @@ def test_the_approval_receipt_binds_to_the_plan_it_was_issued_over(tmp_path):
     # HERMES approval would let the weaker approval satisfy a plan that asked for the owner,
     # and OWNER outranks HERMES so the gate downstream would never notice.
     assert json.loads(hermes.stdout)["authority"] == "HERMES"
+
+
+def test_a_finished_genesis_push_resumes_instead_of_pushing_again(tmp_path):
+    """완료된 부트스트랩을 다시 돌리면 원격이 앞서 있다. 두 번째 genesis 는 없다.
+
+    resume 이 없을 때 이것은 이름 없는 git 오류로 올라왔다 — `! [rejected] main -> main
+    (fetch first)`. 원장은 이 질문에 답할 수 있는 자리이고, 답하지 않으면 완료된 것을
+    다시 돌리는 것이 실패로 보인다."""
+    plan_path = _compile(tmp_path)
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
+                 "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
+    argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+            "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
+            "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]
+
+    first = run([*argv, "--workdir", str(tmp_path / "work")], env=rewritten)
+    assert first.returncode == 0, first.stderr[-600:]
+    pushed = json.loads(first.stdout)
+
+    second = run([*argv, "--workdir", str(tmp_path / "work-again")], env=rewritten)
+    assert second.returncode == 0, second.stderr[-600:]
+    resumed = json.loads(second.stdout)
+
+    assert resumed["resumed"] is True
+    assert resumed["head"] == pushed["head"]
+    assert resumed["remoteHeads"] == pushed["remoteHeads"]
+    # 두 번째 실행은 아무것도 만들지 않는다. 작업 디렉토리조차 필요 없다.
+    assert not (tmp_path / "work-again").exists()
+
+
+def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path):
+    plan_path = _compile(tmp_path)
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
+                 "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
+    argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+            "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
+            "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]
+    assert run([*argv, "--workdir", str(tmp_path / "work")], env=rewritten).returncode == 0
+
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    document["files"] = {k: v for k, v in list(document["files"].items())[:2]}
+    (tmp_path / "narrower.json").write_text(json.dumps(document), encoding="utf-8")
+
+    done = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "narrower.json"),
+                "--workdir", str(tmp_path / "work2"), "--remote-url", REMOTE,
+                "--ledger", str(tmp_path / "receipts.json"),
+                "--author-name", "a", "--author-email", "b@example.invalid"], env=rewritten)
+
+    assert done.returncode == 1
+    assert "a second genesis is not a resume" in done.stderr
 
 
 def test_publish_refuses_a_plan_document_that_carries_no_files(tmp_path):

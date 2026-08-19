@@ -20,7 +20,7 @@ REQUEST = {
     "schema": "repo-factory.bootstrap-request.v1", "runId": "r", "seed": "reconciles two ledgers",
     "bootstrapProfile": "SIMPLE", "priority": "NORMAL",
     "repositories": [{"role": "primary", "name": "ledger-reconciler"}],
-    "visibility": "private", "origin": {"channel": "cli"},
+    "visibility": "public", "origin": {"channel": "cli"},
 }
 VERIFICATION = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary", "cwd": ".",
                  "timeoutSeconds": 1200, "envAllowlist": ["CI"], "network": "deny", "required": True}]

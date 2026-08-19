@@ -107,6 +107,20 @@ def validate_request(request: Dict[str, Any]) -> None:
             "the request does not satisfy schemas/bootstrap-request.schema.json: "
             + "; ".join(f"{'.'.join(str(x) for x in e.path) or '<root>'}: {e.message}" for e in invalid[:5])
         )
+    # 이 공장이 만드는 저장소는 ruleset 으로 보호된다. private 저장소의 ruleset 은 GitHub
+    # Pro 이상을 요구하고, 이 배포는 Pro 를 쓰지 않는다 — 그러면 private Plan 은 컴파일은
+    # 되지만 `after-files` 에서 반드시 죽는 Plan 이다. 실측: `create-ruleset` 이 HTTP 403 으로
+    # 거부되고, 저장소·genesis 커밋·기본 브랜치까지만 영수증이 남았다(#39).
+    #
+    # 만들 수 없는 것을 계획하지 않는다. 계획하고 나중에 죽는 것보다, 계획하지 않고 지금
+    # 이유를 말하는 편이 낫다 — 그 사이에 원격 저장소 하나가 실재하게 되기 때문이다.
+    if request.get("visibility") != "public":
+        raise PlanError(
+            f"this factory creates public repositories: visibility {request.get('visibility')!r} "
+            f"is not one it can finish. Every profile plans a branch ruleset, and rulesets on "
+            f"private repositories require GitHub Pro; a private plan compiles and then fails at "
+            f"after-files with a repository already created."
+        )
 
 
 def content_digest(text: str) -> str:
