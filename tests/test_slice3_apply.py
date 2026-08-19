@@ -15,7 +15,7 @@ from apply import (  # noqa: E402
     AUTHORIZATION_INSUFFICIENT, AUTHORIZATION_MISSING, AUTHORIZATION_SPENT,
     LEDGER_CORRUPT, PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
     RESUMED_RESOURCE_ABSENT, RESUMED_RESOURCE_DRIFTED, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
-    ApplyError, ReceiptLedger, apply_plan, authorized_plan_receipt,
+    ApplyError, ReceiptLedger, REMOTE_REFUSED, apply_plan, authorized_plan_receipt,
 )
 
 
@@ -32,15 +32,25 @@ def approval(plan_core, authority: str = "OWNER"):
 class FakeGitHub:
     """실제 포트와 같은 계약. `existing` 은 우리가 만들지 않은 원격 상태다."""
 
-    def __init__(self, existing: Dict[str, Dict[str, Any]] = None, vanish: List[str] = None):
+    def __init__(self, existing: Dict[str, Dict[str, Any]] = None, vanish: List[str] = None,
+                 refuse: List[str] = None, refuse_observe: List[str] = None):
         self.state: Dict[str, Dict[str, Any]] = dict(existing or {})
         self.vanish = set(vanish or [])
+        self.refuse = set(refuse or [])
+        self.refuse_observe = set(refuse_observe or [])
         self.creates: List[str] = []
 
     def observe(self, resource_type: str, identity: str) -> Optional[Dict[str, Any]]:
+        if identity in self.refuse_observe:
+            raise RuntimeError(f"the remote refused to answer about {identity}: HTTP 403")
         return self.state.get(identity)
 
     def create(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
+        if identity in self.refuse:
+            # 포트 계약 밖의 예외. 실제 포트는 `GhError` 를 올리고, 여기서 그것을 흉내내는
+            # 것이 요점이다 — 응용 계층이 자기가 모르는 예외 타입을 어떻게 다루는지가 검사
+            # 대상이다.
+            raise RuntimeError(f"the remote refused {identity}: HTTP 403 upgrade required")
         self.creates.append(identity)
         # `vanish` 는 명령이 성공했는데 원격에 없는 경우다. exit 0 이 증거가 아닌 이유.
         if identity not in self.vanish:
@@ -612,3 +622,39 @@ def test_the_receipt_the_builder_makes_satisfies_the_schema_it_ships():
                                       source_receipt="acp:gate:abc")
 
     assert sorted(Draft202012Validator(schema).iter_errors(receipt), key=str) == []
+
+
+def test_a_remote_refusal_reports_the_receipts_and_a_resume_point(tmp_path):
+    """§16.4 — 일부만 성공했으면 완료된 것과 안전한 재개 지점을 그대로 보고한다.
+
+    실측에서 이것이 깨져 있었다: private 저장소에 ruleset 을 만드는 403(GitHub Pro 필요)이
+    포트에서 그대로 빠져나가, 검증된 영수증 세 개가 스택 트레이스 뒤에 묻혔다. 명령줄에는
+    JSON 봉투 대신 트레이스백이 나왔다. 예외가 위로 새면 이 계층이 존재할 이유가 없다.
+    """
+    core = plan("alpha", "beta")
+    port = FakeGitHub(refuse=[core["githubOperations"][1]["resourceIdentity"]])
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, port, ledger(tmp_path), authorization=approval(core))
+
+    assert caught.value.code == REMOTE_REFUSED
+    # 먼저 성공한 것은 영수증으로 남아 있어야 한다 — 그것이 재개 지점이다.
+    assert [r["operationId"] for r in caught.value.receipts] == ["create-repository:alpha"]
+    assert caught.value.evidence["operationId"] == "create-repository:beta"
+    assert "403" in caught.value.evidence["remote"]
+    # 원장에도 남는다. 예외를 받은 쪽이 메모리 안의 목록을 못 봐도 재개할 수 있어야 한다.
+    assert ledger(tmp_path).get("create-repository:alpha") is not None
+
+
+def test_a_remote_that_will_not_answer_is_reported_the_same_way(tmp_path):
+    """읽기도 원격이다. 쓰기만 감싸면 403 이 관측에서 나올 때 같은 트레이스백으로 돌아간다 —
+    실제로 그랬다: 실패한 호출은 `gh api …/rulesets` 였고, 그것은 create 가 아니라 observe 다."""
+    core = plan("alpha", "beta")
+    port = FakeGitHub(refuse_observe=[core["githubOperations"][1]["resourceIdentity"]])
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, port, ledger(tmp_path), authorization=approval(core))
+
+    assert caught.value.code == REMOTE_REFUSED
+    assert [r["operationId"] for r in caught.value.receipts] == ["create-repository:alpha"]
+    assert caught.value.evidence["operationId"] == "create-repository:beta"

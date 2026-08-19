@@ -104,6 +104,14 @@ Plan 이 public 저장소를 만들어도 digest 는 같다.
 쓰고 나서 다시 읽고, **승인된 상태와 대조**한다. 존재만 확인하면 `disabled` 로 만들어진
 ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다.
 
+원격이 거부하면 `REMOTE_REFUSED` 로 멈추고 **거기까지의 영수증과 안전한 재개 지점을 함께**
+낸다 (§16.4). 예외가 그대로 새면 그 목록이 스택 트레이스가 된다.
+
+> **private 저장소의 ruleset 은 GitHub Pro 이상을 요구한다.** 모든 프로필이 ruleset 을
+> 만들므로, Free 계정에서 `visibility: private` 인 부트스트랩은 `after-files` 에서
+> `REMOTE_REFUSED … HTTP 403` 로 멈춘다 — 저장소·genesis 커밋·기본 브랜치까지는 영수증이
+>남는다. 계획 시점에는 알 수 없다: 계정 등급은 원격 사실이고 컴파일러는 원격을 읽지 않는다.
+
 ### 4. genesis 커밋
 
 ```bash
