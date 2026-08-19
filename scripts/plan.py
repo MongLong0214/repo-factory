@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
-from materialize import SKELETONS, artifact_coverage, materialize  # noqa: E402
+from materialize import CI_PATH, SKELETONS, artifact_coverage, materialize  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 PROFILES = SKILL / "profiles"
@@ -103,7 +103,13 @@ def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def project_manifest(request: Dict[str, Any], verification_commands: List[Dict[str, Any]]) -> Dict[str, Any]:
+def project_manifest(
+    request: Dict[str, Any],
+    verification_commands: List[Dict[str, Any]],
+    *,
+    stack: str = None,
+    commitlore_mode: str = None,
+) -> Dict[str, Any]:
     """§10.3 의 모양. 절대경로·세션·채널·비밀이 들어갈 자리가 없다 (§10.2)."""
     return {
         "schema": "agent-control-plane.project.v2",
@@ -127,6 +133,31 @@ def project_manifest(request: Dict[str, Any], verification_commands: List[Dict[s
         "verificationCommands": [
             {k: v for k, v in c.items() if k != "tier"} for c in verification_commands
         ],
+        # 워크플로를 선언하지 않으면 제어평면이 그 저장소의 project-ci 를 귀속시키지 못하고,
+        # 체크는 `unapproved` 로 읽혀 post-merge 검증이 통과하지 않는다.
+        #
+        # digest 는 여기서 채울 수 없다 — 승인은 활성화 시점의 제어평면 몫이다. 그래서
+        # `approvedDigest: null` 에 `unapprovedFirstActivation: true` 를 함께 낸다. 스키마가
+        # 이 둘을 한 상태씩만 표현하게 강제하므로 null 단독은 파싱되지도 않는다: 예전에는
+        # null 하나가 "아직 승인 안 됨" 과 "아무거나 좋다" 를 동시에 뜻해서, 활성화는
+        # 통과하는데 머지는 영영 못 하는 manifest 가 나왔다.
+        "ciWorkflows": (
+            [
+                {
+                    "path": CI_PATH,
+                    "checkName": "project-ci",
+                    "repositoryRole": "primary",
+                    "approvedDigest": None,
+                    "unapprovedFirstActivation": True,
+                }
+            ]
+            if stack is not None
+            else []
+        ),
+        # §18 의 프로파일 기본값. `onFailure`(WARN/REVISE/BLOCK)는 여기 자리가 없다 —
+        # 그것은 부트스트랩이 실패를 어떻게 다루는지에 대한 공장의 규칙이고, 생성된
+        # 저장소가 지고 다닐 계약이 아니다.
+        "commitlore": {"mode": commitlore_mode or "preferred"},
     }
 
 
@@ -142,7 +173,8 @@ def compile_plan(
     profile = load_profile(request["bootstrapProfile"])
     artifacts = selected_artifacts(profile, requested_optional or [])
     gate = classify_human_gate(request)
-    manifest = project_manifest(request, verification_commands)
+    manifest = project_manifest(request, verification_commands, stack=stack,
+                                commitlore_mode=profile["commitlore"]["default"])
     manifest_digest = digest(manifest)
     verification_digest = digest(verification_commands)
 
