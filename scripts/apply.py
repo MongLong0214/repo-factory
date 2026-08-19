@@ -32,9 +32,13 @@ from canonical import digest
 
 __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
-    "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH",
-    "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
+    "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
+    "UNKNOWN_PHASE", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT", "PHASES",
+    "PUBLISH_OPERATION",
 ]
+
+PHASES = ("before-files", "after-files")
+PUBLISH_OPERATION = "publish:{identity}"
 
 RESOURCE_COLLISION = "RESOURCE_COLLISION"
 PLAN_INTENT_CHANGED = "PLAN_INTENT_CHANGED"
@@ -44,6 +48,8 @@ REREAD_MISMATCH = "REREAD_MISMATCH"
 # outside the plan, and unreachable now that the only effect an operation can have is the one
 # written inside it. A refusal no input can reach is not protection; it is an answer of "yes"
 # to "is this checked?".
+PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
+UNKNOWN_PHASE = "UNKNOWN_PHASE"
 OWNER_AUTHORIZATION_REQUIRED = "OWNER_AUTHORIZATION_REQUIRED"
 RESUMED_RESOURCE_ABSENT = "RESUMED_RESOURCE_ABSENT"
 
@@ -204,9 +210,34 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              "a Hermes-authorised plan may not create public repositories",
                              ledger.all(), {"repositories": public})
 
+    # 모르는 단계는 빈 목록이 아니라 거부다. 오타 하나가 staged 를 0개로 만들고, 0개는
+    # 전부 끝났다는 뜻으로 읽혀서 `completed: true` 가 나온다 — 아무것도 안 하고 완료를
+    # 보고하는 가장 조용한 경로다.
+    if phase not in PHASES:
+        raise ApplyError(UNKNOWN_PHASE, f"{phase!r} is not a phase this plan has: {list(PHASES)}",
+                         ledger.all(), {"phase": phase})
+
+    # `after-files` 는 앞 단계가 실제로 끝났을 때만 열린다. 순서는 주석이 아니라 상태다 —
+    # `project-ci` 를 요구하는 ruleset 이 그 워크플로를 실어 나르는 커밋보다 먼저 있으면,
+    # 저장소에 내용을 넣는 바로 그 푸시를 저장소가 거부한다.
+    if phase == "after-files":
+        earlier = [op for op in plan["githubOperations"] if op.get("phase", "before-files") == "before-files"]
+        unfinished = sorted(op["operationId"] for op in earlier if ledger.get(op["operationId"]) is None)
+        if unfinished:
+            raise ApplyError(PHASE_OUT_OF_ORDER,
+                             f"before-files has not finished: {unfinished}",
+                             ledger.all(), {"phase": phase, "waitingOn": unfinished})
+        targets = sorted({op["resourceIdentity"].split("#", 1)[0] for op in plan["githubOperations"]
+                          if op.get("phase") == "after-files"})
+        unpublished = [identity for identity in targets
+                       if ledger.get(PUBLISH_OPERATION.format(identity=identity)) is None]
+        if unpublished:
+            raise ApplyError(PHASE_OUT_OF_ORDER,
+                             f"the genesis commit has not been published to {unpublished}; a ruleset "
+                             f"requiring a workflow cannot exist before the commit that carries it",
+                             ledger.all(), {"phase": phase, "waitingOn": unpublished})
+
     applied: List[Dict[str, Any]] = []
-    # 이 단계의 Operation 만 수행한다. 단계는 Plan 이 정하고 호출자가 고르지 않는다 —
-    # 고르게 하면 ruleset 을 파일보다 먼저 적용하는 실수가 호출자마다 가능해진다.
     staged = [op for op in plan["githubOperations"] if op.get("phase", "before-files") == phase]
     for operation in staged:
         operation_id = operation["operationId"]

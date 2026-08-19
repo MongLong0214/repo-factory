@@ -17,6 +17,7 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import ReceiptLedger, apply_plan  # noqa: E402
 from plan import compile_plan, diff_summary  # noqa: E402
+from publish import publish_receipt  # noqa: E402
 from result import FORBIDDEN_CLAIMS, ResultError, build_result  # noqa: E402
 
 ACP_SRC = Path(os.environ.get("ACP_SRC", Path.home() / "projects/agent-control-plane/src"))
@@ -64,6 +65,16 @@ def chain_parts() -> tuple:
     with tempfile.TemporaryDirectory() as scratch:
         book = Path(scratch) / "receipts.json"
         before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        # The genesis push sits between the phases and leaves its own receipt, which is what
+        # `after-files` reads to know the workflow the ruleset requires is actually in the
+        # repository. Without it the later phase refuses rather than running out of order.
+        ledger = ReceiptLedger(book)
+        ledger.record(publish_receipt(compiled["planCore"], {
+            "repositoryIdentity": IDENTITY, "head": HEAD, "branches": ["main", "dev"],
+            "committedPaths": sorted(compiled["files"]),
+            "remoteHeads": {"main": HEAD, "dev": HEAD},
+        }, clock=lambda: "2026-08-19T10:00:00Z"))
+        published = ledger.get(f"publish:{IDENTITY}")
         after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
     return compiled, before["receipts"] + after["receipts"]
 

@@ -22,6 +22,7 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import ReceiptLedger, apply_plan  # noqa: E402
 from plan import compile_plan, diff_summary  # noqa: E402
+from publish import publish_receipt  # noqa: E402
 from result import build_result  # noqa: E402
 
 LOCK = json.loads((SKILL / "governance" / "acp-contract.lock.json").read_text(encoding="utf-8"))
@@ -156,15 +157,21 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
     # receipt, and a result this parser accepted — half an executed bootstrap reported as a
     # finished one. "The whole chain" has to be the whole chain.
     port = FakeGitHub()
+    identity = "github:MongLong0214/ledger"
     with tempfile.TemporaryDirectory() as scratch:
         book = Path(scratch) / "r.json"
         before = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="before-files")
+        ledger = ReceiptLedger(book)
+        ledger.record(publish_receipt(compiled["planCore"], {
+            "repositoryIdentity": identity, "head": "a" * 40, "branches": ["main", "dev"],
+            "committedPaths": sorted(compiled["files"]),
+            "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
+        }, clock=lambda: "2026-08-19T10:00:00Z"))
         after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files")
     receipts = before["receipts"] + after["receipts"]
     assert {r["operationId"] for r in receipts} == {
         op["operationId"] for op in compiled["planCore"]["githubOperations"]
     }
-    identity = "github:MongLong0214/ledger"
     result = build_result(
         run_id="contract", plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
         repositories=[{"role": "primary", "identity": identity, "defaultBranch": "dev",

@@ -223,6 +223,24 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ("    if disagreeing:", "    if False:"),
         "killed_by": ["tests/test_publish.py::test_a_push_that_did_not_move_the_remote_is_refused"],
     },
+    {
+        "name": "an unknown phase is refused rather than reported complete",
+        "file": "scripts/apply.py",
+        "mutate": ("    if phase not in PHASES:", "    if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_phase_the_plan_does_not_have_is_refused_rather_than_reported_complete"],
+    },
+    {
+        "name": "the later phase waits for the earlier one to finish",
+        "file": "scripts/apply.py",
+        "mutate": ("        if unfinished:", "        if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_the_later_phase_refuses_while_the_earlier_one_is_unfinished"],
+    },
+    {
+        "name": "the later phase waits for the genesis commit to be published",
+        "file": "scripts/apply.py",
+        "mutate": ("        if unpublished:", "        if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_the_later_phase_refuses_until_the_genesis_commit_is_published"],
+    },
 ]
 
 
