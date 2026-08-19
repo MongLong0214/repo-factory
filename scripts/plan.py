@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
-from materialize import SKELETONS, materialize  # noqa: E402
+from materialize import SKELETONS, artifact_coverage, materialize  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 PROFILES = SKILL / "profiles"
@@ -148,8 +148,15 @@ def compile_plan(
 
     # 렌더링은 Plan 시점이다. Apply 가 렌더하면 Plan 의 contentDigest 는 아직 존재하지
     # 않는 바이트를 가리키고, 승인은 무엇을 승인했는지 말할 수 없게 된다.
-    files = materialize(manifest, seed=request["seed"], stack=stack, ci_values=ci_values)
+    files = materialize(manifest, seed=request["seed"], stack=stack,
+                        ci_values=ci_values, artifacts=artifacts)
     gaps: List[str] = []
+
+    # 프로파일이 요구한 산출물이 실제로 만들어졌는지 본다. 이 검사가 없으면 `required`
+    # 목록은 이름의 나열이고, 요구한 것이 없는 채로 Plan 이 완성된 것처럼 보인다.
+    _, uncovered = artifact_coverage(artifacts, files, manifest)
+    if uncovered:
+        gaps.append(f"selected artifacts were not produced: {sorted(uncovered)}")
     if stack is None:
         # §14.1 — 모르는 스택을 Node 로 조용히 대체하지 않는다. 못 만든 것은 못 만들었다고 적는다.
         gaps.append("stack-specific CI was not rendered: no stack was resolved for this request")
