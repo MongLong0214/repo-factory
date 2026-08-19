@@ -1,101 +1,96 @@
 # repo-factory
 
-증거 기반으로 저장소를 생성하고, 생성된 저장소가 스스로 티켓 그래프를 돌리게 하는
-Claude Code 스킬.
+승인된 부트스트랩 요청 하나를 결정적인 저장소 genesis 로 컴파일하는 스킬.
 
 계획을 문서로 남기는 것이 아니라 **기계가 판정할 수 있는 상태**로 만드는 것이 목적이다.
-"완료했습니다"는 완료가 아니고, 확인하지 못한 것은 통과가 아니다.
+"완료했습니다" 는 완료가 아니고, 확인하지 못한 것은 통과가 아니다.
 
 ## 무엇을 하는가
 
-씨앗(자연어 요청)에서 시작해 조사 → 도시에 → ADR → PRD → **티켓** → 저장소 창세까지
-간다. 티켓은 추적용 메모가 아니라 의존성과 기계 판정 AC를 가진 **그래프 노드**다.
-
-생성된 저장소에는 운영 커널이 설치되어, 그 뒤로는 티켓 그래프가 스스로 돈다.
+`BootstrapRequest` 를 받아 하나의 Plan 으로 컴파일하고, 그 Plan 이 지배하는 외부 쓰기와
+genesis 커밋을 거쳐 제어평면이 받는 Result 까지 간다. 같은 요청은 같은 Plan digest 를
+낸다 — 그것이 "승인이 무엇을 승인했는가" 를 말할 수 있게 하는 유일한 방법이다.
 
 ```
-tickets(dependencies) → compute_ready → 정책·위험도 필터 → dispatch
-                                                              ↓
-                                                        worker adapter
-                                                              ↓
-                                       governance CI / project CI / agent-review
-                                                              ↓
-                                                   merge-broker (exact-head)
-                                                              ↓
-                                            post-merge check @ merge SHA
-                                                              ↓
-                                                    technical_state = verified
-                                                              ↓
-                                                   의존 티켓이 ready 로
+BootstrapRequest ──▶ plan.py ──▶ apply.py --phase before-files ──▶ publish.py
+                        │                                              │
+                        │                                              ▼
+                        └────────────────▶ apply.py --phase after-files ──▶ result.py
 ```
+
+## 여기서 끝난다
+
+```
+Repo Factory   요청 → Plan → 외부 쓰기 → genesis 커밋 → Result
+Control Plane  그 뒤 전부 — 런, 티켓, 리뷰, 머지, 세션, 용량
+```
+
+생성된 저장소에 운영 커널을 복제하지 않는다. 저장소가 받는 것은 계약이다 — 포터블
+매니페스트, 검증 명령, 브랜치 계약, CI. 그 계약을 읽고 오래 도는 것은
+[agent-control-plane](https://github.com/MongLong0214/agent-control-plane) 이다.
+공장이 런타임을 같이 심으면 권위가 두 곳에 생기고, 두 권위는 언젠가 서로 다른 답을 낸다.
 
 ## 설계 원칙
 
+**Plan 이 effect 를 결정한다.**
+Operation 은 자기가 만들 것을 `desiredState` 로 싣는다. 생성 파라미터가 Plan 밖에서
+오면 승인된 digest 가 실행될 effect 를 결정하지 못한다 — private 으로 승인된 Plan 이
+public 저장소를 만들어도 digest 는 같다. (`scripts/apply.py`)
+
+**쓰고 나서 다시 읽고 대조한다.**
+exit 0 은 원격이 기대대로라는 증거가 아니다. 존재만 확인하면 `disabled` 로 만들어진
+ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다. (`scripts/apply.py`)
+
 **확인하지 못한 것은 통과가 아니다.**
-`--offline`으로 못 본 원격 상태는 `NOT_CHECKED`이지 `PASS`가 아니다.
-도구가 없으면 침묵 통과가 아니라 `FAIL`이다. (`scripts/phase-gate.py`)
+원격을 확인하지 않은 관측은 `null` 이지 "없음" 이 아니다. 둘을 같은 값으로 적으면
+관측되지 않은 것이 관측된 것처럼 읽힌다. (`scripts/plan.py`)
 
-**자연어 보고만으로 완료를 인정하지 않는다.**
-워커 출력은 `status / operation_id / ticket_id / base_sha / head_sha / branch /
-changed_paths / commands_run / evidence` 9필드를 갖춰야 한다.
-누락되면 거부한다. (`templates/kit/scripts/autopilot.py`)
+**재개는 Operation 정체성에 걸린다.**
+같은 `bootstrapOperationId` 와 같은 `requestDigest` 일 때만 영수증이 재개로 읽힌다.
+영수증은 과거에 썼다는 증거이지 지금 있다는 증거가 아니므로, 재개할 때 원격을 다시
+읽는다. (`scripts/apply.py`)
 
-**상태를 따로 저장하지 않는다.**
-티켓 상태는 GitHub facts(PR, check run, merge SHA)에서 매번 유도한다.
-별도 상태 파일이 없으므로 드리프트가 생길 곳도 없다.
+**genesis 커밋은 계획된 집합이고 그 이상이 아니다.**
+작업 디렉토리가 비어 있어야 하고, 커밋과 푸시 사이에서 실제 경로 집합을 계획된 집합과
+대조한다. (`scripts/publish.py`)
 
-**머지 직전에 다시 확인한다.**
-head/base staleness를 실행 직전 exact 재검사한다. 오래된 base 위에서 만들어진
-변경이 조용히 머지되지 않는다. (`templates/kit/scripts/merge-broker.py`)
-
-**사이클과 끊어진 참조를 창세 시점에 잡는다.**
-의존성 사이클(`TICKET_DAG_CYCLE`)과 존재하지 않는 의존(`TICKET_DEP_MISSING`)은
-색칠 DFS로 검출한다. (`templates/kit/scripts/governance.py`)
+**가드는 죽일 수 있어야 한다.**
+모든 거부문에는 그것을 지웠을 때 죽는 테스트가 행으로 있다. 뮤테이션이 더 이상 안
+맞거나 가드 파일에 행이 없으면 그것도 실패다. (`tests/test_guards_are_falsifiable.py`)
 
 ## 구성
 
 ```
-SKILL.md                              Phase 0~6 흐름과 게이트
-references/                           실행 프로토콜, 도시에 규격, 템플릿
+SKILL.md              스킬 진입점 — 경계·프로파일·파이프라인·불변식
 scripts/
-  phase-gate.py                       로컬·원격 게이트와 assurance 등급
-  install-governance.py               운영 커널 설치
-  create-issues.py                    티켓 → GitHub 이슈 동기화 (정본은 티켓)
-  run-canary.py                       실제 저장소로 전 경로 카나리
-  verify-citations.py                 인용 검증
-templates/kit/scripts/
-  autopilot.py                        ready 계산, dispatch, lease, 복구, 롤백
-  merge-broker.py                     머지 중재, exact-head, idempotency
-  governance.py                       계약 검증, 온라인 상태 유도, manifest
-tests/                                컴파일러·포트·계약 회귀
+  plan.py             요청 → Plan (자기 입력과 자기 출력을 둘 다 스키마로 검증)
+  apply.py            단계별 외부 쓰기, 영수증 원장, 재조회 대조
+  publish.py          계획된 파일 집합만 담은 genesis 커밋
+  result.py           제어평면이 받는 Result
+  materialize.py      프로파일 → 산출물 파일
+  render_ci.py        스택별 CI 렌더
+  canonical.py        정본 digest (volatile: forbid / strip / allow)
+  github_port.py      gh CLI 포트 — 읽기와 생성만
+profiles/             SIMPLE · STANDARD · GUARDED 요구 산출물 정본
+schemas/              request · plan · profile · result 계약
+governance/           제어평면 계약 pin (exact commit)
+tests/                컴파일러·포트·계약 회귀 + 뮤테이션 하네스
 ```
 
 ## 실행
 
 ```bash
-# 생성된 저장소에서
-python3 scripts/autopilot.py reconcile --root . --online
+python3 scripts/plan.py \
+  --request request.json --verification verification.json \
+  --ci-values ci.json --operation-id "$(uuidgen)" --observe > compiled.json
+
+python3 scripts/apply.py --plan compiled.json --ledger receipts.json \
+  --phase before-files --dry-run
+
+python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
+  --remote-url git@github.com:owner/name.git \
+  --author-name "Repo Factory" --author-email "factory@example.invalid"
 ```
-
-```json
-{
-  "state": "reconciled",
-  "ready": ["T-02", "T-05"],
-  "startable": ["T-02"],
-  "held": [{"ticket": "T-05", "reason_code": "RISK_NOT_DELEGATED", "risk": "high"}],
-  "blocked": [{"ticket": "T-07", "waiting_on": ["T-02"]}],
-  "progress": {"verified": 3, "remaining": 6, "total": 9},
-  "critical_path": {"depth": 4, "chain": ["T-02", "T-07", "T-09", "T-12"]},
-  "adapter": {"state": "UNWIRED", "unwired": [{"adapter": "default", "operations": ["execute"]}],
-              "detail": "execute 가 비어 있어 dispatch 가 아무것도 실행하지 않는다"},
-  "wip": {"cap": 3, "active": []}
-}
-```
-
-`critical_path.depth`가 남은 최소 라운드 수다. 병렬 폭을 늘려도 이 값은 줄지 않는다.
-
-`adapter.state`가 `UNWIRED`면 `startable`이 있어도 실행되지 않는다.
-`install-governance.py`는 `invoke`를 비운 채 설치하고 운영자가 채우기를 기대한다.
 
 ## 테스트
 
@@ -105,12 +100,21 @@ python3 -m pytest tests/ -q     # unittest discover 는 parametrize 를 건너�
 
 ## 알려진 한계
 
-- **워커 어댑터는 기본 미배선이다.** `governance/adapters/*.json`의 `invoke.execute`를
-  채워야 자율 실행이 돈다. 채우기 전까지 이 시스템은 계획하고 검증하는 그래프이지
-  실행하는 런타임이 아니다. `reconcile`이 그 상태를 명시한다.
-- **격리는 브랜치 수준이다.** git worktree 격리와 API/타입/픽스처 같은 semantic
-  conflict 검출은 없다. 소유 경로(`owned` / `coordinated` / `oracle`) 선언으로만 다룬다.
-- 실행 telemetry 기반 자기 최적화는 없다.
+- **외부 쓰기는 저장소와 ruleset 뿐이다.** issue·milestone·tag·setting 은 포트가
+  흉내내지 않고 거부한다 — 다시 읽을 수 없는 쓰기는 재조회 요구를 만족할 수 없다.
+- **기본 브랜치 전환이 Operation 으로 승인되지 않는다.** `publish` 가 푸시 순서로
+  다룬다.
+- **다중 저장소는 생성 단계까지다.** 순서 있는 다중 저장소 genesis 는 아직이다.
+- **제어평면 PROJECT_BOOTSTRAP 런 안에서 실행된 적이 없다.** 공장 쪽 준비는 끝났고
+  제어평면 쪽 진입점이 남아 있다.
+
+## 레거시
+
+`scripts/{phase-gate,create-issues,verify-citations,install-governance,run-canary}.py`,
+`templates/kit/`, `references/` 의 대부분은 **은퇴한 제품**의 것이다 — S/M/L 티어,
+생성 저장소에 심는 autopilot·merge-broker 운영 커널, repo-local 런타임 권위. 위
+파이프라인은 그것들을 import 하지도 실행하지도 않는다. 새 작업에서 그 경로를 실행하지
+않는다.
 
 ## 라이선스
 
