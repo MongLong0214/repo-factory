@@ -11,7 +11,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
+    PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION, UNKNOWN_PHASE,
     ApplyError, ReceiptLedger, apply_plan,
 )
 
@@ -297,14 +297,56 @@ def test_only_the_named_phase_is_applied(tmp_path):
     assert port.creates == ["github:MongLong0214/alpha"]
 
 
+def genesis_receipt(name: str) -> Dict[str, Any]:
+    identity = f"github:MongLong0214/{name}"
+    return {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
+            "requestDigest": "sha256:" + "a" * 64,
+            "operationId": f"publish:{identity}", "resourceType": "genesis-commit",
+            "resourceIdentity": identity, "createdAt": "2026-08-19T10:00:00Z",
+            "rereadAt": "2026-08-19T10:00:00Z", "verified": True}
+
+
 def test_the_later_phase_applies_against_the_same_ledger(tmp_path):
     port = FakeGitHub()
     book = ledger(tmp_path)
     apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+    book.record(genesis_receipt("alpha"))
 
     after = apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files")
 
     assert [r["operationId"] for r in after["receipts"]] == ["create-ruleset:alpha"]
     assert "github:MongLong0214/alpha#acp-managed-branches" in port.creates
-    # And both receipts survive in one ledger.
-    assert len(ReceiptLedger(book.path).all()) == 2
+    # Both operation receipts and the genesis receipt survive in one ledger.
+    assert len(ReceiptLedger(book.path).all()) == 3
+
+
+def test_the_later_phase_refuses_while_the_earlier_one_is_unfinished(tmp_path):
+    # The order used to be a comment and a `phase` field the caller chose to honour. A caller
+    # could apply after-files first, and a ruleset requiring project-ci that exists before the
+    # commit carrying that workflow refuses the very push that gives the repository content.
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-files")
+
+    assert caught.value.code == PHASE_OUT_OF_ORDER
+    assert "create-repository:alpha" in caught.value.evidence["waitingOn"]
+
+
+def test_the_later_phase_refuses_until_the_genesis_commit_is_published(tmp_path):
+    port = FakeGitHub()
+    book = ledger(tmp_path)
+    apply_plan(phased_plan("alpha"), port, book, phase="before-files")
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(phased_plan("alpha"), port, ReceiptLedger(book.path), phase="after-files")
+
+    assert caught.value.code == PHASE_OUT_OF_ORDER
+    assert caught.value.evidence["waitingOn"] == ["github:MongLong0214/alpha"]
+
+
+def test_a_phase_the_plan_does_not_have_is_refused_rather_than_reported_complete(tmp_path):
+    # An unknown phase staged zero operations, and zero staged operations satisfied
+    # `completed = len(applied) == len(staged)`. A typo reported a finished bootstrap.
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-file")
+
+    assert caught.value.code == UNKNOWN_PHASE

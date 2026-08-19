@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-__all__ = ["PublishError", "publish_files", "remote_identity"]
+__all__ = ["PublishError", "publish_files", "publish_receipt", "remote_identity"]
 
 _REMOTE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
@@ -48,6 +48,31 @@ class PublishError(RuntimeError):
 def _run(argv: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
     done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=180, env=env)
     return done.returncode, done.stdout, done.stderr
+
+
+def publish_receipt(plan: Dict[str, object], heads: Dict[str, object], *, clock) -> Dict[str, object]:
+    """genesis 푸시도 영수증을 남긴다.
+
+    남기지 않으면 `after-files` 가 "파일이 이미 올라갔는가" 를 물을 곳이 없다. 순서를
+    주석으로만 적어두면 호출자가 `after-files` 를 먼저 부를 수 있고, `project-ci` 를
+    요구하는 ruleset 이 그 워크플로보다 먼저 존재하면 저장소에 내용을 넣는 바로 그 푸시가
+    거부된다."""
+    identity = str(heads["repositoryIdentity"])
+    at = clock()
+    return {
+        "bootstrapOperationId": plan["bootstrapOperationId"],
+        "requestDigest": plan["requestDigest"],
+        "operationId": f"publish:{identity}",
+        "resourceType": "genesis-commit",
+        "resourceIdentity": identity,
+        "head": heads["head"],
+        "branches": list(heads["branches"]),
+        "committedPaths": list(heads["committedPaths"]),
+        "remoteHeads": dict(heads["remoteHeads"]),
+        "createdAt": at,
+        "rereadAt": at,
+        "verified": True,
+    }
 
 
 def publish_files(
@@ -207,6 +232,8 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--author-email", required=True)
     parser.add_argument("--message", default="genesis: repository contract and verification",
                         help="the genesis commit subject; no session identifier is added (PRD §4.6)")
+    parser.add_argument("--ledger", type=Path, default=None,
+                        help="receipt ledger to record the genesis push into; after-files needs it")
     parser.add_argument("--repository-identity", default=None,
                         help="which planned repository this push targets; inferred when the plan names one")
     parser.add_argument("--default-branch", default="dev")
@@ -245,6 +272,15 @@ def main(argv: List[str] = None) -> int:
     except PublishError as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
+    if args.ledger is not None:
+        from datetime import datetime, timezone
+
+        from apply import ReceiptLedger
+
+        def now() -> str:
+            return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        ReceiptLedger(args.ledger).record(publish_receipt(core, heads, clock=now))
     print(json.dumps(heads, ensure_ascii=False, indent=2))
     return 0
 

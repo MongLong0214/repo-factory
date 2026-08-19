@@ -84,6 +84,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     }
     published = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "compiled.json"),
                      "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                     "--ledger", str(tmp_path / "receipts.json"),
                      "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"],
                     env=rewritten)
     assert published.returncode == 0, published.stderr[-600:]
@@ -96,6 +97,15 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     assert sorted(landed.stdout.split()) == sorted(document["files"]), (
         "the published tree is not the planned set"
     )
+
+    # The genesis push leaves the receipt the later phase reads to know the workflow the ruleset
+    # requires is actually in the repository. Without it that phase refuses rather than running
+    # out of order, so a publish that records nothing strands the bootstrap.
+    ledger = json.loads((tmp_path / "receipts.json").read_text(encoding="utf-8"))
+    genesis = [row for row in ledger if row["resourceType"] == "genesis-commit"]
+    assert [row["operationId"] for row in genesis] == ["publish:github:MongLong0214/demo"]
+    assert genesis[0]["verified"] is True
+    assert genesis[0]["head"] == heads["head"]
 
 
 def test_publish_refuses_a_plan_document_that_carries_no_files(tmp_path):
