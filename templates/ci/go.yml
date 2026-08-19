@@ -1,0 +1,37 @@
+# project-ci — the check the control plane consumes by exact head.
+#
+# Two toolchains, because a test set that silently shrinks on one of them is a zero-test lane
+# wearing a green tick. The lower bound is the version go.mod declares; latest is what a
+# contributor will actually have installed.
+name: project-ci
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+concurrency:
+  group: project-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+jobs:
+  test:
+    name: project-ci
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ["{{RUNTIME_LOWER}}", "{{RUNTIME_LATEST}}"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ matrix.runtime }}
+          cache: true
+      - name: install dependencies
+        run: {{INSTALL_CMD}}
+      - name: test
+        run: {{TEST_CMD}}
+      - name: build
+        run: {{BUILD_CMD}}
