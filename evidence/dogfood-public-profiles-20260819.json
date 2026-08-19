@@ -1,5 +1,5 @@
 {
-  "capture": "One real bootstrap per profile — SIMPLE, STANDARD, GUARDED — driven end to end by scripts/dogfood.sh, the published commands and nothing else. All three from the same generation of the code: an earlier capture mixed generations, which is the same staleness this file exists to answer.",
+  "capture": "One real bootstrap per profile — SIMPLE, STANDARD, GUARDED — driven end to end by scripts/dogfood.sh, the published commands and nothing else. All three from the same generation of the code.",
   "capturedAt": "2026-08-19",
   "howToReproduce": "scripts/dogfood.sh <name> <profile> <stack>",
   "visibility": "all public, by owner decision (#39); private plans are refused at compile time",
@@ -9,24 +9,29 @@
   },
   "runs": [
     {
-      "repository": "github:MongLong0214/rf-dogfood-e-node",
+      "repository": "github:MongLong0214/rf-dogfood-f-node",
       "bootstrapProfile": "SIMPLE",
       "stack": "node",
-      "planDigest": "sha256:fe290e6f35ae3d53a55cca828d7b33f843b89ed4bd1068fa63da2d0efb012e09",
+      "planDigest": "sha256:33b27843e030d9f0619aff97848d05a8c8c3ed74f0eb03c9b755a04257df12cc",
       "authorization": "OWNER",
       "receiptsInLedger": [
-        "create-repository:rf-dogfood-e-node",
-        "enable-secret-scanning:rf-dogfood-e-node",
-        "publish:github:MongLong0214/rf-dogfood-e-node",
-        "set-default-branch:rf-dogfood-e-node",
-        "create-ruleset:rf-dogfood-e-node"
+        "create-repository:rf-dogfood-f-node",
+        "enable-secret-scanning:rf-dogfood-f-node",
+        "publish:github:MongLong0214/rf-dogfood-f-node",
+        "set-default-branch:rf-dogfood-f-node",
+        "enable-code-scanning:rf-dogfood-f-node",
+        "create-ruleset:rf-dogfood-f-node"
       ],
-      "publishedHead": "4e5ec9255f21d6df759d430474003d1e8a92e414",
+      "publishedHead": "440dbd942db6140c07a6ebd4baf2815922de514e",
       "remoteAsRead": {
         "default_branch": "dev",
         "pushProtection": "enabled",
         "secretScanning": "enabled",
         "visibility": "public"
+      },
+      "codeScanningAsRead": {
+        "query_suite": "default",
+        "state": "configured"
       },
       "rulesetsAsRead": [
         {
@@ -37,30 +42,35 @@
       "ci": {
         "checkName": "project-ci",
         "conclusion": "PASS",
-        "head": "4e5ec9255f21d6df759d430474003d1e8a92e414",
-        "runUrl": "https://github.com/MongLong0214/rf-dogfood-e-node/actions/runs/32240534563"
+        "head": "440dbd942db6140c07a6ebd4baf2815922de514e",
+        "runUrl": "https://github.com/MongLong0214/rf-dogfood-f-node/actions/runs/32256790243"
       },
       "unresolvedGaps": []
     },
     {
-      "repository": "github:MongLong0214/rf-dogfood-e-python",
+      "repository": "github:MongLong0214/rf-dogfood-f-python",
       "bootstrapProfile": "STANDARD",
       "stack": "python",
-      "planDigest": "sha256:25f4144157f5731f294d4386882234043dff2f551638c5bf924d42df9ea62935",
+      "planDigest": "sha256:1f3b13ba986a10d50c6bc12d1b8f69834ca009f3fd0ddade13d4ed386d9a835f",
       "authorization": "OWNER",
       "receiptsInLedger": [
-        "create-repository:rf-dogfood-e-python",
-        "enable-secret-scanning:rf-dogfood-e-python",
-        "publish:github:MongLong0214/rf-dogfood-e-python",
-        "set-default-branch:rf-dogfood-e-python",
-        "create-ruleset:rf-dogfood-e-python"
+        "create-repository:rf-dogfood-f-python",
+        "enable-secret-scanning:rf-dogfood-f-python",
+        "publish:github:MongLong0214/rf-dogfood-f-python",
+        "set-default-branch:rf-dogfood-f-python",
+        "enable-code-scanning:rf-dogfood-f-python",
+        "create-ruleset:rf-dogfood-f-python"
       ],
-      "publishedHead": "e5ab0d599f4bd4530f7e683ddb45ff7f73efbce4",
+      "publishedHead": "d6a7fc66c9abb31be33a61d51a0d4cd74f4bdfd2",
       "remoteAsRead": {
         "default_branch": "dev",
         "pushProtection": "enabled",
         "secretScanning": "enabled",
         "visibility": "public"
+      },
+      "codeScanningAsRead": {
+        "query_suite": "default",
+        "state": "configured"
       },
       "rulesetsAsRead": [
         {
@@ -71,30 +81,35 @@
       "ci": {
         "checkName": "project-ci",
         "conclusion": "PASS",
-        "head": "e5ab0d599f4bd4530f7e683ddb45ff7f73efbce4",
-        "runUrl": "https://github.com/MongLong0214/rf-dogfood-e-python/actions/runs/32240608928"
+        "head": "d6a7fc66c9abb31be33a61d51a0d4cd74f4bdfd2",
+        "runUrl": "https://github.com/MongLong0214/rf-dogfood-f-python/actions/runs/32256877147"
       },
       "unresolvedGaps": []
     },
     {
-      "repository": "github:MongLong0214/rf-dogfood-e-guarded",
+      "repository": "github:MongLong0214/rf-dogfood-f-guarded",
       "bootstrapProfile": "GUARDED",
       "stack": "node",
-      "planDigest": "sha256:bb7a4b7ff187b71f4c6ef8ed226abb977c4dd704eee89ad29fe8723919b78cf2",
+      "planDigest": "sha256:481d289c78546119da72f175952ab5fa04e490d6a3f36a63e1315f9f6209fcd8",
       "authorization": "OWNER",
       "receiptsInLedger": [
-        "create-repository:rf-dogfood-e-guarded",
-        "enable-secret-scanning:rf-dogfood-e-guarded",
-        "publish:github:MongLong0214/rf-dogfood-e-guarded",
-        "set-default-branch:rf-dogfood-e-guarded",
-        "create-ruleset:rf-dogfood-e-guarded"
+        "create-repository:rf-dogfood-f-guarded",
+        "enable-secret-scanning:rf-dogfood-f-guarded",
+        "publish:github:MongLong0214/rf-dogfood-f-guarded",
+        "set-default-branch:rf-dogfood-f-guarded",
+        "enable-code-scanning:rf-dogfood-f-guarded",
+        "create-ruleset:rf-dogfood-f-guarded"
       ],
-      "publishedHead": "6ca5dfadb309102a730954c3893e872b5a976f23",
+      "publishedHead": "011278adb79c69241cda5bd81c0741118a41a7d8",
       "remoteAsRead": {
         "default_branch": "dev",
         "pushProtection": "enabled",
         "secretScanning": "enabled",
         "visibility": "public"
+      },
+      "codeScanningAsRead": {
+        "query_suite": "default",
+        "state": "configured"
       },
       "rulesetsAsRead": [
         {
@@ -105,8 +120,8 @@
       "ci": {
         "checkName": "project-ci",
         "conclusion": "PASS",
-        "head": "6ca5dfadb309102a730954c3893e872b5a976f23",
-        "runUrl": "https://github.com/MongLong0214/rf-dogfood-e-guarded/actions/runs/32240323575"
+        "head": "011278adb79c69241cda5bd81c0741118a41a7d8",
+        "runUrl": "https://github.com/MongLong0214/rf-dogfood-f-guarded/actions/runs/32256943738"
       },
       "unresolvedGaps": []
     }
@@ -118,7 +133,10 @@
       "rf-dogfood-c-node",
       "rf-dogfood-c-python",
       "rf-dogfood-d-node",
-      "rf-dogfood-d-python"
+      "rf-dogfood-d-python",
+      "rf-dogfood-e-node",
+      "rf-dogfood-e-python",
+      "rf-dogfood-e-guarded"
     ],
     "whyOneOfThemRefusesToResume": "rf-dogfood-d-node's ruleset was created before the required check named its reporting app. Re-running it now refuses with RESUMED_RESOURCE_DRIFTED, naming the exact gap: approved [{context, integration_id}], observed [{context}]. That refusal is the resume check working, not a defect."
   }

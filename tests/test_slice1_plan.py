@@ -190,6 +190,7 @@ def test_the_diff_summary_names_the_owner_gates_it_would_cross():
     assert summary["githubOperations"] == ["create-repository:ledger-reconciler",
                                            "enable-secret-scanning:ledger-reconciler",
                                            "set-default-branch:ledger-reconciler",
+                                           "enable-code-scanning:ledger-reconciler",
                                            "create-ruleset:ledger-reconciler"]
 
 

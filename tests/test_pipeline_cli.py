@@ -75,11 +75,16 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
                   "--ledger", str(tmp_path / "receipts.json"), "--phase", "after-files", "--dry-run"])
     assert staged.returncode == 0, staged.stderr[-600:]
     would = json.loads(staged.stdout)["wouldApply"]
-    assert [op["operationId"] for op in would] == ["set-default-branch:demo", "create-ruleset:demo"]
+    assert [op["operationId"] for op in would] == [
+        "set-default-branch:demo", "enable-code-scanning:demo", "create-ruleset:demo"]
     # The dry run has to show the effect, not just the name — that is the thing under approval.
     by_id = {op["operationId"]: op for op in would}
     assert by_id["create-ruleset:demo"]["desiredState"]["enforcement"] == "active"
     assert by_id["set-default-branch:demo"]["desiredState"]["defaultBranch"] == "dev"
+    # `languages` is deliberately absent: writable, not observable. Approving it would make the
+    # post-write re-read fail for every repository, forever.
+    assert by_id["enable-code-scanning:demo"]["desiredState"] == {
+        "state": "configured", "querySuite": "default"}
 
     created = run([str(SCRIPTS / "apply.py"), "--plan", str(plan_path),
                    "--ledger", str(tmp_path / "receipts.json"), "--phase", "before-files",
@@ -128,7 +133,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
                  "--gh", str(stub), "--authorization", str(tmp_path / "auth.json")], env=env)
     assert after.returncode == 0, after.stderr[:800]
     assert [r["operationId"] for r in json.loads(after.stdout)["receipts"]] == [
-        "set-default-branch:demo", "create-ruleset:demo"]
+        "set-default-branch:demo", "enable-code-scanning:demo", "create-ruleset:demo"]
 
     # Assembling the result is where a half-run bootstrap is caught: every planned operation has
     # to carry a receipt. Running it before `after-files` is the state that used to be reported

@@ -283,3 +283,19 @@ def test_a_setting_this_port_does_not_name_is_refused():
 
     with pytest.raises(GhError, match="settings this port observes"):
         port.observe("setting", "github:MongLong0214/alpha#whatever-else")
+
+
+def test_the_port_reads_the_code_scanning_setup_it_was_asked_about():
+    """별도 엔드포인트이고, 상수를 돌려주면 어떤 원격 상태에도 통과한다."""
+    body = json.dumps({"state": "not-configured", "query_suite": "extended",
+                       "languages": ["javascript", "python"]})
+    port = GhCliPort(runner=(scripted := ScriptedGh([("code-scanning/default-setup", (0, body, ""))])))
+
+    observed = port.observe("setting", "github:MongLong0214/alpha#code-scanning")
+
+    assert scripted.seen[-1] == ["gh", "api", "repos/MongLong0214/alpha/code-scanning/default-setup"]
+    # `languages` 는 관측에 들어오지 않는다. configured 뒤에 영원히 빈 배열이 되므로, 승인
+    # 상태에 넣으면 재조회가 매번 실패한다.
+    assert observed == {"identity": "github:MongLong0214/alpha#code-scanning",
+                        "resourceType": "setting",
+                        "state": "not-configured", "querySuite": "extended"}
