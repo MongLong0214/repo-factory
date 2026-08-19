@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/bootstrap-profile.schema.json",
+  "bootstrapProfile": "SIMPLE",
+  "appliesTo": "Small, reversible genesis: prototypes, CLIs, experiments, small OSS.",
+  "required": [
+    "portable-project-manifest",
+    "readme",
+    "agents",
+    "stack-specific-ci",
+    "verification-commands",
+    "branch-contract",
+    "repo-factory-result"
+  ],
+  "optional": [
+    "prd",
+    "adr",
+    "tickets",
+    "issue-projection",
+    "research-dossier"
+  ],
+  "evidenceLane": "MINIMAL",
+  "commitlore": { "default": "preferred", "onFailure": "WARN" },
+  "notes": "An artifact is produced because something consumes it. Producing a PRD, ADR or ticket to satisfy a count is a defect, not thoroughness (PRD §6.1)."
+}

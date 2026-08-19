@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MongLong0214/repo-factory/schemas/bootstrap-profile.schema.json",
+  "title": "Bootstrap profile",
+  "description": "What a bootstrap profile requires, permits and defaults to. Named `bootstrapProfile` rather than `executionMode` because a run's execution mode is a separate control-plane field and conflating them is how a genesis decision leaks into run admission (PRD §6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bootstrapProfile", "appliesTo", "required", "optional", "evidenceLane", "commitlore"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "bootstrapProfile": { "enum": ["SIMPLE", "STANDARD", "GUARDED"] },
+    "appliesTo": { "type": "string", "minLength": 1 },
+    "required": {
+      "description": "Artifacts without which the bootstrap is incomplete. Absence is a failure, not a warning.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifactId" },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "optional": {
+      "description": "Artifacts produced when something consumes them. Producing one to satisfy a count is a defect (PRD §6.1).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifactId" },
+      "uniqueItems": true
+    },
+    "evidenceLane": {
+      "description": "Depth of Phase B investigation. Evidence must still distinguish confirmed, reproduced, refuted and unknown at every lane (PRD §7 Phase B).",
+      "enum": ["MINIMAL", "TARGETED", "FULL"]
+    },
+    "commitlore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "onFailure"],
+      "properties": {
+        "default": { "enum": ["preferred", "required"] },
+        "onFailure": {
+          "description": "PRD §18. A failure is never abbreviated to PASS at any level.",
+          "enum": ["WARN", "REVISE", "BLOCK"]
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "artifactId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+  }
+}
