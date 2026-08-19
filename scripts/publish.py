@@ -17,8 +17,12 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from canonical import digest  # noqa: E402
 
 __all__ = ["PublishError", "publish_files", "publish_receipt", "remote_identity"]
 
@@ -59,15 +63,22 @@ def publish_receipt(plan: Dict[str, object], heads: Dict[str, object], *, clock)
     거부된다."""
     identity = str(heads["repositoryIdentity"])
     at = clock()
+    observed = {"head": heads["head"], "remoteHeads": dict(heads["remoteHeads"])}
     return {
         "bootstrapOperationId": plan["bootstrapOperationId"],
         "requestDigest": plan["requestDigest"],
         "operationId": f"publish:{identity}",
         "resourceType": "genesis-commit",
         "resourceIdentity": identity,
-        "head": heads["head"],
-        "branches": list(heads["branches"]),
+        "preexisting": False,
+        "beforeStateDigest": None,
+        # 이 영수증의 "쓰고 나서 읽은 상태" 는 원격이 실제로 가리키는 커밋이다. 다른 영수증과
+        # 같은 자리에 같은 이름으로 둔다 — 원장이 행마다 다른 모양을 요구하면, 어떤 행이
+        # 무엇을 증명하는지를 읽는 쪽이 매번 다시 판단해야 한다.
+        "afterStateDigest": digest(observed, volatile="allow"),
         "committedPaths": list(heads["committedPaths"]),
+        "branches": list(heads["branches"]),
+        "head": heads["head"],
         "remoteHeads": dict(heads["remoteHeads"]),
         "createdAt": at,
         "rereadAt": at,

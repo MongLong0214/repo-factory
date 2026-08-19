@@ -268,6 +268,36 @@ GUARDS: List[Dict[str, object]] = [
         "killed_by": ["tests/test_slice4_result.py::test_a_default_branch_the_plan_never_set_refuses_the_result",
                       "tests/test_slice1_plan.py"],
     },
+    {
+        "name": "two ledger rows for one operation are refused rather than last-one-wins",
+        "file": "scripts/apply.py",
+        "mutate": ('if row.get("operationId") in self._rows:', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_two_rows_for_one_operation_are_refused_rather_than_last_one_winning"],
+    },
+    {
+        "name": "a ledger row that does not say what it verified is refused",
+        "file": "scripts/apply.py",
+        "mutate": ("                if missing:", "                if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_row_that_never_says_what_it_verified_is_refused"],
+    },
+    {
+        "name": "a resume checks the resource and the operation, not only the approval",
+        "file": "scripts/apply.py",
+        "mutate": ("            if mismatched:", "            if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_receipt_that_names_a_different_resource_is_not_a_resume"],
+    },
+    {
+        "name": "a resumed resource must be in the state its receipt recorded",
+        "file": "scripts/apply.py",
+        "mutate": ('if digest(still_there, volatile="allow") != prior["afterStateDigest"]:', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_a_resource_that_drifted_since_its_receipt_is_refused"],
+    },
+    {
+        "name": "the ledger is written 0600",
+        "file": "scripts/apply.py",
+        "mutate": ("os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600", "os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644"),
+        "killed_by": ["tests/test_slice3_apply.py::test_the_ledger_is_not_world_readable"],
+    },
 ]
 
 
