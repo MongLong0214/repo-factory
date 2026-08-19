@@ -51,8 +51,7 @@ def whole_chain() -> dict:
                             operation_id="11111111-2222-3333-4444-555555555555")
     with tempfile.TemporaryDirectory() as scratch:
         applied = apply_plan(compiled["planCore"], FakeGitHub(),
-                             ReceiptLedger(Path(scratch) / "receipts.json"),
-                             clock="2026-08-19T09:05:00Z")
+                             ReceiptLedger(Path(scratch) / "receipts.json"))
     return build_result(
         run_id=REQUEST["runId"], plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
         repositories=[{"role": "primary", "identity": IDENTITY,

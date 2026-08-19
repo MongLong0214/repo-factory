@@ -188,3 +188,49 @@ def test_a_receipt_for_a_resource_that_no_longer_exists_is_not_a_resume(tmp_path
 
     assert caught.value.code == RESUMED_RESOURCE_ABSENT
     assert vanished.creates == [], "a disagreement between ledger and remote is not fixed by writing"
+
+
+def test_the_receipt_states_when_each_observation_happened(tmp_path):
+    # One value in both fields lets a receipt claim a re-read at a moment the re-read had not
+    # happened. §16.2 asks for the fact of a re-read; the receipt has to say when it was.
+    ticks = iter(["2026-08-19T00:00:01Z", "2026-08-19T00:00:02Z"])
+    port = FakeGitHub()
+
+    result = apply_plan(plan("alpha"), port, ledger(tmp_path), clock=lambda: next(ticks))
+    receipt = result["receipts"][0]
+
+    assert receipt["createdAt"] == "2026-08-19T00:00:01Z"
+    assert receipt["rereadAt"] == "2026-08-19T00:00:02Z"
+    assert receipt["createdAt"] < receipt["rereadAt"]
+
+
+def test_a_default_clock_still_produces_a_usable_receipt(tmp_path):
+    result = apply_plan(plan("alpha"), FakeGitHub(), ledger(tmp_path))
+    receipt = result["receipts"][0]
+
+    assert receipt["createdAt"].endswith("Z") and receipt["rereadAt"].endswith("Z")
+    assert receipt["createdAt"] <= receipt["rereadAt"]
+
+
+def test_a_ledger_write_that_dies_leaves_the_previous_one_readable(tmp_path, monkeypatch):
+    # Checking a successful write proves nothing: an in-place write also finishes cleanly when
+    # nothing goes wrong. The property only exists in the failure — a write that dies mid-flight
+    # must not leave truncated JSON, because the next run then cannot read the ledger at all and
+    # the file kept to protect the resume point becomes what blocks it.
+    import apply as apply_module
+    import json as _json
+
+    book = ledger(tmp_path)
+    apply_plan(plan("alpha"), FakeGitHub(), book)
+    intact = book.path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(apply_module.os, "replace",
+                        lambda *_: (_ for _ in ()).throw(OSError("crash during publish")))
+    # alpha is already there, so the resume check passes and beta is the operation whose
+    # receipt write dies.
+    resumed = FakeGitHub(existing={"github:MongLong0214/alpha": {"identity": "ours"}})
+    with pytest.raises(OSError):
+        apply_plan(plan("alpha", "beta"), resumed, ReceiptLedger(book.path))
+
+    assert book.path.read_text(encoding="utf-8") == intact, "the previous ledger was damaged"
+    assert len(_json.loads(book.path.read_text(encoding="utf-8"))) == 1

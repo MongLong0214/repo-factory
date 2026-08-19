@@ -151,7 +151,7 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
                             ci_values=CI_VALUES, operation_id="11111111-2222-3333-4444-555555555555")
     with tempfile.TemporaryDirectory() as scratch:
         applied = apply_plan(compiled["planCore"], FakeGitHub(),
-                             ReceiptLedger(Path(scratch) / "r.json"), clock="2026-08-19T09:05:00Z")
+                             ReceiptLedger(Path(scratch) / "r.json"))
     identity = "github:MongLong0214/ledger"
     result = build_result(
         run_id="contract", plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
