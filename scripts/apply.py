@@ -34,6 +34,7 @@ __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
     "UNKNOWN_PHASE", "UNSUPPORTED_INTENT", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
+    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED",
     "PHASES",
     "PUBLISH_OPERATION",
 ]
@@ -49,6 +50,8 @@ REREAD_MISMATCH = "REREAD_MISMATCH"
 # outside the plan, and unreachable now that the only effect an operation can have is the one
 # written inside it. A refusal no input can reach is not protection; it is an answer of "yes"
 # to "is this checked?".
+LEDGER_CORRUPT = "LEDGER_CORRUPT"
+RESUMED_RESOURCE_DRIFTED = "RESUMED_RESOURCE_DRIFTED"
 PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
 UNSUPPORTED_INTENT = "UNSUPPORTED_INTENT"
 UNKNOWN_PHASE = "UNKNOWN_PHASE"
@@ -82,11 +85,27 @@ class GitHubPort(Protocol):
 class ReceiptLedger:
     """검증된 영수증만 담는 durable 원장. 재개는 이 파일에서만 읽는다."""
 
+    REQUIRED_FIELDS = ("bootstrapOperationId", "requestDigest", "operationId", "resourceType",
+                       "resourceIdentity", "afterStateDigest", "createdAt", "rereadAt", "verified")
+
     def __init__(self, path: Path):
         self.path = path
         self._rows: Dict[str, Dict[str, Any]] = {}
         if path.is_file():
             for row in json.loads(path.read_text(encoding="utf-8")):
+                # 중복은 마지막 행이 이기는 게 아니라 거부다. 이기게 두면 같은 operationId 로
+                # 다른 resource 를 가리키는 행을 덧붙이는 것만으로 재개가 다른 것을 재개한다.
+                if row.get("operationId") in self._rows:
+                    raise ApplyError(LEDGER_CORRUPT,
+                                     f"the ledger has two rows for {row.get('operationId')!r}; "
+                                     f"a resume cannot tell which one it is resuming",
+                                     [], {"operationId": row.get("operationId")})
+                missing = [field for field in self.REQUIRED_FIELDS if field not in row]
+                if missing:
+                    raise ApplyError(LEDGER_CORRUPT,
+                                     f"a ledger row is missing {missing}; a receipt that does not "
+                                     f"say what it verified cannot be read as proof that it did",
+                                     [], {"operationId": row.get("operationId"), "missing": missing})
                 self._rows[row["operationId"]] = row
 
     def get(self, operation_id: str) -> Optional[Dict[str, Any]]:
@@ -101,11 +120,22 @@ class ReceiptLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(list(self._rows.values()), ensure_ascii=False, indent=2)
         scratch = self.path.with_name(self.path.name + ".partial")
-        with open(scratch, "w", encoding="utf-8") as handle:
+        # 0600 으로 연다. 원장은 어떤 계정에 무엇을 만들었는지의 기록이고, 그것을 world-readable
+        # 로 두는 것은 이 파일이 답하는 질문에 어울리지 않는다.
+        fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(scratch, self.path)
+        # 디렉토리도 fsync 한다. `os.replace` 는 이름 바꾸기고, 그 이름이 디스크에 닿았는지는
+        # 디렉토리 엔트리가 flush 됐는지의 문제다 — 파일 내용만 fsync 하면 크래시 뒤에
+        # 내용은 있는데 그 이름으로는 없는 상태가 가능하다.
+        directory = os.open(str(self.path.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def all(self) -> List[Dict[str, Any]]:
         return list(self._rows.values())
@@ -248,9 +278,26 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         operation_id = operation["operationId"]
         prior = ledger.get(operation_id)
         if prior is not None:
-            if prior["requestDigest"] != plan["requestDigest"]:
+            # 영수증이 이 Operation 의 것인지를 네 가지로 본다. `requestDigest` 만 보면
+            # 같은 승인 아래의 **다른** Operation 영수증이 이 자리를 채울 수 있다.
+            mismatched = [
+                field for field, expected in (
+                    ("requestDigest", plan["requestDigest"]),
+                    ("bootstrapOperationId", plan["bootstrapOperationId"]),
+                    ("resourceType", operation["resourceType"]),
+                    ("resourceIdentity", operation["resourceIdentity"]),
+                )
+                if prior.get(field) != expected
+            ]
+            if mismatched:
                 raise ApplyError(PLAN_INTENT_CHANGED,
-                                 f"{operation_id} was applied under a different approved intent",
+                                 f"{operation_id} has a receipt that disagrees with the plan on "
+                                 f"{mismatched}",
+                                 applied, {"operationId": operation_id, "fields": mismatched})
+            if not prior.get("verified") or not prior.get("rereadAt"):
+                raise ApplyError(PLAN_INTENT_CHANGED,
+                                 f"{operation_id} has a receipt that never claimed a verified "
+                                 f"post-write re-read",
                                  applied, {"operationId": operation_id})
             # §16.3 은 같은 **Resource** 도 요구한다. 영수증은 과거에 썼다는 증거이지
             # 지금 있다는 증거가 아니다 — 그 사이 지워졌을 수 있고, 다시 읽지 않으면
@@ -260,6 +307,13 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                 raise ApplyError(RESUMED_RESOURCE_ABSENT,
                                  f"{operation['resourceIdentity']} has a verified receipt but is "
                                  f"absent from the remote; the ledger and the world disagree",
+                                 applied, {"operationId": operation_id})
+            # 있다는 것과 그때 그대로라는 것은 다르다. 그 사이 누가 ruleset 을 `disabled` 로
+            # 바꿔놨어도 존재 검사만으로는 재개가 통과한다.
+            if digest(still_there, volatile="allow") != prior["afterStateDigest"]:
+                raise ApplyError(RESUMED_RESOURCE_DRIFTED,
+                                 f"{operation['resourceIdentity']} is present but no longer in the "
+                                 f"state its receipt recorded",
                                  applied, {"operationId": operation_id})
             applied.append(prior)
             continue

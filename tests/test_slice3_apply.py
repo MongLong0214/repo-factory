@@ -1,6 +1,7 @@
 """Slice 3 — external writes: provenance, re-read, and honest partial state (PRD §16)."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,8 +12,8 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
-    RESUMED_RESOURCE_ABSENT, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
+    LEDGER_CORRUPT, PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
+    RESUMED_RESOURCE_ABSENT, RESUMED_RESOURCE_DRIFTED, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
     ApplyError, ReceiptLedger, apply_plan,
 )
 
@@ -183,7 +184,9 @@ def test_resume_after_a_partial_apply_starts_from_the_verified_receipt(tmp_path)
         apply_plan(plan("alpha", "beta"), blocked, book)
 
     # The collision is resolved out of band; the same plan is run again against a fresh process.
-    cleared = FakeGitHub(existing={"github:MongLong0214/alpha": {"identity": "ours from round one"}})
+    # `alpha` is carried across exactly as round one left it — a stand-in that merely has the same
+    # identity is a different resource, and a resume that accepts it is resuming something else.
+    cleared = FakeGitHub(existing={"github:MongLong0214/alpha": blocked.state["github:MongLong0214/alpha"]})
     result = apply_plan(plan("alpha", "beta"), cleared, ReceiptLedger(book.path))
 
     assert result["completed"] is True
@@ -258,14 +261,15 @@ def test_a_ledger_write_that_dies_leaves_the_previous_one_readable(tmp_path, mon
     import json as _json
 
     book = ledger(tmp_path)
-    apply_plan(plan("alpha"), FakeGitHub(), book)
+    first = FakeGitHub()
+    apply_plan(plan("alpha"), first, book)
     intact = book.path.read_text(encoding="utf-8")
 
     monkeypatch.setattr(apply_module.os, "replace",
                         lambda *_: (_ for _ in ()).throw(OSError("crash during publish")))
-    # alpha is already there, so the resume check passes and beta is the operation whose
-    # receipt write dies.
-    resumed = FakeGitHub(existing={"github:MongLong0214/alpha": {"identity": "ours"}})
+    # alpha is carried across exactly as it was left, so its resume check passes and beta is the
+    # operation whose receipt write dies.
+    resumed = FakeGitHub(existing={"github:MongLong0214/alpha": first.state["github:MongLong0214/alpha"]})
     with pytest.raises(OSError):
         apply_plan(plan("alpha", "beta"), resumed, ReceiptLedger(book.path))
 
@@ -303,7 +307,8 @@ def genesis_receipt(name: str) -> Dict[str, Any]:
     return {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
             "requestDigest": "sha256:" + "a" * 64,
             "operationId": f"publish:{identity}", "resourceType": "genesis-commit",
-            "resourceIdentity": identity, "createdAt": "2026-08-19T10:00:00Z",
+            "resourceIdentity": identity, "preexisting": False, "beforeStateDigest": None,
+            "afterStateDigest": "sha256:" + "e" * 64, "createdAt": "2026-08-19T10:00:00Z",
             "rereadAt": "2026-08-19T10:00:00Z", "verified": True}
 
 
@@ -417,3 +422,88 @@ def test_an_intent_this_applier_does_not_perform_is_refused(tmp_path):
         apply_plan(core, SettingGitHub(), ledger(tmp_path))
 
     assert caught.value.code == UNSUPPORTED_INTENT
+
+
+# --- the ledger is read as strictly as it is written -------------------------------------
+
+def write_ledger(path: Path, rows: List[Dict[str, Any]]) -> Path:
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    return path
+
+
+def valid_row(name: str = "alpha", **overrides) -> Dict[str, Any]:
+    row = {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
+           "requestDigest": "sha256:" + "a" * 64,
+           "operationId": f"create-repository:{name}", "resourceType": "repository",
+           "resourceIdentity": f"github:MongLong0214/{name}", "preexisting": False,
+           "beforeStateDigest": None, "afterStateDigest": "sha256:" + "d" * 64,
+           "createdAt": "2026-08-19T10:00:00Z", "rereadAt": "2026-08-19T10:00:00Z",
+           "verified": True}
+    row.update(overrides)
+    return row
+
+
+def test_two_rows_for_one_operation_are_refused_rather_than_last_one_winning(tmp_path):
+    # Last-one-wins means appending a row that names a different resource under the same
+    # operation id is enough to make a resume resume something else.
+    path = write_ledger(tmp_path / "receipts.json",
+                        [valid_row(), valid_row(resourceIdentity="github:MongLong0214/elsewhere")])
+
+    with pytest.raises(ApplyError) as caught:
+        ReceiptLedger(path)
+
+    assert caught.value.code == LEDGER_CORRUPT
+
+
+def test_a_row_that_never_says_what_it_verified_is_refused(tmp_path):
+    incomplete = valid_row()
+    del incomplete["afterStateDigest"]
+    path = write_ledger(tmp_path / "receipts.json", [incomplete])
+
+    with pytest.raises(ApplyError) as caught:
+        ReceiptLedger(path)
+
+    assert caught.value.code == LEDGER_CORRUPT
+
+
+def test_a_receipt_that_names_a_different_resource_is_not_a_resume(tmp_path):
+    # `requestDigest` alone let a receipt from another operation under the same approval fill
+    # this slot. Four fields have to agree, not one.
+    path = write_ledger(tmp_path / "receipts.json",
+                        [valid_row(resourceIdentity="github:MongLong0214/somewhere-else")])
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path))
+
+    assert caught.value.code == PLAN_INTENT_CHANGED
+    assert "resourceIdentity" in caught.value.evidence["fields"]
+
+
+def test_a_receipt_that_never_claimed_a_verified_reread_is_not_a_resume(tmp_path):
+    path = write_ledger(tmp_path / "receipts.json", [valid_row(verified=False)])
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), FakeGitHub(), ReceiptLedger(path))
+
+    assert caught.value.code == PLAN_INTENT_CHANGED
+
+
+def test_a_resource_that_drifted_since_its_receipt_is_refused(tmp_path):
+    # Present is not unchanged. Someone flipping a ruleset to `disabled` between runs leaves it
+    # present, and an existence check resumes straight past that.
+    book = ledger(tmp_path)
+    port = FakeGitHub()
+    apply_plan(plan("alpha"), port, book)
+    port.state["github:MongLong0214/alpha"]["private"] = False
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan("alpha"), port, ReceiptLedger(book.path))
+
+    assert caught.value.code == RESUMED_RESOURCE_DRIFTED
+
+
+def test_the_ledger_is_not_world_readable(tmp_path):
+    book = ledger(tmp_path)
+    apply_plan(plan("alpha"), FakeGitHub(), book)
+
+    assert book.path.stat().st_mode & 0o077 == 0, "the ledger records what was created where"
