@@ -26,8 +26,19 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
+      # The project is not installed. It is a skill: scripts/ is executed and tests/ import it
+      # by path, so there is no package for setuptools to discover and `pip install -e .` fails
+      # on the flat layout. pyproject.toml stays the one place the versions are declared, and
+      # this reads them from it rather than repeating them here.
       - name: install python dependencies
-        run: python -m pip install --disable-pip-version-check -e ".[test]"
+        run: |
+          python - <<'PY' > /tmp/test-requirements.txt
+          import tomllib
+          with open("pyproject.toml", "rb") as handle:
+              print("\n".join(tomllib.load(handle)["project"]["optional-dependencies"]["test"]))
+          PY
+          cat /tmp/test-requirements.txt
+          python -m pip install --disable-pip-version-check -r /tmp/test-requirements.txt
 
       - name: read the pinned control-plane commit
         id: pin
