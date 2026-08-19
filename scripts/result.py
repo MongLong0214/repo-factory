@@ -103,6 +103,27 @@ def build_result(
         raise ResultError(
             "the verification commands handed to the result are not the ones the plan approved"
         )
+    # 기본 브랜치는 Plan 이 정하고 원격이 확인해준 값이다. 호출자가 준 값을 그대로 실으면
+    # 원격이 `main` 인데 `dev` 라고 주장하는 Result 가 나오고, 받는 쪽은 그것을 구별할 수 없다.
+    branch_operations = {
+        op["resourceIdentity"].split("#", 1)[0]: op
+        for op in plan.get("githubOperations", [])
+        if op["resourceType"] == "setting" and op["resourceIdentity"].endswith("#default-branch")
+    }
+    for repository in repositories:
+        operation = branch_operations.get(repository["identity"])
+        if operation is None:
+            raise ResultError(
+                f"{repository['identity']} states a default branch that no approved operation set; "
+                "an unmanaged setting cannot be reported as a verified one"
+            )
+        approved = operation["desiredState"]["defaultBranch"]
+        if repository["defaultBranch"] != approved:
+            raise ResultError(
+                f"{repository['identity']} reports default branch {repository['defaultBranch']!r} "
+                f"and the approved, re-read operation set {approved!r}"
+            )
+
     required_commands = {c["id"] for c in verification_commands if c.get("required")}
     ran = {v["commandId"] for v in bootstrap_verification}
     unrun = sorted(required_commands - ran)

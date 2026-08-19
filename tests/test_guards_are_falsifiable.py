@@ -69,13 +69,14 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "the ruleset is planned after the files exist",
         "file": "scripts/plan.py",
-        "mutate": ('"phase": "after-files",', '"phase": "before-files",'),
+        "mutate": ('"phase": "after-files",\n             "desiredState": ruleset_desired_state()}',
+                   '"phase": "before-files",\n             "desiredState": ruleset_desired_state()}'),
         "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_is_planned_after_the_files_and_the_repository_before_them"],
     },
     {
         "name": "a same-named resource with no receipt is a collision, not a resume",
         "file": "scripts/apply.py",
-        "mutate": ("        if observed is not None:", "        if False:"),
+        "mutate": ('        if intent == "create" and observed is not None:', "        if False:"),
         "killed_by": ["tests/test_slice3_apply.py::test_an_unrelated_resource_of_the_same_name_is_a_collision_and_changes_nothing"],
     },
     {
@@ -240,6 +241,32 @@ GUARDS: List[Dict[str, object]] = [
         "file": "scripts/apply.py",
         "mutate": ("        if unpublished:", "        if False:"),
         "killed_by": ["tests/test_slice3_apply.py::test_the_later_phase_refuses_until_the_genesis_commit_is_published"],
+    },
+    {
+        "name": "an update is refused when the resource it would change is absent",
+        "file": "scripts/apply.py",
+        "mutate": ('if intent == "update" and observed is None:', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_an_update_against_something_absent_is_refused_rather_than_creating_it"],
+    },
+    {
+        "name": "an intent this applier does not perform is refused",
+        "file": "scripts/apply.py",
+        "mutate": ('if intent not in ("create", "update"):', "if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_an_intent_this_applier_does_not_perform_is_refused"],
+    },
+    {
+        "name": "the reported default branch is the one the plan set and the remote confirmed",
+        "file": "scripts/result.py",
+        "mutate": ('if repository["defaultBranch"] != approved:', "if False:"),
+        "killed_by": ["tests/test_slice4_result.py::test_a_default_branch_the_plan_never_set_refuses_the_result"],
+    },
+    {
+        "name": "the default branch is an approved operation, not a caller-supplied fact",
+        "file": "scripts/plan.py",
+        "mutate": ('"phase": "after-files", "desiredState": {"defaultBranch": DEFAULT_BRANCH}}',
+                   '"phase": "after-files", "desiredState": {"defaultBranch": "main"}}'),
+        "killed_by": ["tests/test_slice4_result.py::test_a_default_branch_the_plan_never_set_refuses_the_result",
+                      "tests/test_slice1_plan.py"],
     },
 ]
 

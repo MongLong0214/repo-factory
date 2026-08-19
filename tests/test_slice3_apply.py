@@ -11,7 +11,8 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION, UNKNOWN_PHASE,
+    PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
+    RESUMED_RESOURCE_ABSENT, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
     ApplyError, ReceiptLedger, apply_plan,
 )
 
@@ -350,3 +351,69 @@ def test_a_phase_the_plan_does_not_have_is_refused_rather_than_reported_complete
         apply_plan(phased_plan("alpha"), FakeGitHub(), ledger(tmp_path), phase="after-file")
 
     assert caught.value.code == UNKNOWN_PHASE
+
+
+# --- an update changes something that is there ------------------------------------------
+
+def setting_plan(name: str) -> Dict[str, Any]:
+    core = plan(name)
+    core["githubOperations"] = [
+        {"operationId": f"set-default-branch:{name}", "resourceType": "setting", "intent": "update",
+         "resourceIdentity": f"github:MongLong0214/{name}#default-branch",
+         "desiredState": {"defaultBranch": "dev"}},
+    ]
+    return core
+
+
+class SettingGitHub(FakeGitHub):
+    def __init__(self, present: bool = True, honours: bool = True):
+        super().__init__()
+        self.present = present
+        self.honours = honours
+        self.default = "main"
+
+    def observe(self, resource_type, identity):
+        if not self.present:
+            return None
+        return {"identity": identity, "resourceType": "setting", "defaultBranch": self.default}
+
+    def update(self, resource_type, identity, spec):
+        self.creates.append(identity)
+        if self.honours:
+            self.default = spec["defaultBranch"]
+
+
+def test_an_update_changes_the_resource_and_is_re_read_against_the_approved_state(tmp_path):
+    port = SettingGitHub()
+
+    result = apply_plan(setting_plan("alpha"), port, ledger(tmp_path))
+
+    assert port.default == "dev"
+    assert result["receipts"][0]["preexisting"] is True
+    assert result["receipts"][0]["beforeStateDigest"] is not None
+
+
+def test_an_update_against_something_absent_is_refused_rather_than_creating_it(tmp_path):
+    # An update is approval to change a thing, not approval to bring it into existence — those
+    # are different decisions and only one of them was made.
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(setting_plan("alpha"), SettingGitHub(present=False), ledger(tmp_path))
+
+    assert caught.value.code == RESUMED_RESOURCE_ABSENT
+
+
+def test_an_update_the_remote_ignored_is_refused(tmp_path):
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(setting_plan("alpha"), SettingGitHub(honours=False), ledger(tmp_path))
+
+    assert caught.value.code == REREAD_MISMATCH
+
+
+def test_an_intent_this_applier_does_not_perform_is_refused(tmp_path):
+    core = setting_plan("alpha")
+    core["githubOperations"][0]["intent"] = "delete"
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, SettingGitHub(), ledger(tmp_path))
+
+    assert caught.value.code == UNSUPPORTED_INTENT

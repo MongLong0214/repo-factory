@@ -141,8 +141,15 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
     class FakeGitHub:
         def __init__(self):
             self.state = {}
+            self.defaults = {}
 
-        def observe(self, _t, identity):
+        def observe(self, resource_type, identity):
+            if resource_type == "setting" and identity.endswith("#default-branch"):
+                repository = identity.split("#", 1)[0]
+                if repository not in self.state:
+                    return None
+                return {"identity": identity, "resourceType": "setting",
+                        "defaultBranch": self.defaults.get(repository, "main")}
             return self.state.get(identity)
 
         def create(self, _t, identity, spec):
@@ -150,6 +157,12 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
             # cannot represent the thing it claims to have made, and the post-write re-read then
             # compares the approved state against a stub that could never disagree with it.
             self.state[identity] = {"identity": identity, **spec}
+
+        def update(self, resource_type, identity, spec):
+            if resource_type == "setting" and identity.endswith("#default-branch"):
+                self.defaults[identity.split("#", 1)[0]] = spec["defaultBranch"]
+                return
+            raise AssertionError(f"no update is implemented for {resource_type}")
 
     compiled = compile_plan(request_for("STANDARD", "ledger"), VER, stack="node",
                             ci_values=CI_VALUES, operation_id="11111111-2222-3333-4444-555555555555")

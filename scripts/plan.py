@@ -53,6 +53,9 @@ RULESET_REFS: Tuple[str, ...] = ("refs/heads/main", "refs/heads/dev")
 # 나르는 바로 그 푸시가 거부된다.
 RULESET_REQUIRED_CHECK = "project-ci"
 
+# 통합 지점이 기본 브랜치다. `main` 은 릴리스 이력이고 일상 작업은 `dev` 로 간다.
+DEFAULT_BRANCH = "dev"
+
 
 def ruleset_desired_state() -> Dict[str, Any]:
     """승인이 승인하는 것은 이름이 아니라 이 몸통이다.
@@ -342,6 +345,16 @@ def compile_plan(
             #
             # 파일 뒤에 만든다. project-ci 를 요구하는 ruleset 이 그 워크플로를 실어 나르는
             # 커밋보다 먼저 존재하면, 저장소에 내용을 넣는 바로 그 푸시를 거부한다.
+            # 기본 브랜치도 외부 쓰기다. push 순서로만 다루면 원격이 실제로 무엇인지 아무도
+            # 다시 읽지 않고, Result 는 호출자가 준 값을 그대로 싣는다 — 원격이 `main` 인데
+            # `dev` 라고 주장하는 Result 가 그렇게 나온다.
+            #
+            # 파일 뒤다. `dev` 가 원격에 없으면 바꿀 대상이 없다.
+            {"operationId": f"set-default-branch:{r['name']}", "resourceType": "setting",
+             "intent": "update", "resourceIdentity": f"github:{owner}/{r['name']}#default-branch",
+             "phase": "after-files", "desiredState": {"defaultBranch": DEFAULT_BRANCH}}
+            for r in request["repositories"]
+        ] + [
             {"operationId": f"create-ruleset:{r['name']}", "resourceType": "ruleset",
              "intent": "create", "resourceIdentity": f"github:{owner}/{r['name']}#{RULESET_NAME}",
              "phase": "after-files",
