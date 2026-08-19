@@ -108,3 +108,52 @@ def publish_files(
         raise PublishError(f"could not read the published head: {err.strip()[:200]}")
     return {"head": out.strip(), "branches": [release_branch, default_branch],
             "committedPaths": sorted(committed)}
+
+
+def main(argv: List[str] = None) -> int:
+    """계획된 바이트를 빈 저장소에 올린다.
+
+    파일 집합은 Plan 에서 온다. 명령줄로 따로 주게 하면 승인된 Plan 이 무엇을 올릴지
+    결정하지 못하고, 그 자리가 정확히 `specs` 가 effect 에 대해 했던 일이다."""
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(description="Push an approved plan's file set as the genesis commit.")
+    parser.add_argument("--plan", required=True, type=Path, help="compiler output carrying `files`")
+    parser.add_argument("--workdir", required=True, type=Path, help="empty scratch directory to build the commit in")
+    parser.add_argument("--remote-url", required=True, help="the created repository's git URL")
+    parser.add_argument("--author-name", required=True)
+    parser.add_argument("--author-email", required=True)
+    parser.add_argument("--message", default="genesis: repository contract and verification",
+                        help="the genesis commit subject; no session identifier is added (PRD §4.6)")
+    parser.add_argument("--default-branch", default="dev")
+    parser.add_argument("--release-branch", default="main")
+    args = parser.parse_args(argv)
+
+    document = json.loads(args.plan.read_text(encoding="utf-8"))
+    files = document.get("files")
+    if not isinstance(files, dict) or not files:
+        print(json.dumps({"error": "the plan document carries no `files` map to publish"},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
+    try:
+        heads = publish_files(
+            files,
+            workdir=args.workdir,
+            remote_url=args.remote_url,
+            author_name=args.author_name,
+            author_email=args.author_email,
+            message=args.message,
+            default_branch=args.default_branch,
+            release_branch=args.release_branch,
+        )
+    except PublishError as error:
+        print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        return 1
+    print(json.dumps(heads, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

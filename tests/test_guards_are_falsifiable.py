@@ -24,7 +24,11 @@ from typing import Dict, List
 import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
-COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "pyproject.toml")
+# The published documents are copied too. `SKILL.md` decides what the skill actually executes,
+# so it is part of the guarded surface — a row against a file the copy does not carry would
+# apply its mutation to nothing.
+COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "templates",
+          "pyproject.toml", "SKILL.md", "README.md")
 
 # name, file, (find, replace), tests that must fail once the guard is gone.
 GUARDS: List[Dict[str, object]] = [
@@ -174,6 +178,20 @@ GUARDS: List[Dict[str, object]] = [
         "file": "scripts/plan.py",
         "mutate": ('"desiredState": ruleset_desired_state()}', '"desiredState": {}}'),
         "killed_by": ["tests/test_slice1_plan.py::test_the_ruleset_body_is_in_the_plan_and_not_only_its_name"],
+    },
+    {
+        "name": "no command block tells a reader to run the retired product",
+        "file": "SKILL.md",
+        "mutate": ("python3 scripts/result.py --input result-input.json",
+                   "python3 scripts/phase-gate.py 4 --tier L"),
+        "killed_by": ["tests/test_published_surface.py"],
+    },
+    {
+        "name": "every pipeline stage is runnable from the command line",
+        "file": "scripts/apply.py",
+        "mutate": ('if __name__ == "__main__":\n    raise SystemExit(main())',
+                   "# the entrypoint used to live here"),
+        "killed_by": ["tests/test_pipeline_cli.py"],
     },
 ]
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
@@ -264,3 +265,47 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         applied.append(receipt)
 
     return {"receipts": applied, "completed": len(applied) == len(staged), "phase": phase}
+
+
+def _plan_core(document: Dict[str, Any]) -> Dict[str, Any]:
+    """컴파일러 출력 전체를 받든 planCore 만 받든 같은 것을 가리키게 한다."""
+    return document["planCore"] if "planCore" in document else document
+
+
+def main(argv: List[str] = None) -> int:
+    """단계 하나를 실행하고 영수증 원장을 남긴다.
+
+    `apply` 와 `publish` 가 라이브러리 전용으로 남아 있는 동안, 공개된 성공 경로는
+    파이썬 호출뿐이었다 — 문서가 설명하는 파이프라인의 가운데를 명령으로는 돌릴 수
+    없었다."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Apply one phase of an approved plan's external writes.")
+    parser.add_argument("--plan", required=True, type=Path, help="compiler output, or a plan core")
+    parser.add_argument("--ledger", required=True, type=Path, help="receipt ledger path; reused on resume")
+    parser.add_argument("--phase", default="before-files", choices=["before-files", "after-files"])
+    parser.add_argument("--gh", default="gh", help="the gh executable to invoke")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the operations this phase would perform and write nothing")
+    args = parser.parse_args(argv)
+
+    plan = _plan_core(json.loads(args.plan.read_text(encoding="utf-8")))
+    staged = [op for op in plan["githubOperations"] if op.get("phase", "before-files") == args.phase]
+    if args.dry_run:
+        print(json.dumps({"phase": args.phase, "wouldApply": staged}, ensure_ascii=False, indent=2))
+        return 0
+
+    from github_port import GhCliPort  # 지연 import — dry-run 은 gh 를 요구하지 않는다
+
+    try:
+        outcome = apply_plan(plan, GhCliPort(gh=args.gh), ReceiptLedger(args.ledger), phase=args.phase)
+    except ApplyError as error:
+        print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence,
+                          "receipts": error.receipts}, ensure_ascii=False), file=sys.stderr)
+        return 1
+    print(json.dumps(outcome, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
