@@ -16,6 +16,7 @@ Plan 과 Observation 을 나누는 이유는 한 문장이다 — 관측이 dige
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import uuid
@@ -24,12 +25,15 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
+from materialize import materialize  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 PROFILES = SKILL / "profiles"
 SCHEMAS = SKILL / "schemas"
 
-MANIFEST_PATH = ".agent-control-plane/project.json"
+def content_digest(text: str) -> str:
+    """파일은 구조가 아니라 바이트다. 정규화 없이 그대로 센다."""
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 # §9.2 를 그대로 옮긴 것. Parent 는 선언되며, 제어평면의 GitHub kernel 이 PR 생성과
 # merge 에서 그 선언을 검증한다. 여기서 추론하면 검증할 대상이 사라진다.
@@ -132,6 +136,8 @@ def compile_plan(
     *,
     requested_optional: List[str] = None,
     operation_id: str = None,
+    stack: str = None,
+    ci_values: Dict[str, str] = None,
 ) -> Dict[str, Any]:
     profile = load_profile(request["bootstrapProfile"])
     artifacts = selected_artifacts(profile, requested_optional or [])
@@ -139,6 +145,14 @@ def compile_plan(
     manifest = project_manifest(request, verification_commands)
     manifest_digest = digest(manifest)
     verification_digest = digest(verification_commands)
+
+    # 렌더링은 Plan 시점이다. Apply 가 렌더하면 Plan 의 contentDigest 는 아직 존재하지
+    # 않는 바이트를 가리키고, 승인은 무엇을 승인했는지 말할 수 없게 된다.
+    files = materialize(manifest, seed=request["seed"], stack=stack, ci_values=ci_values)
+    gaps: List[str] = []
+    if stack is None:
+        # §14.1 — 모르는 스택을 Node 로 조용히 대체하지 않는다. 못 만든 것은 못 만들었다고 적는다.
+        gaps.append("stack-specific CI was not rendered: no stack was resolved for this request")
 
     core = {
         "schema": "repo-factory.bootstrap-plan.v2",
@@ -154,8 +168,9 @@ def compile_plan(
             for r in request["repositories"]
         ],
         "files": [
-            {"repositoryRole": "primary", "path": MANIFEST_PATH,
-             "contentDigest": manifest_digest, "mode": "100644"}
+            {"repositoryRole": "primary", "path": path,
+             "contentDigest": content_digest(files[path]), "mode": "100644"}
+            for path in sorted(files)
         ],
         "githubOperations": [
             {"operationId": f"create-repository:{r['name']}", "resourceType": "repository",
@@ -166,7 +181,8 @@ def compile_plan(
         "verificationContractDigest": verification_digest,
         "projectManifestDigest": manifest_digest,
     }
-    return {"planCore": core, "artifacts": artifacts, "humanGate": gate, "projectManifest": manifest}
+    return {"planCore": core, "artifacts": artifacts, "humanGate": gate,
+            "projectManifest": manifest, "files": files, "unresolvedGaps": gaps}
 
 
 def diff_summary(compiled: Dict[str, Any]) -> Dict[str, Any]:
