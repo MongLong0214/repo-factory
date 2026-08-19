@@ -44,14 +44,35 @@ def publish_files(
     release_branch: str = "main",
     runner=_run,
 ) -> Dict[str, str]:
-    """빈 저장소에 첫 커밋을 올리고 두 장수 브랜치를 세운다. 커밋 SHA 를 돌려준다."""
+    """빈 저장소에 첫 커밋을 올리고 두 장수 브랜치를 세운다. 커밋 SHA 를 돌려준다.
+
+    workdir 은 비어 있어야 한다. `git add -A` 는 거기 있는 것을 전부 담으므로, 남아 있던
+    파일 하나가 genesis 커밋에 섞이면 Plan 의 contentDigest 집합이 실제로 착지한 바이트를
+    더 이상 가리키지 않는다 — Plan 이 "무엇을 만들 것인가" 의 진술이 아니게 된다."""
+    if workdir.exists() and any(workdir.iterdir()):
+        raise PublishError(
+            f"publish target is not empty: {workdir}. The genesis commit must contain the planned "
+            "set and nothing else, and `git add -A` cannot tell the difference."
+        )
     workdir.mkdir(parents=True, exist_ok=True)
     for path, content in sorted(files.items()):
         target = workdir / path
+        resolved = target.resolve()
+        # 계획된 경로는 저장소 안에만 쓴다. `..` 은 plan 스키마가 이미 거부하지만, 쓰는
+        # 쪽에서도 확인한다 — 계획을 만든 코드와 쓰는 코드가 같은 가정을 공유하면
+        # 그 가정이 틀렸을 때 아무도 안 막는다.
+        if not str(resolved).startswith(str(workdir.resolve()) + "/"):
+            raise PublishError(f"planned path escapes the publish target: {path}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
-    steps: List[List[str]] = [
+    def run_all(steps: List[List[str]]) -> None:
+        for argv in steps:
+            code, _, err = runner(argv, workdir)
+            if code != 0:
+                raise PublishError(f"{' '.join(argv[:3])} failed ({code}): {err.strip()[:300]}")
+
+    run_all([
         ["git", "init", "-q", "-b", release_branch],
         ["git", "config", "user.name", author_name],
         ["git", "config", "user.email", author_email],
@@ -60,17 +81,30 @@ def publish_files(
         ["git", "config", "commit.gpgsign", "false"],
         ["git", "add", "-A"],
         ["git", "commit", "-q", "--no-verify", "-m", message],
+    ])
+
+    # 푸시 **전에** 확인한다. 뒤에 두면 이미 올라간 것을 두고 "달랐다" 고 말하게 되고,
+    # 그 시점의 원격은 계획되지 않은 바이트를 이미 담고 있다.
+    code, out, err = runner(["git", "ls-files"], workdir)
+    if code != 0:
+        raise PublishError(f"could not list the committed set: {err.strip()[:200]}")
+    committed = {line for line in out.splitlines() if line.strip()}
+    planned = set(files)
+    if committed != planned:
+        raise PublishError(
+            f"the genesis commit is not the planned set: "
+            f"unplanned={sorted(committed - planned)} missing={sorted(planned - committed)}"
+        )
+
+    run_all([
         ["git", "branch", default_branch],
         ["git", "remote", "add", "origin", remote_url],
         ["git", "push", "-q", "origin", release_branch],
         ["git", "push", "-q", "origin", default_branch],
-    ]
-    for argv in steps:
-        code, _, err = runner(argv, workdir)
-        if code != 0:
-            raise PublishError(f"{' '.join(argv[:3])} failed ({code}): {err.strip()[:300]}")
+    ])
 
     code, out, err = runner(["git", "rev-parse", "HEAD"], workdir)
     if code != 0:
         raise PublishError(f"could not read the published head: {err.strip()[:200]}")
-    return {"head": out.strip(), "branches": [release_branch, default_branch]}
+    return {"head": out.strip(), "branches": [release_branch, default_branch],
+            "committedPaths": sorted(committed)}
