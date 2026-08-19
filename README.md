@@ -12,7 +12,7 @@ genesis 커밋을 거쳐 제어평면이 받는 Result 까지 간다. 같은 요
 낸다 — 그것이 "승인이 무엇을 승인했는가" 를 말할 수 있게 하는 유일한 방법이다.
 
 ```
-BootstrapRequest ──▶ plan.py ──▶ apply.py --phase before-files ──▶ publish.py
+BootstrapRequest ──▶ plan.py ──▶ authorize.py ──▶ apply.py --phase before-files ──▶ publish.py
                         │                                              │
                         │                                              ▼
                         └────────────────▶ apply.py --phase after-files ──▶ result.py
@@ -64,6 +64,7 @@ ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다. (`scrip
 SKILL.md              스킬 진입점 — 경계·프로파일·파이프라인·불변식
 scripts/
   plan.py             요청 → Plan (자기 입력과 자기 출력을 둘 다 스키마로 검증)
+  authorize.py        승인자가 만드는 영수증. Plan digest 에 묶인다
   apply.py            단계별 외부 쓰기, 영수증 원장, 재조회 대조
   publish.py          계획된 파일 집합만 담은 genesis 커밋
   result.py           제어평면이 받는 Result
@@ -84,8 +85,11 @@ python3 scripts/plan.py \
   --request request.json --verification verification.json \
   --ci-values ci.json --operation-id "$(uuidgen)" --observe > compiled.json
 
+python3 scripts/authorize.py --plan compiled.json \
+  --authority HERMES --actor "hermes:ceo" > authorization.json
+
 python3 scripts/apply.py --plan compiled.json --ledger receipts.json \
-  --phase before-files --dry-run
+  --phase before-files --authorization authorization.json
 
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
   --remote-url git@github.com:owner/name.git \

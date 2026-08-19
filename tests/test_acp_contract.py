@@ -191,10 +191,12 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
             "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
         }, clock=lambda: "2026-08-19T10:00:00Z"))
         after = apply_plan(compiled["planCore"], port, ReceiptLedger(book), phase="after-files", authorization=approval(compiled["planCore"]))
-    receipts = before["receipts"] + after["receipts"]
+        # 원장 전체다. 두 단계의 반환값만 이어붙이면 genesis 영수증이 빠지고, 그러면 이
+        # 계약 테스트가 실제 원장이 아닌 것을 제어평면에 넘긴다.
+        receipts = ReceiptLedger(book).all()
     assert {r["operationId"] for r in receipts} == {
         op["operationId"] for op in compiled["planCore"]["githubOperations"]
-    }
+    } | {f"publish:{identity}"}
     result = build_result(
         run_id="contract", plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
         repositories=[{"role": "primary", "identity": identity, "defaultBranch": "dev",
@@ -207,8 +209,8 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
 
     verdict = run_check("acp-parse-check.mts", result)
 
-    assert verdict["allowed"] is True
-    assert verdict["reasonCode"] == "OK"
+    assert verdict["allowed"] is True, verdict
+    assert verdict["reasonCode"] == "OK", verdict
 
 
 def test_the_control_plane_still_refuses_a_result_that_claims_activation():

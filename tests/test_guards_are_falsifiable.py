@@ -322,6 +322,48 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ('if receipt.get("revoked") or receipt.get("supersededBy"):', "if False:"),
         "killed_by": ["tests/test_slice3_apply.py::test_a_revoked_or_superseded_approval_is_refused"],
     },
+    {
+        "name": "the command line hands the approval receipt to the gate that requires it",
+        "file": "scripts/apply.py",
+        "mutate": ("                             authorization=authorization, phase=args.phase)",
+                   "                             authorization=None, phase=args.phase)"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_apply_writes_on_the_command_line_when_an_approval_receipt_is_supplied"],
+    },
+    {
+        "name": "the approval receipt names the authority it was issued under",
+        "file": "scripts/authorize.py",
+        "mutate": ('            plan, authority=args.authority, actor=args.actor, approved_at=approved_at,',
+                   '            plan, authority="OWNER", actor=args.actor, approved_at=approved_at,'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_approval_receipt_binds_to_the_plan_it_was_issued_over"],
+    },
+    {
+        "name": "the ruleset re-read reads who may bypass it",
+        "file": "scripts/github_port.py",
+        "mutate": ('                "bypass_actors": full.get("bypass_actors"),', "                "),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
+    },
+    {
+        "name": "the genesis push counts as a write the result must account for",
+        "file": "scripts/result.py",
+        "mutate": ('    planned = {op["operationId"] for op in plan.get("githubOperations", [])} | set(genesis)',
+                   '    planned = {op["operationId"] for op in plan.get("githubOperations", [])}'),
+        "killed_by": ["tests/test_slice4_result.py::test_the_genesis_receipt_reaches_the_receiver_in_the_shape_it_accepts"],
+    },
+    {
+        "name": "the receipt is narrowed to the width the receiver accepts",
+        "file": "scripts/result.py",
+        "mutate": ('        "externalWriteReceipts": [{k: r[k] for k in RECEIPT_FIELDS if k in r} for r in receipts],',
+                   '        "externalWriteReceipts": list(receipts),'),
+        # Not the contract test: it skips without a control-plane checkout, and a row whose
+        # killing test can skip reports "the guard is gone and nothing noticed" as a pass.
+        "killed_by": ["tests/test_slice4_result.py::test_the_genesis_receipt_reaches_the_receiver_in_the_shape_it_accepts"],
+    },
+    {
+        "name": "the command line hands the approved verification contract to the result",
+        "file": "scripts/result.py",
+        "mutate": ("            verification_commands=commands,", "            verification_commands=verification_commands,"),
+        "killed_by": ["tests/test_pipeline_cli.py::test_the_pipeline_runs_end_to_end_through_its_command_line"],
+    },
 ]
 
 
@@ -374,7 +416,8 @@ def test_every_guarded_file_appears_in_the_table():
     # is not allowed is a row naming a path that does not exist, which is how a mutation quietly
     # stops applying to anything.
     guarded = {"scripts/plan.py", "scripts/apply.py", "scripts/publish.py",
-               "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py"}
+               "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py",
+               "scripts/authorize.py"}
     covered = {str(g["file"]) for g in GUARDS}
 
     missing = sorted(guarded - covered)

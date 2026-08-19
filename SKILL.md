@@ -42,7 +42,7 @@ CommitLore 는 `SIMPLE` 에서 `preferred`(실패 시 WARN), 나머지에서 `re
 ## 파이프라인
 
 ```
-BootstrapRequest ──▶ plan.py ──▶ apply.py --phase before-files ──▶ publish.py
+BootstrapRequest ──▶ plan.py ──▶ authorize.py ──▶ apply.py --phase before-files ──▶ publish.py
                         │                                              │
                         │                                              ▼
                         └────────────────▶ apply.py --phase after-files
@@ -72,12 +72,30 @@ Operation** 이 되고, 원장이 그것을 재개로 못 알아본다.
 나오는 것: `planCore`(승인 대상) · `files`(올라갈 바이트) · `humanGate` · `unresolvedGaps`
 · `diffSummary` · `--observe` 를 줬으면 `environmentObservation`.
 
-### 2. 외부 쓰기
+### 2. 승인
+
+```bash
+python3 scripts/authorize.py --plan compiled.json \
+  --authority HERMES --actor "hermes:ceo" > authorization.json
+```
+
+**`apply` 와 다른 명령인 것이 요점이다.** 승인이 Plan 안의 필드였을 때는 그 필드를 고치고
+다시 digest 한 Plan 이 스스로를 승인한 것과 구별되지 않았다. 영수증은 **어떤 digest 를**
+승인했는지 말하므로, Plan 이 한 바이트라도 바뀌면 그 승인이 더 이상 그 Plan 을 안 가리킨다.
+통합 구성에서는 이 문서를 제어평면이 만든다.
+
+서명은 아니다. 이 파일을 쓸 수 있는 사람은 승인을 주장할 수 있다. 사는 것은 주장이 별개의
+아티팩트가 되고 행위자·시각·묶인 digest 를 갖는다는 것이다.
+
+### 3. 외부 쓰기
 
 ```bash
 python3 scripts/apply.py --plan compiled.json --ledger receipts.json \
-  --phase before-files [--dry-run]
+  --phase before-files --authorization authorization.json [--dry-run]
 ```
+
+`--authorization` 없이는 어떤 원격 읽기보다 먼저 거부한다. `--dry-run` 은 그 게이트에
+닿기 전에 반환하므로, dry-run 이 도는 것은 실행 경로가 산다는 증거가 아니다.
 
 각 Operation 은 자기가 만들 것을 `desiredState` 로 싣고 있다. 생성 파라미터가 Plan
 밖에서 오면 승인된 digest 가 실행될 effect 를 결정하지 못한다 — private 으로 승인된
@@ -86,7 +104,7 @@ Plan 이 public 저장소를 만들어도 digest 는 같다.
 쓰고 나서 다시 읽고, **승인된 상태와 대조**한다. 존재만 확인하면 `disabled` 로 만들어진
 ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다.
 
-### 3. genesis 커밋
+### 4. genesis 커밋
 
 ```bash
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
@@ -102,11 +120,19 @@ python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
 커밋에 세션 식별자를 남기지 않는다. 생성 저장소는 공개일 수 있고, 그 경우 트레일러는
 저장소 안에 운영 정보를 넣는 것이 된다.
 
-### 4. Result
+### 5. Result
 
 ```bash
-python3 scripts/result.py --input result-input.json
+python3 scripts/result.py --input result-input.json \
+  --verification verification.json
 ```
+
+`--verification` 은 Plan 을 컴파일할 때 쓴 그 목록이다. Plan 은 digest 만 싣기 때문에,
+Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인된 계약과 같은지를 여기서
+대조한다. 다른 목록을 대면 거부한다.
+
+원장을 그대로 넘긴다 — genesis 영수증까지. 파일을 올린 push 는 외부 쓰기이고, 그 행을
+빼고 세면 파일이 한 번도 안 올라간 부트스트랩이 완료로 보고된다.
 
 제어평면이 받는 문서다. **활성화를 주장하지 않는다** — 공장은 저장소를 만들었을 뿐
 그 저장소가 제어평면 위에서 돈다고 말할 수 있는 위치에 있지 않다. 받는 쪽이
@@ -141,6 +167,7 @@ python3 scripts/result.py --input result-input.json
 ```
 scripts/
   plan.py            요청 → Plan (자기 입력과 자기 출력을 둘 다 스키마로 검증)
+  authorize.py       승인자가 만드는 영수증. Plan digest 에 묶인다
   apply.py           단계별 외부 쓰기, 영수증 원장, 재조회 대조
   publish.py         계획된 파일 집합만 담은 genesis 커밋
   result.py          제어평면이 받는 Result

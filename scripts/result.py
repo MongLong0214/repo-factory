@@ -24,9 +24,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from apply import PUBLISH_OPERATION  # noqa: E402
 from canonical import digest  # noqa: E402
 
-__all__ = ["ResultError", "FORBIDDEN_CLAIMS", "build_result", "RESULT_SCHEMA_ID"]
+__all__ = ["ResultError", "FORBIDDEN_CLAIMS", "RECEIPT_FIELDS", "build_result",
+           "RESULT_SCHEMA_ID"]
 
 RESULT_SCHEMA_ID = "repo-factory.result.v2"
 
@@ -36,6 +38,18 @@ FORBIDDEN_CLAIMS = (
     "primaryCtoAssignment", "primaryCto", "buzzConnection", "buzz",
     "doctorPass", "doctor", "blindReviewPass", "blindReview",
     "ceoFinalConfirm", "ceoConfirm", "projectActive", "activity",
+)
+
+# 수신자의 `externalWriteReceiptSchema` 는 `.strict()` 다 — 여기에 없는 키가 하나라도 있으면
+# 결과 전체가 거절된다. 원장의 행은 이보다 넓다: genesis 영수증은 `committedPaths`·`branches`
+# ·`head`·`remoteHeads` 를 함께 싣는다. 그것은 이쪽의 기록이지 계약의 필드가 아니므로, 넘길
+# 때 계약의 모양으로 투영한다. 빼는 것이 아니라 좁히는 것이다 — genesis 행 자체는 그대로
+# 넘어가고, 수신자가 검사하는 `verified`·`rereadAt`·중복은 전부 보존된다.
+#
+# 이 목록이 낡으면 `test_acp_contract.py` 가 수신자 소스에서 필드를 뽑아 대조하다 죽는다.
+RECEIPT_FIELDS = (
+    "bootstrapOperationId", "requestDigest", "operationId", "resourceType", "resourceIdentity",
+    "preexisting", "beforeStateDigest", "afterStateDigest", "createdAt", "rereadAt", "verified",
 )
 
 
@@ -63,7 +77,15 @@ def build_result(
     # 계획된 Operation 전부에 영수증이 있어야 한다. 없으면 절반만 실행된 부트스트랩이 완료로
     # 보고된다 — 실제로 그랬다: `after-files` 를 안 돌린 체인이 ruleset 영수증 없이 Result 를
     # 조립했고 받는 쪽 파서가 통과시켰다. 파서는 모양을 보고 완결성은 여기서만 볼 수 있다.
-    planned = {op["operationId"] for op in plan.get("githubOperations", [])}
+    # genesis push 는 `githubOperations` 에 없다 — Plan 의 `files` 가 그 effect 이고, 영수증은
+    # `publish:{identity}` 로 남는다. 그것을 "계획에 없는 Operation" 으로 읽으면 **실제 원장은
+    # 하나도 통과하지 못한다**: `after-files` 는 이 영수증이 있어야 돌고, 있으면 Result 가
+    # 거부했다. 통과하던 것은 원장 대신 앞뒤 단계의 반환값만 이어붙인 목록뿐이었고, 그 목록은
+    # 자기가 관측해야 할 행을 스스로 빼고 있었다. 빼놓고 세면 파일이 한 번도 안 올라간
+    # 부트스트랩이 완료로 보고된다.
+    genesis = {PUBLISH_OPERATION.format(identity=repo["identity"]): repo["identity"]
+               for repo in plan.get("repositories", [])}
+    planned = {op["operationId"] for op in plan.get("githubOperations", [])} | set(genesis)
     delivered = {r["operationId"] for r in receipts}
     missing = sorted(planned - delivered)
     if missing:
@@ -83,6 +105,7 @@ def build_result(
         raise ResultError(f"receipts were written under a different approved intent: {foreign}")
 
     identities = {op["operationId"]: op.get("resourceIdentity") for op in plan.get("githubOperations", [])}
+    identities.update(genesis)
     drifted = sorted(r["operationId"] for r in receipts
                      if identities.get(r["operationId"]) not in (None, r.get("resourceIdentity")))
     if drifted:
@@ -164,7 +187,7 @@ def build_result(
             }
             for repo in repositories
         ],
-        "externalWriteReceipts": list(receipts),
+        "externalWriteReceipts": [{k: r[k] for k in RECEIPT_FIELDS if k in r} for r in receipts],
         "bootstrapVerification": list(bootstrap_verification),
         "ciEvidence": list(ci_evidence or []),
         "unresolvedGaps": list(unresolved_gaps or []),
@@ -187,13 +210,21 @@ def main(argv: List[str] = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Assemble a RepoFactoryResult from an applied plan.")
     parser.add_argument("--input", required=True, help="JSON with runId, plan, planDigest, repositories, receipts, bootstrapVerification")
+    # 계약 자체는 Plan 에 없다 — Plan 은 digest 만 싣는다. 그래서 Result 를 조립하는 쪽이
+    # 원본 목록을 다시 대야 하고, 그 목록이 승인된 계약과 같은지를 여기서 대조한다. 한동안
+    # 이 인자가 CLI 에 없어서 `result.py --input` 은 TypeError 로 죽었고, `--help` 는 통과했다.
+    parser.add_argument("--verification", required=True,
+                        help="the same VerificationCommand list the plan was compiled from; "
+                             "its digest must match the plan's verificationContractDigest")
     args = parser.parse_args(argv)
     payload = json.loads(open(args.input, encoding="utf-8").read())
+    commands = json.loads(open(args.verification, encoding="utf-8").read())
     try:
         result = build_result(
             run_id=payload["runId"], plan=payload["plan"], plan_digest=payload["planDigest"],
             repositories=payload["repositories"], receipts=payload["receipts"],
             bootstrap_verification=payload["bootstrapVerification"],
+            verification_commands=commands,
             ci_evidence=payload.get("ciEvidence"), unresolved_gaps=payload.get("unresolvedGaps"),
         )
     except (ResultError, KeyError) as error:

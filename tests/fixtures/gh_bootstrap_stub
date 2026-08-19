@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""A gh that can be written to and then read back — the surface `apply.py` actually drives.
+
+The existing `fake_gh` answers a fixed map. That is enough for the retired product's tests and
+useless here: this pipeline's whole claim is that it writes, re-reads, and compares. A stub that
+cannot change state passes a post-write re-read for free.
+
+State lives in `$GH_BOOTSTRAP_STUB_WORLD`, one JSON file, created on first write.
+"""
+import json
+import os
+import sys
+
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {"repos": {}, "rulesets": {}, "branches": {}, "nextRulesetId": 1}
+
+
+def save(path, world):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(world, handle, ensure_ascii=False, indent=1)
+
+
+def not_found(what):
+    print(f"gh: Not Found (HTTP 404) {what}", file=sys.stderr)
+    return 1
+
+
+def field(args):
+    """`-f key=value` pairs, as gh takes them."""
+    out = {}
+    for i, arg in enumerate(args):
+        if arg == "-f" and i + 1 < len(args) and "=" in args[i + 1]:
+            key, _, value = args[i + 1].partition("=")
+            out[key] = value
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    path = os.environ.get("GH_BOOTSTRAP_STUB_WORLD")
+    if not path:
+        print("GH_BOOTSTRAP_STUB_WORLD unset", file=sys.stderr)
+        return 1
+    world = load(path)
+
+    if args[:2] == ["repo", "create"]:
+        slug = args[2]
+        world["repos"][slug] = {
+            "full_name": slug, "default_branch": "main", "node_id": f"R_{len(world['repos'])}",
+            "private": "--public" not in args,
+        }
+        save(path, world)
+        return 0
+
+    if args[:1] != ["api"]:
+        print(f"gh bootstrap stub: unhandled {args}", file=sys.stderr)
+        return 1
+
+    method = "GET"
+    if "--method" in args:
+        method = args[args.index("--method") + 1]
+    route = next(a for a in args[1:] if not a.startswith("-") and a != method)
+    parts = route.split("/")
+
+    # repos/{owner}/{repo}
+    if len(parts) == 3 and parts[0] == "repos":
+        slug = f"{parts[1]}/{parts[2]}"
+        repo = world["repos"].get(slug)
+        if repo is None:
+            return not_found(route)
+        if method == "PATCH":
+            repo.update({k: v for k, v in field(args).items()})
+            save(path, world)
+        print(json.dumps(repo, ensure_ascii=False))
+        return 0
+
+    # repos/{owner}/{repo}/branches/{ref}
+    if len(parts) == 5 and parts[3] == "branches":
+        slug = f"{parts[1]}/{parts[2]}"
+        head = (world["branches"].get(slug) or {}).get(parts[4])
+        if head is None:
+            return not_found(route)
+        print(json.dumps({"name": parts[4], "commit": {"sha": head}}, ensure_ascii=False))
+        return 0
+
+    # repos/{owner}/{repo}/git/refs
+    if len(parts) == 5 and parts[3:5] == ["git", "refs"] and method == "POST":
+        slug = f"{parts[1]}/{parts[2]}"
+        values = field(args)
+        ref = values.get("ref", "").replace("refs/heads/", "")
+        world["branches"].setdefault(slug, {})[ref] = values.get("sha", "")
+        save(path, world)
+        return 0
+
+    # repos/{owner}/{repo}/rulesets[/{id}]
+    if len(parts) >= 4 and parts[3] == "rulesets":
+        slug = f"{parts[1]}/{parts[2]}"
+        if slug not in world["repos"]:
+            return not_found(route)
+        held = world["rulesets"].setdefault(slug, [])
+        if method == "POST":
+            body = json.loads(sys.stdin.read())
+            body["id"] = world["nextRulesetId"]
+            world["nextRulesetId"] += 1
+            held.append(body)
+            save(path, world)
+            print(json.dumps(body, ensure_ascii=False))
+            return 0
+        if len(parts) == 4:
+            # The list response is a summary. Sending the full document here would let a caller
+            # that never reads the individual ruleset still see conditions and rules.
+            print(json.dumps([{"id": r["id"], "name": r.get("name"), "target": r.get("target"),
+                               "enforcement": r.get("enforcement")} for r in held],
+                             ensure_ascii=False))
+            return 0
+        match = next((r for r in held if str(r["id"]) == parts[4]), None)
+        if match is None:
+            return not_found(route)
+        print(json.dumps(match, ensure_ascii=False))
+        return 0
+
+    return not_found(route)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
