@@ -13,7 +13,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from materialize import CI_PATH, MANIFEST_PATH, materialize  # noqa: E402
+from materialize import CI_PATH, MANIFEST_PATH, SKELETONS, materialize  # noqa: E402
 from plan import compile_plan  # noqa: E402
 
 REQUEST = {
@@ -125,4 +125,31 @@ def test_materialize_refuses_a_stack_it_has_no_template_for():
     manifest = compiled()["projectManifest"]
 
     with pytest.raises(ValueError, match="no reviewed template"):
-        materialize(manifest, seed="x", stack="cobol", ci_values=CI_VALUES)
+        materialize(manifest, seed="x", stack="cobol", ci_values=CI_VALUES, remote_owner="demo-owner")
+
+
+def test_the_remote_owner_has_no_default_anywhere_in_materialize():
+    """소유자는 요청이 정하는 값이지 이 모듈이 아는 값이 아니다.
+
+    한때 `materialize` 와 `_go_skeleton` 이 각자 `"MongLong0214"` 를 기본값으로 들고 있었다.
+    실제 경로는 `plan.py` 가 요청에서 읽어 넘기므로 도달하지 않았지만, 인자를 빠뜨린 새 호출자는
+    **다른 계정의 저장소에 이 이름을 조용히 쓴다.** 시끄럽게 죽는 편이 낫다.
+
+    이 검사가 소스를 읽는 이유는, 동작으로는 도달 불가한 기본값을 관측할 수 없기 때문이다 —
+    기본값이 되살아나도 다른 테스트는 전부 초록이다."""
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "materialize.py").read_text()
+
+    assert "MongLong0214" not in source, "소유자 기본값이 되살아났다"
+
+
+def test_every_skeleton_takes_the_owner_so_the_table_stays_uniform():
+    """테이블에 등록하는 것만으로 충분해야 한다.
+
+    한때 go 만 소유자를 받았고 호출부가 `stack == "go"` 로 갈랐다. 그 형태에서는 두 번째 스택이
+    소유자를 필요로 할 때 고칠 자리가 테이블이 아니라 조건문이고, 등록만 한 사람은 소유자가
+    비어 있는 산출물을 얻는다."""
+    import inspect
+
+    for stack, skeleton in SKELETONS.items():
+        parameters = list(inspect.signature(skeleton).parameters)
+        assert parameters == ["project_id", "values", "owner"], f"{stack} 의 시그니처가 다르다"

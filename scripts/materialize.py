@@ -203,7 +203,7 @@ def _rollback(project_id: str) -> str:
     ])
 
 
-def _python_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
+def _python_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     module = project_id.replace("-", "_")
     return {
         "pyproject.toml": (
@@ -232,8 +232,7 @@ def _python_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def _go_skeleton(project_id: str, values: Dict[str, str],
-                 owner: str = "MongLong0214") -> Dict[str, str]:
+def _go_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     return {
         "go.mod": (f"module github.com/{owner}/{project_id}\n\n"
                    f"go {values['RUNTIME_LOWER']}\n"),
@@ -247,7 +246,7 @@ def _go_skeleton(project_id: str, values: Dict[str, str],
     }
 
 
-def _rust_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
+def _rust_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     return {
         "Cargo.toml": (f'[package]\nname = "{project_id.replace("-", "_")}"\n'
                        'version = "0.1.0"\nedition = "2021"\n'
@@ -259,7 +258,7 @@ def _rust_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def _node_skeleton(project_id: str, values: Dict[str, str]) -> Dict[str, str]:
+def _node_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     """`npm install` 과 `npm test` 가 실제로 무언가를 하는 최소 골격.
 
     골격 없이 CI 를 만들면 워크플로는 렌더되는데 첫 실행이 빨간색이고, 그 빨간색은
@@ -301,7 +300,7 @@ def materialize(
     stack: Optional[str] = None,
     ci_values: Dict[str, str] = None,
     artifacts: Optional[list] = None,
-    remote_owner: str = "MongLong0214",
+    remote_owner: str,
 ) -> Dict[str, str]:
     """path → content. 스택을 모르면 CI 를 만들지 않는다(§14.1) — 조용히 Node 로 대체하지 않는다."""
     project_id = manifest["projectId"]
@@ -321,9 +320,10 @@ def materialize(
         files[CI_PATH] = render(stack, values)
         skeleton = SKELETONS.get(stack)
         if skeleton is not None:
-            # go.mod 의 module 경로는 소유자를 담는다 — 여기서도 요청이 정한 값을 쓴다.
-            files.update(skeleton(project_id, values, remote_owner) if stack == "go"
-                         else skeleton(project_id, values))
+            # 소유자는 모든 스켈레톤에 넘어간다. 한때 go 만 받았고 호출부가 `stack == "go"`
+            # 로 갈랐는데, 그러면 두 번째 스택이 소유자를 필요로 할 때 고칠 자리가 테이블이
+            # 아니라 이 조건문이 된다 — 테이블에 등록하는 것만으로는 부족해지는 형태다.
+            files.update(skeleton(project_id, values, remote_owner))
 
     # 프로파일이 요구한 것만 만든다. §6.1 이 금지하는 것은 형식 충족용 문서 생성이므로,
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.

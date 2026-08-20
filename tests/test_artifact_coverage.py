@@ -117,7 +117,7 @@ def test_every_default_stack_has_a_runnable_skeleton(stack: str):
     # A workflow with nothing to run is a red first CI that blames the project for the
     # factory having built half a repository.
     assert stack in SKELETONS
-    files = SKELETONS[stack]("demo-project", effective_values(stack))
+    files = SKELETONS[stack]("demo-project", effective_values(stack), "demo-owner")
     assert files, stack
     # Rust puts unit tests inside the module under `#[cfg(test)]`, so a path check would call a
     # conventional Rust crate untested. What matters is that something asserts.
@@ -174,7 +174,7 @@ def test_the_skeleton_declares_the_runtime_the_ci_matrix_actually_runs(stack: st
     # 안 쥔다. 덮어쓴 값으로도 본다.
     for override in (None, {"RUNTIME_LOWER": OVERRIDDEN_LOWER[stack]}):
         values = effective_values(stack, override)
-        files = SKELETONS[stack]("demo-project", values)
+        files = SKELETONS[stack]("demo-project", values, "demo-owner")
         assert path in files, f"{stack} skeleton has no {path}"
         found = re.search(pattern, files[path], re.MULTILINE)
         assert found, f"{stack}: {path} declares no runtime lower bound"
@@ -188,7 +188,7 @@ def test_the_python_skeleton_declares_the_dependency_its_test_command_needs():
     """실측: 3.12 잡이 `No module named pytest` 로 죽었다. 설치 명령은 프로젝트가 선언한
     것만 설치할 수 있고, 프로젝트가 pytest 를 선언하지 않았다."""
     values = effective_values("python")
-    files = SKELETONS["python"]("demo-project", values)
+    files = SKELETONS["python"]("demo-project", values, "demo-owner")
 
     assert "pytest" in files["pyproject.toml"], "the test lane installs nothing that can run pytest"
     # 설치 명령이 그 extra 를 실제로 부르는가. 선언만 하고 안 부르면 같은 자리에서 같이 죽는다.
