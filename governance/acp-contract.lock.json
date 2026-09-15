@@ -1,8 +1,8 @@
 {
-  "$comment": "The control-plane commit this repository's contract tests run against. Pinned, because a contract check whose other side moves is not a check — it is a report about whatever happened to be checked out. CI clones this exact commit; a mismatch is a failure, not a skip.",
+  "$comment": "The control-plane commit this repository's contract tests run against. Pinned, because a contract check whose other side moves is not a check \u2014 it is a report about whatever happened to be checked out. CI clones this exact commit; a mismatch is a failure, not a skip.",
   "repository": "https://github.com/MongLong0214/agent-control-plane",
-  "commit": "6cf4dbdf3f2348d4a3136ae95946fb2ae82a64a3",
-  "pinnedAt": "2026-08-19",
+  "commit": "7b3cbc9f221dd3839599cf96eaadf5ebf634486c",
+  "pinnedAt": "2026-09-15",
   "schemaIds": {
     "projectManifest": "agent-control-plane.project.v2",
     "repoFactoryResult": "repo-factory.result.v2",
