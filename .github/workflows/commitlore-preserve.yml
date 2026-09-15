@@ -69,3 +69,9 @@ jobs:
       - uses: MongLong0214/commitlore/action/preserve@v1.4.0
         with:
           cli-path: .commitlore-cli/dist/cli.js
+
+# 2026-09-15, measured after this file was first written: `dist/cli.js` (12,331 bytes,
+# sha 0990ab9be53e) and `action/preserve/preserve.mjs` (30,242 bytes, sha 384c6e9bd589) are
+# byte-identical at v1.2.16 and v1.4.0. The pin here is v1.4.0 and agent-control-plane's is
+# v1.2.16, and those two pins run the same bytes. A future bump should be justified by a measured
+# difference in these two files, not by the release number.
