@@ -69,9 +69,24 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+      # `--store-dir` explicitly, because the pinned checkout carries its own.
+      #
+      # The control plane's `pnpm-workspace.yaml` sets `storeDir: /private/tmp/...`, which is a
+      # macOS path: `/private` is created by the OS at boot there and cannot be created at all on
+      # a Linux runner. Every run of this job died at `EACCES: permission denied, mkdir '/private'`
+      # before installing anything, and the failure looked like a pnpm problem rather than what it
+      # is -- a path this repository inherited from the repository it integrates with.
+      #
+      # Fixing it on the other side is right and is in flight, but the pin is what decides which
+      # bytes run here, and it can be moved to any commit. A release suite whose CI is hostage to
+      # a path baked into someone else's file has a second authority over its own environment, so
+      # this job now names its own store and keeps naming it after the other side is fixed.
+      #
+      # `$RUNNER_TEMP`, not a path under the workspace: the store is a cache, not an input, and a
+      # store inside the checkout would be swept into anything that walks the tree.
       - name: install the control plane's dependencies
         working-directory: acp
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
 
       # RF_ALLOW_CONTRACT_SKIP is deliberately not set. A skipped contract check and a passing
       # one are the same line in a summary, and that is how a release suite goes green having
