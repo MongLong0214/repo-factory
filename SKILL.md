@@ -185,7 +185,7 @@ scripts/
   materialize.py     프로파일 → 산출물 파일
   render_ci.py       스택별 CI 렌더
   canonical.py       정본 digest (volatile: forbid / strip / allow)
-  github_port.py     gh CLI 포트 — 읽기와 생성만, 판단은 apply 가 갖는다
+  github_port.py     gh CLI 포트 — 읽기·생성·승인된 allowlist 갱신; 판단은 apply 가 갖는다
 profiles/            SIMPLE · STANDARD · GUARDED 요구 산출물 정본
 schemas/             request · plan · profile · result 계약
 governance/          제어평면 계약 pin (exact commit)
@@ -195,9 +195,10 @@ tests/               컴파일러·포트·계약 회귀 + 뮤테이션 하네�
 
 ## 아직 안 하는 것
 
-- **issue · milestone · tag · setting 외부 쓰기.** 포트는 저장소와 ruleset 만 관측하고
-  만든다. 다시 읽을 수 없는 쓰기는 §16.2 를 만족할 수 없으므로, 포트는 그 타입들을
-  흉내내지 않고 거부한다.
+- **issue 생성 · milestone · tag 외부 쓰기.** 포트는 numbered issue의 `title`·`body`·`state`
+  갱신만 다시 읽어 검증할 수 있다. 새 이슈는 GitHub이 번호를 배정하므로, Plan이 만들기 전부터
+  안정적인 resource identity를 갖지 못한다. milestone·tag도 같은 verified receipt 경로를 갖지
+  않으므로 포트는 그 타입들을 흉내내지 않고 거부한다.
 - **기본 브랜치 전환의 외부 write 관리.** `publish` 가 푸시 순서로 다루고 있고,
   Operation 으로 승인되지는 않는다.
 - **다중 저장소는 생성 단계까지다.** 순서 있는 다중 저장소 genesis 는 아직이다.

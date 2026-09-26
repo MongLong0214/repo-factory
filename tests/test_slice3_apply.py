@@ -422,6 +422,38 @@ def test_an_update_changes_the_resource_and_is_re_read_against_the_approved_stat
     assert result["receipts"][0]["beforeStateDigest"] is not None
 
 
+def test_an_update_that_rereads_a_different_immutable_issue_is_not_completed(tmp_path):
+    core = plan("alpha")
+    identity = "github:example/alpha#42"
+    core["githubOperations"] = [{"operationId": "update-issue:42", "resourceType": "issue",
+                                 "intent": "update", "resourceIdentity": identity,
+                                 "desiredState": {"title": "Approved title"}}]
+
+    class ReplacedIssue:
+        def __init__(self):
+            self.current = "I_original"
+            self.writes = 0
+
+        def observe(self, resource_type, requested):
+            return {"identity": requested, "resourceType": resource_type,
+                    "nodeId": self.current, "title": "Approved title"}
+
+        def update(self, resource_type, requested, spec, *, observed_node_id=None):
+            assert observed_node_id == "I_original"
+            self.writes += 1
+            self.current = "I_replacement"
+
+    port = ReplacedIssue()
+    book = ledger(tmp_path)
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(core, port, book, authorization=approval(core))
+
+    assert caught.value.code == REREAD_MISMATCH
+    assert port.writes == 1
+    assert caught.value.receipts == []
+    assert book.get("update-issue:42") is None
+
+
 def test_an_update_against_something_absent_is_refused_rather_than_creating_it(tmp_path):
     # An update is approval to change a thing, not approval to bring it into existence — those
     # are different decisions and only one of them was made.
