@@ -13,7 +13,8 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    OWNER_AUTHORIZATION_REQUIRED, ApplyError, ReceiptLedger, apply_plan, authorized_plan_receipt,
+    OWNER_AUTHORIZATION_REQUIRED, RESUMED_RESOURCE_DRIFTED, ApplyError, ReceiptLedger,
+    apply_plan, authorized_plan_receipt,
 )
 
 
@@ -241,6 +242,95 @@ def test_a_ruleset_identity_without_a_name_is_refused():
         port.observe("ruleset", "github:MongLong0214/alpha")
     with pytest.raises(GhError, match="must name the ruleset"):
         port.create("ruleset", "github:MongLong0214/alpha", {})
+
+
+def test_an_issue_is_read_by_its_numeric_identity_in_the_plan_vocabulary():
+    body = json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+                       "number": 42, "id": 83042, "title": "Approved title",
+                       "body": "Approved body", "state": "open"})
+    port = GhCliPort(runner=(scripted := ScriptedGh([("issues/42", (0, body, ""))])))
+
+    observed = port.observe("issue", "github:MongLong0214/alpha#42")
+
+    assert scripted.seen[-1] == ["gh", "api", "repos/MongLong0214/alpha/issues/42"]
+    assert observed == {"identity": "github:MongLong0214/alpha#42", "resourceType": "issue",
+                        "nodeId": 83042, "title": "Approved title", "body": "Approved body", "state": "open"}
+
+
+@pytest.mark.parametrize("target", [
+    {"repository_url": "https://api.github.com/repos/other/destination", "number": 7},
+    {"repository_url": "https://api.github.com/repos/MongLong0214/alpha", "number": 7},
+    {"number": 42},
+    {"repository_url": "https://api.github.com/repos/MongLong0214/alpha"},
+])
+def test_transferred_or_unverified_issue_target_is_not_observed(target):
+    body = json.dumps({"node_id": "I_destination", "title": "Approved title",
+                       "body": "Approved body", "state": "open", **target})
+    port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
+
+    with pytest.raises(GhError, match="issue.*target"):
+        port.observe("issue", "github:MongLong0214/alpha#42")
+
+
+def test_an_issue_update_writes_only_the_observed_plan_vocabulary():
+    port = GhCliPort(runner=(scripted := ScriptedGh([("issues/42", (0, "{}", ""))])))
+
+    port.update("issue", "github:MongLong0214/alpha#42",
+                {"title": "Approved title", "body": "Approved body", "state": "closed"})
+
+    assert scripted.seen[-1] == ["gh", "api", "--method", "PATCH", "repos/MongLong0214/alpha/issues/42",
+                                 "--input", "-"]
+    assert json.loads(scripted.stdin[-1]) == {
+        "title": "Approved title", "body": "Approved body", "state": "closed"}
+
+
+def test_a_pull_request_is_not_mistaken_for_an_updatable_issue():
+    body = json.dumps({"number": 42, "title": "PR", "pull_request": {"url": "https://example.invalid"}})
+    port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
+
+    with pytest.raises(GhError, match="pull request"):
+        port.observe("issue", "github:MongLong0214/alpha#42")
+
+
+@pytest.mark.parametrize("ids", [{}, {"node_id": "", "id": None},
+                                 {"node_id": "  ", "id": False}])
+def test_an_issue_without_a_stable_remote_id_is_not_observable(ids):
+    body = json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+                       "number": 42, "title": "Approved title", "body": "Approved body",
+                       "state": "open", **ids})
+    port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
+
+    with pytest.raises(GhError, match="stable.*id"):
+        port.observe("issue", "github:MongLong0214/alpha#42")
+
+
+def test_recreated_issue_with_identical_state_is_not_resumed(tmp_path):
+    identity = "github:MongLong0214/alpha#42"
+    operation = {"operationId": "update-issue:42", "resourceType": "issue", "intent": "update",
+                 "resourceIdentity": identity, "desiredState": {"title": "Approved title"}}
+    plan = {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
+            "requestDigest": "sha256:" + "a" * 64, "authorization": "OWNER",
+            "githubOperations": [operation]}
+    def issue(node_id):
+        return json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+                           "number": 42, "node_id": node_id, "title": "Approved title",
+                           "body": "Approved body", "state": "open"})
+
+    scripted = ScriptedGh([("issues/42", (0, issue("I_original"), ""))])
+    port = GhCliPort(runner=scripted)
+    book = ReceiptLedger(tmp_path / "receipts.json")
+    authorized = approval(plan)
+    apply_plan(plan, port, book, authorization=authorized)
+    scripted.responses = [("issues/42", (0, issue("I_recreated"), ""))]
+    writes_before_resume = len([argv for argv in scripted.seen if "PATCH" in argv])
+
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan, port, ReceiptLedger(book.path), authorization=authorized)
+
+    assert book.get(operation["operationId"])["resourceFingerprint"] == "I_original"
+    assert caught.value.code == RESUMED_RESOURCE_DRIFTED
+    assert caught.value.evidence["observed"] == "I_recreated"
+    assert len([argv for argv in scripted.seen if "PATCH" in argv]) == writes_before_resume
 
 
 def test_the_port_reads_the_security_posture_it_was_asked_about():

@@ -487,6 +487,15 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
                              f"{intent}",
                              applied, {"operationId": operation_id})
 
+        if intent == "update" and operation["resourceType"] == "issue":
+            before_id = observed.get("nodeId") or observed.get("id")
+            after_id = after.get("nodeId") or after.get("id")
+            if not before_id or not after_id or before_id != after_id:
+                raise ApplyError(REREAD_MISMATCH,
+                                 f"{operation['resourceIdentity']} changed immutable issue identity "
+                                 f"after update: {before_id!r} -> {after_id!r}",
+                                 applied, {"operationId": operation_id})
+
         # §16.2 는 "다시 읽었다" 가 아니라 "기대한 것이 거기 있다" 를 요구한다. 존재만 확인하면
         # `disabled` 로 만들어진 ruleset 과 `active` 로 만들어진 ruleset 이 같은 통과를 받는다.
         gaps = _state_gap(operation["desiredState"], after)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """`gh` 로 뒷받침되는 GitHubPort 구현 (PRD §16).
 
-`apply.py` 가 정한 규칙은 여기서 하나도 바뀌지 않는다. 이 파일이 하는 일은 두 개다 —
-원격을 **읽고**, 계획된 것을 **만든다**. 무엇을 만들지, 이미 있으면 우리 것인지,
-만든 뒤 확인됐는지는 전부 위 계층의 판단이다.
+`apply.py` 가 정한 규칙은 여기서 하나도 바뀌지 않는다. 이 파일이 하는 일은 세 개다 —
+원격을 **읽고**, 계획된 것을 **만들고**, 이미 있는 리소스의 승인된 상태를 **갱신한다**. 무엇을
+만들지·갱신할지, 이미 있으면 우리 것인지, 실행 뒤 확인됐는지는 전부 위 계층의 판단이다.
 
 `observe` 가 이 파일의 중심이다. §16.2 는 쓰기 뒤 재조회를 요구하는데, 같은 함수가
 쓰기 *전* preexisting 판정에도 쓰인다. 둘을 다른 코드로 두면 "만들기 전엔 없다고
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from urllib.parse import urlsplit
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["GhError", "GhRateLimited", "GhCliPort", "parse_identity"]
@@ -144,6 +145,33 @@ class GhCliPort:
                 return None
             return {"identity": identity, "resourceType": "branch", "name": observed.get("name"),
                     "head": (observed.get("commit") or {}).get("sha")}
+        if resource_type == "issue":
+            if not ref or not ref.isdecimal():
+                raise GhError(f"issue identity must name a numeric issue number: {identity!r}")
+            observed = self._api(f"repos/{owner}/{repo}/issues/{ref}")
+            if observed is None:
+                return None
+            if "pull_request" in observed:
+                raise GhError(f"issue identity names a pull request, not an issue: {identity!r}")
+            repository_url = observed.get("repository_url")
+            if not isinstance(repository_url, str):
+                raise GhError(f"issue target cannot be verified: {identity!r}")
+            location = urlsplit(repository_url)
+            if (location.scheme != "https" or location.netloc != "api.github.com"
+                    or location.path.casefold() != f"/repos/{owner}/{repo}".casefold()
+                    or location.query or location.fragment
+                    or isinstance(observed.get("number"), bool)
+                    or not isinstance(observed.get("number"), int)
+                    or observed["number"] != int(ref)):
+                raise GhError(f"issue target differs from requested identity: {identity!r}")
+            node_id = observed.get("node_id")
+            if not isinstance(node_id, str) or not node_id.strip():
+                node_id = observed.get("id")
+                if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
+                    raise GhError(f"issue has no stable node_id or id: {identity!r}")
+            return {"identity": identity, "resourceType": "issue", "nodeId": node_id,
+                    "title": observed.get("title"), "body": observed.get("body"),
+                    "state": observed.get("state")}
         if resource_type == "ruleset":
             if not ref:
                 raise GhError(f"ruleset identity must name the ruleset: {identity!r}")
@@ -253,6 +281,21 @@ class GhCliPort:
             code, _, err = self.run(argv)
             if code != 0:
                 raise GhError(f"setting the default branch of {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            return
+        if resource_type == "issue":
+            if not ref or not ref.isdecimal():
+                raise GhError(f"issue update must name a numeric issue number: {identity!r}")
+            fields = {"title", "body", "state"}
+            unknown = set(spec) - fields
+            if unknown or not spec:
+                raise GhError(f"issue updates accept only non-empty {sorted(fields)} state: {identity!r}")
+            body = {field: spec[field] for field in fields if field in spec}
+            argv = [self.gh, "api", "--method", "PATCH", f"repos/{owner}/{repo}/issues/{ref}",
+                    "--input", "-"]
+            self.calls.append(argv)
+            code, _, err = self.run(argv, json.dumps(body))
+            if code != 0:
+                raise GhError(f"updating issue {ref} on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
             return
         raise GhError(
             f"no update is implemented for resourceType {resource_type!r}; an unobservable or "
