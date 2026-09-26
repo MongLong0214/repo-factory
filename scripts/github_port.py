@@ -15,14 +15,63 @@
 """
 from __future__ import annotations
 
+import base64
 import json
+import os
 import subprocess
+import time
+from pathlib import Path
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.parse import urlsplit
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["GhError", "GhRateLimited", "GhCliPort", "parse_identity"]
 
 Runner = Callable[..., Tuple[int, str, str]]
+
+
+def _app_jwt(key_path: str, app_id: str) -> str:
+    """Sign a short-lived App JWT without putting credentials in process arguments."""
+    def encode(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+    now = int(time.time())
+    signing_input = (encode(b'{"alg":"RS256","typ":"JWT"}') + "." +
+                     encode(json.dumps({"iat": now - 60, "exp": now + 540, "iss": app_id},
+                                       separators=(",", ":")).encode("utf-8")))
+    try:
+        signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key_path, "-binary"],
+                                   input=signing_input.encode("ascii"), capture_output=True,
+                                   check=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        raise GhError("GitHub App JWT signing failed") from None
+    return signing_input + "." + encode(signature)
+
+
+class _NoAppRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _app_http(url: str, method: str, headers: Dict[str, str], body: Optional[str] = None) -> Dict[str, Any]:
+    try:
+        origin = urlsplit(url)
+        if origin.scheme != "https" or origin.netloc != "api.github.com":
+            raise ValueError("unexpected App API origin")
+        request = Request(url, data=body.encode("utf-8") if body is not None else None,
+                          headers=headers, method=method)
+        with build_opener(_NoAppRedirect()).open(request, timeout=30) as response:
+            result_url = urlsplit(response.geturl())
+            if (result_url.scheme != "https" or result_url.netloc != "api.github.com"
+                    or not 200 <= response.getcode() < 300):
+                raise ValueError("unexpected App API response")
+            payload = response.read(1024 * 1024 + 1)
+            if len(payload) > 1024 * 1024:
+                raise ValueError("App API response exceeds size limit")
+            return json.loads(payload)
+    except Exception:
+        # HTTP errors may echo authorization material or payloads; do not propagate their text.
+        raise GhError("scoped GitHub App request failed") from None
 
 
 class GhError(RuntimeError):
@@ -68,10 +117,46 @@ def _default_runner(argv: List[str], stdin: Optional[str] = None) -> Tuple[int, 
 class GhCliPort:
     """읽기와 생성만 한다. 판단은 `apply_plan` 이 갖는다."""
 
-    def __init__(self, runner: Runner = None, gh: str = "gh"):
+    def __init__(self, runner: Runner = None, gh: str = "gh", *, http=None, app_signer=None):
         self.run = runner or _default_runner
         self.gh = gh
         self.calls: List[List[str]] = []
+        self.http = http or _app_http
+        self.app_signer = app_signer or _app_jwt
+        self._issue_sources: Dict[Tuple[str, str], int] = {}
+
+    def _source_token(self, repository_id: int) -> str:
+        """Requires RF_GITHUB_APP_ID, RF_GITHUB_APP_INSTALLATION_ID and RF_GITHUB_APP_PRIVATE_KEY_PATH."""
+        app_id = os.environ.get("RF_GITHUB_APP_ID", "")
+        installation_id = os.environ.get("RF_GITHUB_APP_INSTALLATION_ID", "")
+        key_path = os.environ.get("RF_GITHUB_APP_PRIVATE_KEY_PATH", "")
+        if (not app_id.isdecimal() or not installation_id.isdecimal() or
+                not key_path or not Path(key_path).is_file()):
+            raise GhError("issue update requires configured GitHub App ID, installation ID and key path")
+        jwt = self.app_signer(key_path, app_id)
+        response = self.http(f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+                             "POST", {"Authorization": f"Bearer {jwt}",
+                                      "Accept": "application/vnd.github+json",
+                                      "Content-Type": "application/json"},
+                             json.dumps({"repository_ids": [repository_id],
+                                         "permissions": {"issues": "write"}}))
+        if (not isinstance(response, dict) or not isinstance(response.get("token"), str)
+                or not response["token"] or response.get("permissions", {}).get("issues") != "write"
+                or not isinstance(response.get("repositories"), list)
+                or [r.get("id") for r in response["repositories"] if isinstance(r, dict)] != [repository_id]
+                or len(response["repositories"]) != 1):
+            raise GhError("GitHub App token scope is not exactly the source repository with issues:write")
+        token = response["token"]
+        visible = self.http("https://api.github.com/installation/repositories", "GET",
+                            {"Authorization": f"Bearer {token}",
+                             "Accept": "application/vnd.github+json"})
+        if (not isinstance(visible, dict) or visible.get("total_count") != 1
+                or not isinstance(visible.get("repositories"), list)
+                or len(visible["repositories"]) != 1
+                or not isinstance(visible["repositories"][0], dict)
+                or visible["repositories"][0].get("id") != repository_id):
+            raise GhError("GitHub App token repository readback differs from source repository")
+        return token
 
     def _api(self, path: str) -> Optional[Dict[str, Any]]:
         argv = [self.gh, "api", path]
@@ -148,6 +233,11 @@ class GhCliPort:
         if resource_type == "issue":
             if not ref or not ref.isdecimal():
                 raise GhError(f"issue identity must name a numeric issue number: {identity!r}")
+            source = self._api(f"repos/{owner}/{repo}")
+            repository_id = source.get("id") if isinstance(source, dict) else None
+            if (isinstance(repository_id, bool) or not isinstance(repository_id, int)
+                    or repository_id <= 0):
+                raise GhError(f"issue source repository has no immutable numeric ID: {identity!r}")
             observed = self._api(f"repos/{owner}/{repo}/issues/{ref}")
             if observed is None:
                 return None
@@ -169,6 +259,8 @@ class GhCliPort:
                 node_id = observed.get("id")
                 if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
                     raise GhError(f"issue has no stable node_id or id: {identity!r}")
+            if isinstance(node_id, str):
+                self._issue_sources[(identity, node_id)] = repository_id
             return {"identity": identity, "resourceType": "issue", "nodeId": node_id,
                     "title": observed.get("title"), "body": observed.get("body"),
                     "state": observed.get("state")}
@@ -300,13 +392,15 @@ class GhCliPort:
             body["id"] = observed_node_id
             payload = {"query": "mutation($input: UpdateIssueInput!) { updateIssue(input: $input) { issue { id } } }",
                        "variables": {"input": body}}
-            argv = [self.gh, "api", "graphql", "--method", "POST", "--input", "-"]
-            self.calls.append(argv)
-            code, out, err = self.run(argv, json.dumps(payload))
-            if code != 0:
-                raise GhError(f"updating issue {ref} on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            repository_id = self._issue_sources.pop((identity, observed_node_id), None)
+            if repository_id is None:
+                raise GhError(f"issue update requires source repository observation: {identity!r}")
+            token = self._source_token(repository_id)
+            reply = self.http("https://api.github.com/graphql", "POST",
+                              {"Authorization": f"Bearer {token}",
+                               "Accept": "application/vnd.github+json",
+                               "Content-Type": "application/json"}, json.dumps(payload))
             try:
-                reply = json.loads(out)
                 if (not isinstance(reply, dict) or reply.get("errors")
                         or ((reply.get("data") or {}).get("updateIssue") or {}).get("issue", {}).get("id")
                         != observed_node_id):
