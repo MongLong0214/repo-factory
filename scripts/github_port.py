@@ -385,28 +385,32 @@ class GhCliPort:
             if unknown or not spec:
                 raise GhError(f"issue updates accept only non-empty {sorted(fields)} state: {identity!r}")
             body = {field: spec[field] for field in fields if field in spec}
-            if "state" in body:
-                if body["state"] not in ("open", "closed"):
-                    raise GhError(f"issue update has an unsupported state: {identity!r}")
-                body["state"] = body["state"].upper()
-            body["id"] = observed_node_id
-            payload = {"query": "mutation($input: UpdateIssueInput!) { updateIssue(input: $input) { issue { id } } }",
-                       "variables": {"input": body}}
+            if "state" in body and body["state"] not in ("open", "closed"):
+                raise GhError(f"issue update has an unsupported state: {identity!r}")
             repository_id = self._issue_sources.pop((identity, observed_node_id), None)
             if repository_id is None:
                 raise GhError(f"issue update requires source repository observation: {identity!r}")
             token = self._source_token(repository_id)
-            reply = self.http("https://api.github.com/graphql", "POST",
-                              {"Authorization": f"Bearer {token}",
-                               "Accept": "application/vnd.github+json",
-                               "Content-Type": "application/json"}, json.dumps(payload))
-            try:
-                if (not isinstance(reply, dict) or reply.get("errors")
-                        or ((reply.get("data") or {}).get("updateIssue") or {}).get("issue", {}).get("id")
-                        != observed_node_id):
-                    raise ValueError("GraphQL errors or missing/mismatched issue id")
-            except (ValueError, TypeError, AttributeError) as error:
-                raise GhError(f"issue update GraphQL response was not verified: {identity!r}") from error
+            # The approved name is part of the write target. A GraphQL node ID follows a
+            # repository rename; this REST path must instead fail on an old-name 301.
+            url = f"https://api.github.com/repos/{owner}/{repo}/issues/{ref}"
+            headers = {"Authorization": f"Bearer {token}",
+                       "Accept": "application/vnd.github+json",
+                       "Content-Type": "application/json"}
+            target = self.http(url, "GET", headers)
+            if (not isinstance(target, dict) or target.get("node_id") != observed_node_id
+                    or target.get("repository_url", "").casefold()
+                    != f"https://api.github.com/repos/{owner}/{repo}".casefold()
+                    or isinstance(target.get("number"), bool) or target.get("number") != int(ref)
+                    or "pull_request" in target):
+                raise GhError(f"issue update preflight target differs from observed issue: {identity!r}")
+            reply = self.http(url, "PATCH", headers, json.dumps(body))
+            if (not isinstance(reply, dict) or reply.get("node_id") != observed_node_id
+                    or reply.get("repository_url", "").casefold()
+                    != f"https://api.github.com/repos/{owner}/{repo}".casefold()
+                    or isinstance(reply.get("number"), bool) or reply.get("number") != int(ref)
+                    or "pull_request" in reply):
+                raise GhError(f"issue update REST response was not verified: {identity!r}")
             return
         raise GhError(
             f"no update is implemented for resourceType {resource_type!r}; an unobservable or "

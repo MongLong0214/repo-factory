@@ -17,7 +17,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    OWNER_AUTHORIZATION_REQUIRED, REREAD_MISMATCH, RESUMED_RESOURCE_DRIFTED, ApplyError, ReceiptLedger,
+    OWNER_AUTHORIZATION_REQUIRED, RESUMED_RESOURCE_DRIFTED, ApplyError, ReceiptLedger,
     apply_plan, authorized_plan_receipt,
 )
 
@@ -33,15 +33,16 @@ def approval(plan_core, authority: str = "OWNER"):
 from github_port import GhCliPort, GhError, _app_http, parse_identity  # noqa: E402
 
 
+@pytest.mark.parametrize("target", ["https://attacker.invalid/steal",
+                                    "https://api.github.com/repos/example/beta/issues/42"])
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
 @pytest.mark.parametrize("path,method,body", [
     ("/app/installations/456/access_tokens", "POST", '{"repository_ids":[17]}'),
     ("/installation/repositories", "GET", None),
-    ("/graphql", "POST", '{"query":"mutation"}'),
+    ("/repos/example/alpha/issues/42", "PATCH", '{"title":"approved"}'),
 ])
-def test_scoped_app_http_never_follows_credential_redirect(monkeypatch, path, method, body, status):
+def test_scoped_app_http_never_follows_credential_redirect(monkeypatch, path, method, body, status, target):
     credential = "test-only-secret-credential"
-    target = "https://attacker.invalid/steal"
     seen = []
 
     def fake_https_open(self, request):
@@ -134,26 +135,74 @@ def test_transfer_after_observation_cannot_update_destination(tmp_path, monkeypa
         if url.endswith("/access_tokens"):
             state["minted"] += 1
             assert json.loads(body) == {"repository_ids": [17], "permissions": {"issues": "write"}}
-            state["repository"] = 99  # issue transferred after observation, before GraphQL
+            state["repository"] = 99  # issue transferred after observation, before REST preflight
             return {"token": "scoped-test-token", "repositories": [{"id": 17}],
                     "permissions": {"issues": "write"}}
         if url.endswith("/installation/repositories"):
             assert headers["Authorization"] == "Bearer scoped-test-token"
             return {"total_count": 1, "repositories": [{"id": 17}]}
-        if url.endswith("/graphql"):
-            assert headers["Authorization"] == "Bearer scoped-test-token"
-            assert json.loads(body)["variables"]["input"]["id"] == "I_original"
-            state["mutation_attempts"] += 1
-            if state["repository"] != 17:
-                return {"errors": [{"message": "Resource not accessible by integration"}]}
-            state["title"] = "Approved title"
-            return {"data": {"updateIssue": {"issue": {"id": "I_original"}}}}
-        raise AssertionError(url)
+        assert url == "https://api.github.com/repos/example/alpha/issues/42"
+        assert headers["Authorization"] == "Bearer scoped-test-token"
+        if state["repository"] != 17:
+            raise GhError("scoped GitHub App request failed")  # 301: transferred
+        if method == "GET":
+            return {"repository_url": "https://api.github.com/repos/example/alpha",
+                    "number": 42, "node_id": "I_original"}
+        state["mutation_attempts"] += 1
+        state["title"] = "Approved title"
+        return {"repository_url": "https://api.github.com/repos/example/alpha",
+                "number": 42, "node_id": "I_original"}
     port = GhCliPort(runner=run, http=http, app_signer=lambda path, app_id: "test-jwt")
     book = ReceiptLedger(tmp_path / "receipts.json")
     with pytest.raises(ApplyError, match="remote"):
         apply_plan(core, port, book, authorization=approval(core))
-    assert state == {"repository": 99, "title": "Old title", "mutation_attempts": 1, "minted": 1}
+    assert state == {"repository": 99, "title": "Old title", "mutation_attempts": 0, "minted": 1}
+    assert book.get("update-issue:42") is None
+
+
+def test_rename_after_observation_never_mutates_renamed_repository(tmp_path, monkeypatch):
+    identity = "github:example/alpha#42"
+    core = {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
+            "requestDigest": "sha256:" + "a" * 64, "authorization": "OWNER",
+            "githubOperations": [{"operationId": "update-issue:42", "resourceType": "issue",
+                                  "intent": "update", "resourceIdentity": identity,
+                                  "desiredState": {"title": "Approved title"}}]}
+    for key, value in {"RF_GITHUB_APP_ID": "123", "RF_GITHUB_APP_INSTALLATION_ID": "456",
+                       "RF_GITHUB_APP_PRIVATE_KEY_PATH": str(tmp_path / "key.pem")}.items():
+        monkeypatch.setenv(key, value)
+    (tmp_path / "key.pem").write_text("test-only key")
+    state = {"name": "alpha", "title": "Old title", "writes": 0}
+
+    def run(argv, stdin=None):
+        if argv == ["gh", "api", "repos/example/alpha"]:
+            return 0, '{"id":17}', ""
+        if argv == ["gh", "api", "repos/example/alpha/issues/42"]:
+            return 0, json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
+                                  "number": 42, "node_id": "I_original", "title": state["title"]}), ""
+        raise AssertionError(argv)
+
+    def http(url, method, headers, body=None):
+        if url.endswith("/access_tokens"):
+            state["name"] = "beta"  # same numeric repo ID and issue node ID, now at beta
+            return {"token": "scoped-test-token", "repositories": [{"id": 17}],
+                    "permissions": {"issues": "write"}}
+        if url.endswith("/installation/repositories"):
+            return {"total_count": 1, "repositories": [{"id": 17}]}
+        if url.endswith("/graphql"):
+            state["writes"] += 1
+            state["title"] = "Approved title"
+            return {"data": {"updateIssue": {"issue": {"id": "I_original"}}}}
+        assert url == "https://api.github.com/repos/example/alpha/issues/42"
+        assert headers["Authorization"] == "Bearer scoped-test-token"
+        if method in ("GET", "PATCH"):
+            raise GhError("scoped GitHub App request failed")  # old path redirects on rename
+        raise AssertionError(method)
+
+    port = GhCliPort(runner=run, http=http, app_signer=lambda *_: "test-jwt")
+    book = ReceiptLedger(tmp_path / "receipts.json")
+    with pytest.raises(ApplyError, match="remote"):
+        apply_plan(core, port, book, authorization=approval(core))
+    assert state == {"name": "beta", "title": "Old title", "writes": 0}
     assert book.get("update-issue:42") is None
 
 
@@ -403,7 +452,7 @@ def test_transferred_or_unverified_issue_target_is_not_observed(target):
         port.observe("issue", "github:example/alpha#42")
 
 
-def scoped_test_port(tmp_path, monkeypatch, runner, graphql):
+def scoped_test_port(tmp_path, monkeypatch, runner, rest):
     for key, value in {"RF_GITHUB_APP_ID": "123", "RF_GITHUB_APP_INSTALLATION_ID": "456",
                        "RF_GITHUB_APP_PRIVATE_KEY_PATH": str(tmp_path / "key.pem")}.items():
         monkeypatch.setenv(key, value)
@@ -417,10 +466,15 @@ def scoped_test_port(tmp_path, monkeypatch, runner, graphql):
                     "permissions": {"issues": "write"}}
         if url.endswith("/installation/repositories"):
             return {"total_count": 1, "repositories": [{"id": 17}]}
-        assert url.endswith("/graphql")
+        assert url == "https://api.github.com/repos/example/alpha/issues/42"
         assert headers["Authorization"] == "Bearer test-scoped-token"
-        return graphql(json.loads(body))
+        return rest(method, json.loads(body) if body is not None else None)
     return GhCliPort(runner=runner, http=http, app_signer=lambda *_: "test-jwt"), calls
+
+
+def issue_reply(node_id="I_original"):
+    return {"repository_url": "https://api.github.com/repos/example/alpha",
+            "number": 42, "node_id": node_id}
 
 
 def test_absent_app_configuration_never_falls_back_to_gh(tmp_path, monkeypatch):
@@ -462,11 +516,12 @@ def test_partial_app_configuration_refuses_without_http(tmp_path, monkeypatch, m
     ({"token": "scoped", "repositories": [{"id": 17}], "permissions": {"issues": "write"}},
      {"total_count": 1, "repositories": [{"id": 99}]}),
 ])
-def test_unverified_app_token_scope_never_sends_graphql(tmp_path, monkeypatch, minted, visible):
+def test_unverified_app_token_scope_never_sends_rest_write(tmp_path, monkeypatch, minted, visible):
     gh = ScriptedGh([("issues/42", (0, json.dumps({
         "repository_url": "https://api.github.com/repos/example/alpha", "number": 42,
         "node_id": "I_original"}), ""))])
-    port, _ = scoped_test_port(tmp_path, monkeypatch, gh, lambda _: pytest.fail("GraphQL attempted"))
+    port, _ = scoped_test_port(tmp_path, monkeypatch, gh,
+                               lambda method, body: pytest.fail("REST write attempted"))
     calls = []
     def http(url, method, headers, body=None):
         calls.append(url)
@@ -474,14 +529,14 @@ def test_unverified_app_token_scope_never_sends_graphql(tmp_path, monkeypatch, m
             return minted
         if url.endswith("/installation/repositories"):
             return visible
-        pytest.fail("GraphQL attempted without verified source-only scope")
+        pytest.fail("REST request attempted without verified source-only scope")
     port.http = http
     port.observe("issue", "github:example/alpha#42")
     with pytest.raises(GhError, match="scope|readback"):
         port.update("issue", "github:example/alpha#42", {"title": "Approved"},
                     observed_node_id="I_original")
-    assert not any(url.endswith("/graphql") for url in calls)
-    assert all("graphql" not in " ".join(argv) for argv in gh.seen)
+    assert not any(url.endswith("/issues/42") for url in calls)
+    assert all("PATCH" not in argv for argv in gh.seen)
 
 
 def test_an_issue_update_writes_only_the_observed_plan_vocabulary(tmp_path, monkeypatch):
@@ -489,29 +544,29 @@ def test_an_issue_update_writes_only_the_observed_plan_vocabulary(tmp_path, monk
         "repository_url": "https://api.github.com/repos/example/alpha", "number": 42,
         "node_id": "I_original", "title": "Old title"}), ""))])
     port, calls = scoped_test_port(tmp_path, monkeypatch, scripted,
-                                   lambda payload: {"data": {"updateIssue": {"issue": {"id": "I_original"}}}})
+                                   lambda method, body: issue_reply())
     port.observe("issue", "github:example/alpha#42")
 
     port.update("issue", "github:example/alpha#42",
                 {"title": "Approved title", "body": "Approved body", "state": "closed"},
                 observed_node_id="I_original")
 
-    assert calls[-1][0] == "https://api.github.com/graphql"
+    assert calls[-2][0:2] == ("https://api.github.com/repos/example/alpha/issues/42", "GET")
+    assert calls[-1][0:2] == ("https://api.github.com/repos/example/alpha/issues/42", "PATCH")
     assert all("test-scoped-token" not in " ".join(argv) for argv in scripted.seen)
-    payload = json.loads(calls[-1][3])
-    assert "updateIssue" in payload["query"]
-    assert payload["variables"] == {"input": {"id": "I_original", "title": "Approved title",
-                                               "body": "Approved body", "state": "CLOSED"}}
+    assert json.loads(calls[-1][3]) == {"title": "Approved title", "body": "Approved body",
+                                       "state": "closed"}
 
 
-def test_issue_graphql_errors_refuse_the_update(tmp_path, monkeypatch):
+def test_issue_rest_response_mismatch_refuses_the_update(tmp_path, monkeypatch):
     gh = ScriptedGh([("issues/42", (0, json.dumps({
         "repository_url": "https://api.github.com/repos/example/alpha", "number": 42,
         "node_id": "I_original", "title": "Old title"}), ""))])
     port, _ = scoped_test_port(tmp_path, monkeypatch, gh,
-                               lambda payload: {"errors": [{"message": "refused"}], "data": None})
+                               lambda method, body: issue_reply("I_other" if method == "PATCH"
+                                                                else "I_original"))
     port.observe("issue", "github:example/alpha#42")
-    with pytest.raises(GhError, match="GraphQL"):
+    with pytest.raises(GhError, match="REST response"):
         port.update("issue", "github:example/alpha#42", {"title": "Approved title"},
                     observed_node_id="I_original")
 
@@ -556,20 +611,18 @@ def test_number_retarget_between_observation_and_update_never_mutates_replacemen
         raise AssertionError(f"unexpected gh command: {argv}")
 
     book = ReceiptLedger(tmp_path / "receipts.json")
-    def graphql(payload):
-        target = payload["variables"]["input"]["id"]
-        state["mutation_ids"].append(target)
-        if target == "I_original":
-            state["original_title"] = "Approved title"
-        else:
-            state["replacement_title"] = "Approved title"
-        return {"data": {"updateIssue": {"issue": {"id": target}}}}
-    port, _ = scoped_test_port(tmp_path, monkeypatch, run, graphql)
+    def rest(method, body):
+        if method == "GET":
+            return issue_reply(state["current"])
+        state["mutation_ids"].append(state["current"])
+        state["replacement_title"] = body["title"]
+        return issue_reply(state["current"])
+    port, _ = scoped_test_port(tmp_path, monkeypatch, run, rest)
     with pytest.raises(ApplyError) as caught:
         apply_plan(plan, port, book, authorization=approval(plan))
-    assert caught.value.code == REREAD_MISMATCH
+    assert caught.value.code == "REMOTE_REFUSED"
     assert state["replacement_title"] == "Other title"
-    assert state["mutation_ids"] == ["I_original"]
+    assert state["mutation_ids"] == []
     assert book.get("update-issue:42") is None
 
 
@@ -605,15 +658,14 @@ def test_recreated_issue_with_identical_state_is_not_resumed(tmp_path, monkeypat
                            "number": 42, "node_id": node_id, "title": "Approved title",
                            "body": "Approved body", "state": "open"})
 
-    scripted = ScriptedGh([("issues/42", (0, issue("I_original"), "")),
-                           ("api graphql", (0, '{"data":{"updateIssue":{"issue":{"id":"I_original"}}}}', ""))])
+    scripted = ScriptedGh([("issues/42", (0, issue("I_original"), ""))])
     port, calls = scoped_test_port(tmp_path, monkeypatch, scripted,
-                                   lambda payload: {"data": {"updateIssue": {"issue": {"id": "I_original"}}}})
+                                   lambda method, body: issue_reply())
     book = ReceiptLedger(tmp_path / "receipts.json")
     authorized = approval(plan)
     apply_plan(plan, port, book, authorization=authorized)
     scripted.responses = [("issues/42", (0, issue("I_recreated"), ""))]
-    writes_before_resume = len([call for call in calls if call[0].endswith("/graphql")])
+    writes_before_resume = len([call for call in calls if call[1] == "PATCH"])
 
     with pytest.raises(ApplyError) as caught:
         apply_plan(plan, port, ReceiptLedger(book.path), authorization=authorized)
@@ -621,7 +673,7 @@ def test_recreated_issue_with_identical_state_is_not_resumed(tmp_path, monkeypat
     assert book.get(operation["operationId"])["resourceFingerprint"] == "I_original"
     assert caught.value.code == RESUMED_RESOURCE_DRIFTED
     assert caught.value.evidence["observed"] == "I_recreated"
-    assert len([call for call in calls if call[0].endswith("/graphql")]) == writes_before_resume
+    assert len([call for call in calls if call[1] == "PATCH"]) == writes_before_resume
 
 
 def test_the_port_reads_the_security_posture_it_was_asked_about():
