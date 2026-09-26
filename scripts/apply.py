@@ -86,7 +86,8 @@ class GitHubPort(Protocol):
     def create(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
         """만들기만 한다. 만들어졌는지는 호출자가 다시 읽어 판단한다."""
 
-    def update(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
+    def update(self, resource_type: str, identity: str, spec: Dict[str, Any],
+               *, observed_node_id: Optional[str] = None) -> None:
         """있는 것을 바꾸기만 한다. 바뀌었는지는 호출자가 다시 읽어 판단한다."""
 
 
@@ -472,6 +473,9 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
         try:
             if intent == "create":
                 port.create(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
+            elif operation["resourceType"] == "issue":
+                port.update(operation["resourceType"], operation["resourceIdentity"],
+                            operation["desiredState"], observed_node_id=(observed or {}).get("nodeId"))
             else:
                 port.update(operation["resourceType"], operation["resourceIdentity"], operation["desiredState"])
 

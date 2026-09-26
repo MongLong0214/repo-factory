@@ -246,7 +246,8 @@ class GhCliPort:
             return
         raise GhError(f"no creation is implemented for resourceType {resource_type!r}")
 
-    def update(self, resource_type: str, identity: str, spec: Dict[str, Any]) -> None:
+    def update(self, resource_type: str, identity: str, spec: Dict[str, Any],
+               *, observed_node_id: Optional[str] = None) -> None:
         owner, repo, ref = parse_identity(identity)
         if resource_type == "setting" and ref == "secret-scanning":
             # Plan 의 어휘를 그대로 읽는다. API 의 이름(`secret_scanning`)으로 읽으면 Plan 이
@@ -285,17 +286,33 @@ class GhCliPort:
         if resource_type == "issue":
             if not ref or not ref.isdecimal():
                 raise GhError(f"issue update must name a numeric issue number: {identity!r}")
+            if not isinstance(observed_node_id, str) or not observed_node_id.strip():
+                raise GhError(f"issue update requires an observed GraphQL node_id: {identity!r}")
             fields = {"title", "body", "state"}
             unknown = set(spec) - fields
             if unknown or not spec:
                 raise GhError(f"issue updates accept only non-empty {sorted(fields)} state: {identity!r}")
             body = {field: spec[field] for field in fields if field in spec}
-            argv = [self.gh, "api", "--method", "PATCH", f"repos/{owner}/{repo}/issues/{ref}",
-                    "--input", "-"]
+            if "state" in body:
+                if body["state"] not in ("open", "closed"):
+                    raise GhError(f"issue update has an unsupported state: {identity!r}")
+                body["state"] = body["state"].upper()
+            body["id"] = observed_node_id
+            payload = {"query": "mutation($input: UpdateIssueInput!) { updateIssue(input: $input) { issue { id } } }",
+                       "variables": {"input": body}}
+            argv = [self.gh, "api", "graphql", "--method", "POST", "--input", "-"]
             self.calls.append(argv)
-            code, _, err = self.run(argv, json.dumps(body))
+            code, out, err = self.run(argv, json.dumps(payload))
             if code != 0:
                 raise GhError(f"updating issue {ref} on {owner}/{repo} failed ({code}): {err.strip()[:200]}")
+            try:
+                reply = json.loads(out)
+                if (not isinstance(reply, dict) or reply.get("errors")
+                        or ((reply.get("data") or {}).get("updateIssue") or {}).get("issue", {}).get("id")
+                        != observed_node_id):
+                    raise ValueError("GraphQL errors or missing/mismatched issue id")
+            except (ValueError, TypeError, AttributeError) as error:
+                raise GhError(f"issue update GraphQL response was not verified: {identity!r}") from error
             return
         raise GhError(
             f"no update is implemented for resourceType {resource_type!r}; an unobservable or "

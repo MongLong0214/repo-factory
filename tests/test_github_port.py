@@ -13,7 +13,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
-    OWNER_AUTHORIZATION_REQUIRED, RESUMED_RESOURCE_DRIFTED, ApplyError, ReceiptLedger,
+    OWNER_AUTHORIZATION_REQUIRED, REREAD_MISMATCH, RESUMED_RESOURCE_DRIFTED, ApplyError, ReceiptLedger,
     apply_plan, authorized_plan_receipt,
 )
 
@@ -273,15 +273,77 @@ def test_transferred_or_unverified_issue_target_is_not_observed(target):
 
 
 def test_an_issue_update_writes_only_the_observed_plan_vocabulary():
-    port = GhCliPort(runner=(scripted := ScriptedGh([("issues/42", (0, "{}", ""))])))
+    port = GhCliPort(runner=(scripted := ScriptedGh([("api graphql", (0, '{"data":{"updateIssue":{"issue":{"id":"I_original"}}}}', ""))])))
 
     port.update("issue", "github:example/alpha#42",
-                {"title": "Approved title", "body": "Approved body", "state": "closed"})
+                {"title": "Approved title", "body": "Approved body", "state": "closed"},
+                observed_node_id="I_original")
 
-    assert scripted.seen[-1] == ["gh", "api", "--method", "PATCH", "repos/example/alpha/issues/42",
-                                 "--input", "-"]
-    assert json.loads(scripted.stdin[-1]) == {
-        "title": "Approved title", "body": "Approved body", "state": "closed"}
+    assert scripted.seen[-1] == ["gh", "api", "graphql", "--method", "POST", "--input", "-"]
+    payload = json.loads(scripted.stdin[-1])
+    assert "updateIssue" in payload["query"]
+    assert payload["variables"] == {"input": {"id": "I_original", "title": "Approved title",
+                                               "body": "Approved body", "state": "CLOSED"}}
+
+
+def test_issue_graphql_errors_refuse_the_update():
+    gh = ScriptedGh([("api graphql", (0, '{"errors":[{"message":"refused"}],"data":null}', ""))])
+    port = GhCliPort(runner=gh)
+    with pytest.raises(GhError, match="GraphQL"):
+        port.update("issue", "github:example/alpha#42", {"title": "Approved title"},
+                    observed_node_id="I_original")
+
+
+def test_numeric_only_issue_id_is_not_usable_for_mutation():
+    body = json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
+                       "number": 42, "id": 83042, "title": "Old title"})
+    gh = ScriptedGh([("issues/42", (0, body, ""))])
+    port = GhCliPort(runner=gh)
+    observed = port.observe("issue", "github:example/alpha#42")
+    with pytest.raises(GhError, match="node_id"):
+        port.update("issue", "github:example/alpha#42", {"title": "Approved title"},
+                    observed_node_id=observed["nodeId"])
+    assert gh.seen == [["gh", "api", "repos/example/alpha/issues/42"]]
+
+
+def test_number_retarget_between_observation_and_update_never_mutates_replacement(tmp_path):
+    identity = "github:example/alpha#42"
+    operation = {"operationId": "update-issue:42", "resourceType": "issue", "intent": "update",
+                 "resourceIdentity": identity, "desiredState": {"title": "Approved title"}}
+    plan = {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
+            "requestDigest": "sha256:" + "a" * 64, "authorization": "OWNER",
+            "githubOperations": [operation]}
+    state = {"current": "I_original", "original_title": "Old title", "replacement_title": "Other title",
+             "mutation_ids": []}
+
+    def run(argv, stdin=None):
+        if argv == ["gh", "api", "repos/example/alpha/issues/42"]:
+            observed = state["current"]
+            if observed == "I_original":
+                state["current"] = "I_replacement"  # deletion/recreation after the first GET
+            title = state["original_title"] if observed == "I_original" else state["replacement_title"]
+            return 0, json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
+                                  "number": 42, "node_id": observed, "title": title, "body": "", "state": "open"}), ""
+        if argv == ["gh", "api", "graphql", "--method", "POST", "--input", "-"]:
+            target = json.loads(stdin)["variables"]["input"]["id"]
+            state["mutation_ids"].append(target)
+            if target == "I_original":
+                state["original_title"] = "Approved title"
+            else:
+                state["replacement_title"] = "Approved title"
+            return 0, json.dumps({"data": {"updateIssue": {"issue": {"id": target}}}}), ""
+        if "PATCH" in argv:
+            state["replacement_title"] = json.loads(stdin)["title"]
+            return 0, "{}", ""
+        raise AssertionError(f"unexpected gh command: {argv}")
+
+    book = ReceiptLedger(tmp_path / "receipts.json")
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(plan, GhCliPort(runner=run), book, authorization=approval(plan))
+    assert caught.value.code == REREAD_MISMATCH
+    assert state["replacement_title"] == "Other title"
+    assert state["mutation_ids"] == ["I_original"]
+    assert book.get("update-issue:42") is None
 
 
 def test_a_pull_request_is_not_mistaken_for_an_updatable_issue():
@@ -316,7 +378,8 @@ def test_recreated_issue_with_identical_state_is_not_resumed(tmp_path):
                            "number": 42, "node_id": node_id, "title": "Approved title",
                            "body": "Approved body", "state": "open"})
 
-    scripted = ScriptedGh([("issues/42", (0, issue("I_original"), ""))])
+    scripted = ScriptedGh([("issues/42", (0, issue("I_original"), "")),
+                           ("api graphql", (0, '{"data":{"updateIssue":{"issue":{"id":"I_original"}}}}', ""))])
     port = GhCliPort(runner=scripted)
     book = ReceiptLedger(tmp_path / "receipts.json")
     authorized = approval(plan)

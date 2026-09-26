@@ -422,8 +422,7 @@ def test_an_update_changes_the_resource_and_is_re_read_against_the_approved_stat
     assert result["receipts"][0]["beforeStateDigest"] is not None
 
 
-@pytest.mark.parametrize("fingerprint_field", ["nodeId", "id"])
-def test_an_update_that_rereads_a_different_immutable_issue_is_not_completed(tmp_path, fingerprint_field):
+def test_an_update_that_rereads_a_different_immutable_issue_is_not_completed(tmp_path):
     core = plan("alpha")
     identity = "github:example/alpha#42"
     core["githubOperations"] = [{"operationId": "update-issue:42", "resourceType": "issue",
@@ -437,9 +436,10 @@ def test_an_update_that_rereads_a_different_immutable_issue_is_not_completed(tmp
 
         def observe(self, resource_type, requested):
             return {"identity": requested, "resourceType": resource_type,
-                    fingerprint_field: self.current, "title": "Approved title"}
+                    "nodeId": self.current, "title": "Approved title"}
 
-        def update(self, resource_type, requested, spec):
+        def update(self, resource_type, requested, spec, *, observed_node_id=None):
+            assert observed_node_id == "I_original"
             self.writes += 1
             self.current = "I_replacement"
 
