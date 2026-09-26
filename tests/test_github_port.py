@@ -245,23 +245,23 @@ def test_a_ruleset_identity_without_a_name_is_refused():
 
 
 def test_an_issue_is_read_by_its_numeric_identity_in_the_plan_vocabulary():
-    body = json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+    body = json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
                        "number": 42, "id": 83042, "title": "Approved title",
                        "body": "Approved body", "state": "open"})
     port = GhCliPort(runner=(scripted := ScriptedGh([("issues/42", (0, body, ""))])))
 
-    observed = port.observe("issue", "github:MongLong0214/alpha#42")
+    observed = port.observe("issue", "github:example/alpha#42")
 
-    assert scripted.seen[-1] == ["gh", "api", "repos/MongLong0214/alpha/issues/42"]
-    assert observed == {"identity": "github:MongLong0214/alpha#42", "resourceType": "issue",
+    assert scripted.seen[-1] == ["gh", "api", "repos/example/alpha/issues/42"]
+    assert observed == {"identity": "github:example/alpha#42", "resourceType": "issue",
                         "nodeId": 83042, "title": "Approved title", "body": "Approved body", "state": "open"}
 
 
 @pytest.mark.parametrize("target", [
     {"repository_url": "https://api.github.com/repos/other/destination", "number": 7},
-    {"repository_url": "https://api.github.com/repos/MongLong0214/alpha", "number": 7},
+    {"repository_url": "https://api.github.com/repos/example/alpha", "number": 7},
     {"number": 42},
-    {"repository_url": "https://api.github.com/repos/MongLong0214/alpha"},
+    {"repository_url": "https://api.github.com/repos/example/alpha"},
 ])
 def test_transferred_or_unverified_issue_target_is_not_observed(target):
     body = json.dumps({"node_id": "I_destination", "title": "Approved title",
@@ -269,16 +269,16 @@ def test_transferred_or_unverified_issue_target_is_not_observed(target):
     port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
 
     with pytest.raises(GhError, match="issue.*target"):
-        port.observe("issue", "github:MongLong0214/alpha#42")
+        port.observe("issue", "github:example/alpha#42")
 
 
 def test_an_issue_update_writes_only_the_observed_plan_vocabulary():
     port = GhCliPort(runner=(scripted := ScriptedGh([("issues/42", (0, "{}", ""))])))
 
-    port.update("issue", "github:MongLong0214/alpha#42",
+    port.update("issue", "github:example/alpha#42",
                 {"title": "Approved title", "body": "Approved body", "state": "closed"})
 
-    assert scripted.seen[-1] == ["gh", "api", "--method", "PATCH", "repos/MongLong0214/alpha/issues/42",
+    assert scripted.seen[-1] == ["gh", "api", "--method", "PATCH", "repos/example/alpha/issues/42",
                                  "--input", "-"]
     assert json.loads(scripted.stdin[-1]) == {
         "title": "Approved title", "body": "Approved body", "state": "closed"}
@@ -289,30 +289,30 @@ def test_a_pull_request_is_not_mistaken_for_an_updatable_issue():
     port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
 
     with pytest.raises(GhError, match="pull request"):
-        port.observe("issue", "github:MongLong0214/alpha#42")
+        port.observe("issue", "github:example/alpha#42")
 
 
 @pytest.mark.parametrize("ids", [{}, {"node_id": "", "id": None},
                                  {"node_id": "  ", "id": False}])
 def test_an_issue_without_a_stable_remote_id_is_not_observable(ids):
-    body = json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+    body = json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
                        "number": 42, "title": "Approved title", "body": "Approved body",
                        "state": "open", **ids})
     port = GhCliPort(runner=ScriptedGh([("issues/42", (0, body, ""))]))
 
     with pytest.raises(GhError, match="stable.*id"):
-        port.observe("issue", "github:MongLong0214/alpha#42")
+        port.observe("issue", "github:example/alpha#42")
 
 
 def test_recreated_issue_with_identical_state_is_not_resumed(tmp_path):
-    identity = "github:MongLong0214/alpha#42"
+    identity = "github:example/alpha#42"
     operation = {"operationId": "update-issue:42", "resourceType": "issue", "intent": "update",
                  "resourceIdentity": identity, "desiredState": {"title": "Approved title"}}
     plan = {"bootstrapOperationId": "11111111-2222-3333-4444-555555555555",
             "requestDigest": "sha256:" + "a" * 64, "authorization": "OWNER",
             "githubOperations": [operation]}
     def issue(node_id):
-        return json.dumps({"repository_url": "https://api.github.com/repos/MongLong0214/alpha",
+        return json.dumps({"repository_url": "https://api.github.com/repos/example/alpha",
                            "number": 42, "node_id": node_id, "title": "Approved title",
                            "body": "Approved body", "state": "open"})
 

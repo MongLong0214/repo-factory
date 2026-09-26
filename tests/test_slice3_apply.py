@@ -425,7 +425,7 @@ def test_an_update_changes_the_resource_and_is_re_read_against_the_approved_stat
 @pytest.mark.parametrize("fingerprint_field", ["nodeId", "id"])
 def test_an_update_that_rereads_a_different_immutable_issue_is_not_completed(tmp_path, fingerprint_field):
     core = plan("alpha")
-    identity = "github:MongLong0214/alpha#42"
+    identity = "github:example/alpha#42"
     core["githubOperations"] = [{"operationId": "update-issue:42", "resourceType": "issue",
                                  "intent": "update", "resourceIdentity": identity,
                                  "desiredState": {"title": "Approved title"}}]
