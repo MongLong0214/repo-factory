@@ -209,6 +209,7 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
         ledger = ReceiptLedger(book)
         ledger.record(publish_receipt(compiled["planCore"], {
             "repositoryIdentity": identity, "head": "a" * 40, "branches": ["main", "dev"],
+            "commitlore": {"outcome": "PASS", "detail": "init and doctor passed"},
             "committedPaths": sorted(compiled["files"]),
             "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
         }, clock=lambda: "2026-08-19T10:00:00Z"))

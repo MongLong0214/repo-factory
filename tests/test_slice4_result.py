@@ -103,7 +103,7 @@ CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm 
              "TEST_CMD": "npm test", "BUILD_CMD": "node --check index.js"}
 
 
-def chain_parts() -> tuple:
+def chain_parts(profile: str = "STANDARD") -> tuple:
     """Request → plan → apply(both phases) → the arguments a result is assembled from.
 
     Both phases, against one ledger and one port. Running only `before-files` produced a
@@ -111,7 +111,9 @@ def chain_parts() -> tuple:
     executed bootstrap reported as a finished one. The parser reads shape; completeness is only
     visible here.
     """
-    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION, stack="node",
+    request = copy.deepcopy(REQUEST)
+    request["bootstrapProfile"] = profile
+    compiled = compile_plan(request, VERIFICATION, stack="node",
                             ci_values=CI_VALUES,
                             operation_id="11111111-2222-3333-4444-555555555555")
     port = FakeGitHub()
@@ -124,6 +126,7 @@ def chain_parts() -> tuple:
         ledger = ReceiptLedger(book)
         ledger.record(publish_receipt(compiled["planCore"], {
             "repositoryIdentity": IDENTITY, "head": HEAD, "branches": ["main", "dev"],
+            "commitlore": {"outcome": "PASS", "detail": "init and doctor passed"},
             "committedPaths": sorted(compiled["files"]),
             "remoteHeads": {"main": HEAD, "dev": HEAD},
         }, clock=lambda: "2026-08-19T10:00:00Z"))
@@ -139,7 +142,8 @@ def chain_parts() -> tuple:
 def result_args(**overrides) -> dict:
     """A complete, valid argument set. Each refusal test overrides exactly the one thing it is
     about, so the refusal it asserts is the refusal it triggered."""
-    compiled, receipts = chain_parts()
+    profile = overrides.pop("profile", "STANDARD")
+    compiled, receipts = chain_parts(profile)
     args = dict(
         run_id=REQUEST["runId"],
         plan=compiled["planCore"],
@@ -189,6 +193,50 @@ def test_an_unverified_receipt_is_refused_at_assembly_not_at_handoff():
 
     with pytest.raises(ResultError, match="post-write re-read"):
         build_result(**result_args(receipts=receipts))
+
+
+def test_a_missing_commitlore_observation_cannot_be_assembled_as_success():
+    args = result_args()
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    del receipt["commitlore"]
+    with pytest.raises(ResultError, match="COMMITLORE_MISSING"):
+        build_result(**args)
+
+
+@pytest.mark.parametrize("profile,outcome", [("STANDARD", "REVISE"), ("GUARDED", "BLOCK")])
+def test_required_commitlore_failure_refuses_result_assembly(profile, outcome):
+    args = result_args()
+    args["plan"]["bootstrapProfile"] = profile
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    receipt["commitlore"] = {"outcome": outcome, "detail": "commitlore unavailable"}
+    with pytest.raises(ResultError, match=f"COMMITLORE_{outcome}"):
+        build_result(**args)
+
+
+def test_profile_policy_mismatch_cannot_make_a_required_failure_a_warning():
+    args = result_args()
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    receipt["commitlore"] = {"outcome": "WARN", "detail": "missing binary"}
+    with pytest.raises(ResultError, match="COMMITLORE_OUTCOME_INVALID"):
+        build_result(**args)
+
+
+def test_simple_warning_requires_failure_detail():
+    args = result_args(profile="SIMPLE")
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    receipt["commitlore"] = {"outcome": "WARN", "detail": ""}
+    with pytest.raises(ResultError, match="failure detail is missing"):
+        build_result(**args)
+
+
+def test_simple_warning_can_be_assembled_without_changing_result_shape():
+    args = result_args(profile="SIMPLE")
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    receipt["commitlore"] = {"outcome": "WARN", "detail": "commitlore unavailable"}
+    result = build_result(**args)
+    assert "commitlore" not in result
+    assert "commitlore" not in next(r for r in result["externalWriteReceipts"]
+                                    if r["resourceType"] == "genesis-commit")
 
 
 def test_a_repeated_operation_id_is_refused():

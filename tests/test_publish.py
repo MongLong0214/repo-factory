@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -11,7 +12,7 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from publish import PublishError, publish_files  # noqa: E402
+from publish import CommitLoreRefusal, PublishError, publish_files, publish_receipt  # noqa: E402
 
 import hashlib
 
@@ -20,9 +21,10 @@ IDENTITY = "github:MongLong0214/demo"
 REMOTE = "git@github.com:MongLong0214/demo.git"
 
 
-def plan_for(files: Dict[str, str]) -> Dict[str, object]:
+def plan_for(files: Dict[str, str], profile: str = "SIMPLE") -> Dict[str, object]:
     """The plan states the bytes, not only the paths. The publisher is bound to both."""
     return {
+        "bootstrapProfile": profile,
         "repositories": [{"role": "primary", "identity": IDENTITY, "visibility": "public"}],
         "files": [
             {"path": path,
@@ -38,6 +40,8 @@ def local_runner(pushes: List[List[str]], remote_heads: Dict[str, str] = None):
     remote that accepted it would. `remote_heads` overrides that, which is how a push that
     reported success without moving the remote gets represented."""
     def run(argv: List[str], cwd: Path) -> Tuple[int, str, str]:
+        if argv[0] == "commitlore":
+            return 0, "ready", ""
         if argv[:2] == ["git", "push"] or argv[:3] == ["git", "remote", "add"]:
             pushes.append(argv)
             return 0, "", ""
@@ -54,13 +58,13 @@ def local_runner(pushes: List[List[str]], remote_heads: Dict[str, str] = None):
 
 def publish(workdir: Path, files: Dict[str, str], pushes: List[List[str]],
             *, plan: Dict[str, object] = None, remote_url: str = REMOTE,
-            remote_heads: Dict[str, str] = None):
+            remote_heads: Dict[str, str] = None, runner=None):
     return publish_files(files, plan=plan if plan is not None else plan_for(FILES),
                          repository_identity=IDENTITY,
                          workdir=workdir, remote_url=remote_url,
                          author_name="Test", author_email="test@example.com",
                          message="feat: genesis",
-                         runner=local_runner(pushes, remote_heads))
+                         runner=runner or local_runner(pushes, remote_heads))
 
 
 def test_it_publishes_exactly_the_planned_paths(tmp_path):
@@ -178,3 +182,117 @@ def test_the_result_states_which_repository_and_which_remote_heads(tmp_path):
     assert result["repositoryIdentity"] == IDENTITY
     assert set(result["remoteHeads"]) == {"main", "dev"}
     assert all(head == result["head"] for head in result["remoteHeads"].values())
+
+
+def absent_commitlore(pushes):
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[0] == "commitlore":
+            raise FileNotFoundError("commitlore is not installed")
+        return git_runner(argv, cwd)
+    return run
+
+
+# --- RF-S19: SIMPLE optional CommitLore absence is an explicit warning -----------------
+
+def test_simple_missing_commitlore_warns_and_continues_with_a_receipt(tmp_path):
+    pushes = []
+    plan = plan_for(FILES, "SIMPLE")
+    heads = publish(tmp_path / "tree", FILES, pushes, plan=plan,
+                    runner=absent_commitlore(pushes))
+    assert [p[-1] for p in pushes if p[:2] == ["git", "push"]] == ["main", "dev"]
+    assert heads["commitlore"]["outcome"] == "WARN"
+    assert "not installed" in heads["commitlore"]["detail"]
+    receipt = publish_receipt({"bootstrapOperationId": "op", "requestDigest": "sha256:demo"},
+                              heads, clock=lambda: "2026-08-19T10:00:00Z")
+    assert receipt["commitlore"] == heads["commitlore"]
+
+
+def test_simple_success_is_pass_and_failure_is_never_pass(tmp_path):
+    success = publish(tmp_path / "success", FILES, [], plan=plan_for(FILES, "SIMPLE"))
+    assert success["commitlore"]["outcome"] == "PASS"
+    pushes = []
+    failure = publish(tmp_path / "failure", FILES, pushes, plan=plan_for(FILES, "SIMPLE"),
+                      runner=absent_commitlore(pushes))
+    assert failure["commitlore"]["outcome"] != "PASS"
+
+
+@pytest.mark.parametrize("failing_command", ["init", "doctor"])
+def test_simple_nonzero_commitlore_command_is_a_warning(tmp_path, failing_command):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", failing_command]:
+            return 2, "", "observed failure"
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / failing_command, FILES, pushes,
+                    plan=plan_for(FILES, "SIMPLE"), runner=run)
+    assert heads["commitlore"] == {"outcome": "WARN",
+                                    "detail": f"commitlore {failing_command} failed (2): observed failure"}
+
+
+# --- RF-S20: STANDARD required CommitLore absence requires bootstrap revision -----------
+
+def test_standard_missing_commitlore_refuses_before_push_for_revision(tmp_path):
+    pushes = []
+    with pytest.raises(CommitLoreRefusal, match="COMMITLORE_REVISE.*bootstrap revision required") as caught:
+        publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, "STANDARD"),
+                runner=absent_commitlore(pushes))
+    assert caught.value.observation["outcome"] == "REVISE"
+    assert pushes == []
+
+
+# --- RF-S21: GUARDED required Decision Memory absence blocks publication ---------------
+
+def test_guarded_missing_commitlore_refuses_before_push_as_blocking(tmp_path):
+    pushes = []
+    with pytest.raises(CommitLoreRefusal, match="COMMITLORE_BLOCK.*blocking") as caught:
+        publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, "GUARDED"),
+                runner=absent_commitlore(pushes))
+    assert caught.value.observation["outcome"] == "BLOCK"
+    assert pushes == []
+
+
+def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_path):
+    if shutil.which("commitlore") is None:
+        pytest.skip("commitlore executable is unavailable; injected-runner tests cover the stage")
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[0] == "commitlore":
+            done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=90)
+            return done.returncode, done.stdout, done.stderr
+        return git_runner(argv, cwd)
+
+    workdir = tmp_path / "tree"
+    heads = publish(workdir, FILES, pushes, plan=plan_for(FILES), runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS", heads["commitlore"]
+    tracked = subprocess.run(["git", "ls-files"], cwd=workdir, capture_output=True,
+                             text=True, check=True).stdout.splitlines()
+    assert tracked == sorted(FILES)
+    for path in tracked:
+        blob = subprocess.run(["git", "show", f"HEAD:{path}"], cwd=workdir,
+                              capture_output=True, check=True).stdout
+        assert hashlib.sha256(blob).hexdigest() == hashlib.sha256(FILES[path].encode()).hexdigest()
+        assert (workdir / path).read_bytes() == blob
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=workdir,
+                          capture_output=True, text=True, check=True).stdout == ""
+
+
+def test_commitlore_file_effect_refuses_publication(tmp_path):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "init"]:
+            (cwd / "README.md").write_text("changed after genesis\n")
+            return 0, "", ""
+        return git_runner(argv, cwd)
+
+    with pytest.raises(PublishError, match="changed the generated checkout"):
+        publish(tmp_path / "tree", FILES, pushes, runner=run)
+    assert pushes == []

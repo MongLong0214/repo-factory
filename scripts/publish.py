@@ -23,8 +23,10 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from canonical import digest  # noqa: E402
+from plan import load_profile  # noqa: E402
 
-__all__ = ["PublishError", "publish_files", "publish_receipt", "remote_identity"]
+__all__ = ["PublishError", "CommitLoreRefusal", "publish_files", "publish_receipt",
+           "remote_identity"]
 
 _REMOTE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
@@ -47,6 +49,16 @@ Runner = "callable"
 
 class PublishError(RuntimeError):
     """푸시가 끝나지 않았다. 어느 명령이 왜 실패했는지 함께 보고한다."""
+
+
+class CommitLoreRefusal(PublishError):
+    """프로파일 정책에 따라 genesis 게시를 멈춘다."""
+
+    def __init__(self, observation: Dict[str, str]):
+        self.observation = observation
+        label = ("bootstrap revision required" if observation["outcome"] == "REVISE"
+                 else "blocking decision memory refusal")
+        super().__init__(f"COMMITLORE_{observation['outcome']}: {label}: {observation['detail']}")
 
 
 def _run(argv: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
@@ -83,7 +95,24 @@ def publish_receipt(plan: Dict[str, object], heads: Dict[str, object], *, clock)
         "createdAt": at,
         "rereadAt": at,
         "verified": True,
+        "commitlore": dict(heads["commitlore"]),
     }
+
+
+def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, str]:
+    """Genesis 뒤, 원격 push 앞에 실제 로컬 저장소의 Decision Memory를 확인한다."""
+    on_failure = load_profile(profile)["commitlore"]["onFailure"]
+    for argv in (["commitlore", "init", "--mcp-scope", "none", "--no-unattended"],
+                 ["commitlore", "doctor"]):
+        try:
+            code, out, err = runner(argv, workdir)
+        except (FileNotFoundError, OSError) as error:
+            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}
+        if code != 0:
+            detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
+            return {"outcome": on_failure,
+                    "detail": f"{' '.join(argv[:2])} failed ({code}): {detail}"}
+    return {"outcome": "PASS", "detail": "commitlore init and doctor passed"}
 
 
 def publish_files(
@@ -190,6 +219,16 @@ def publish_files(
             "something rewrote content between the plan and the commit."
         )
 
+    commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)
+    # init 는 hook/index 만 배치해야 한다. 추적 파일이나 새 저장소 파일을 만졌다면
+    # genesis 뒤의 로컬 트리가 계획된 파일 집합과 달라진 것이므로 게시하지 않는다.
+    code, status, err = runner(["git", "status", "--porcelain", "--untracked-files=all"], workdir)
+    if code != 0 or status.strip():
+        raise PublishError(f"CommitLore changed the generated checkout or its state could not be read: "
+                           f"{(status.strip() or err.strip())[:300]}")
+    if commitlore["outcome"] in ("REVISE", "BLOCK"):
+        raise CommitLoreRefusal(commitlore)
+
     run_all([
         ["git", "branch", default_branch],
         ["git", "remote", "add", "origin", remote_url],
@@ -223,7 +262,8 @@ def publish_files(
     return {"head": head, "branches": [release_branch, default_branch],
             "committedPaths": sorted(committed),
             "repositoryIdentity": repository_identity,
-            "remoteHeads": {b: remote_heads.get(b) for b in (release_branch, default_branch)}}
+            "remoteHeads": {b: remote_heads.get(b) for b in (release_branch, default_branch)},
+            "commitlore": commitlore}
 
 
 
@@ -291,6 +331,15 @@ def main(argv: List[str] = None) -> int:
 
         prior = ReceiptLedger(args.ledger).get(f"publish:{identity}")
         if prior is not None and prior.get("verified"):
+            observation = prior.get("commitlore")
+            policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
+            if (not isinstance(observation, dict) or
+                    observation.get("outcome") not in ("PASS", policy) or
+                    (observation.get("outcome") != "PASS" and not observation.get("detail"))):
+                print(json.dumps({"error": "COMMITLORE_MISSING_OR_INVALID: a prior genesis receipt "
+                                           "cannot resume without an explicit CommitLore outcome",
+                                  "commitlore": observation}, ensure_ascii=False), file=sys.stderr)
+                return 1
             landed = sorted(prior.get("committedPaths") or [])
             if landed != sorted(files):
                 # 같은 저장소에 이미 다른 파일 집합이 착지해 있다. 두 번째 genesis 는 없다.
@@ -304,7 +353,8 @@ def main(argv: List[str] = None) -> int:
             if current is not None and current == dict(prior["remoteHeads"]):
                 print(json.dumps({k: prior[k] for k in
                                   ("head", "remoteHeads", "committedPaths", "branches")}
-                                 | {"repositoryIdentity": identity, "resumed": True},
+                                 | {"repositoryIdentity": identity, "resumed": True,
+                                    "commitlore": observation},
                                  ensure_ascii=False, indent=2))
                 return 0
             print(json.dumps({"error": "the ledger records a genesis push that the remote no longer "
@@ -327,7 +377,10 @@ def main(argv: List[str] = None) -> int:
             release_branch=args.release_branch,
         )
     except PublishError as error:
-        print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        payload = {"error": str(error)}
+        if isinstance(error, CommitLoreRefusal):
+            payload["commitlore"] = error.observation
+        print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
         return 1
     if args.ledger is not None:
         from datetime import datetime, timezone

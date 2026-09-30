@@ -46,6 +46,16 @@ def run(argv, **kwargs):
     return subprocess.run([sys.executable, *argv], capture_output=True, text=True, **kwargs)
 
 
+def with_commitlore_stub(tmp_path, environment):
+    """Keep CLI-chain tests independent of the host's CommitLore installation."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    executable = bin_dir / "commitlore"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    return {**environment, "PATH": f"{bin_dir}:{environment.get('PATH', '')}"}
+
+
 @pytest.mark.parametrize("stage", STAGES)
 def test_every_pipeline_stage_answers_on_the_command_line(stage):
     done = run([str(SCRIPTS / stage), "--help"])
@@ -103,6 +113,9 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
         "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf",
         "GIT_CONFIG_VALUE_0": REMOTE,
     }
+    # This test exercises the CLI chain, while test_publish.py observes the real binary when
+    # available. A local stand-in keeps the chain deterministic on CI hosts without CommitLore.
+    rewritten = with_commitlore_stub(tmp_path, rewritten)
     published = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "compiled.json"),
                      "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
                      "--ledger", str(tmp_path / "receipts.json"),
@@ -112,6 +125,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     heads = json.loads(published.stdout)
     assert heads["repositoryIdentity"] == "github:MongLong0214/demo"
     assert set(heads["remoteHeads"].values()) == {heads["head"]}
+    assert heads["commitlore"]["outcome"] == "PASS"
 
     landed = subprocess.run(["git", f"--git-dir={bare}", "ls-tree", "-r", "--name-only", "dev"],
                             capture_output=True, text=True, check=True)
@@ -127,6 +141,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     assert [row["operationId"] for row in genesis] == ["publish:github:MongLong0214/demo"]
     assert genesis[0]["verified"] is True
     assert genesis[0]["head"] == heads["head"]
+    assert genesis[0]["commitlore"] == heads["commitlore"]
 
     after = run([str(SCRIPTS / "apply.py"), "--plan", str(plan_path),
                  "--ledger", str(tmp_path / "receipts.json"), "--phase", "after-files",
@@ -296,6 +311,7 @@ def test_a_finished_genesis_push_resumes_instead_of_pushing_again(tmp_path):
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
+    rewritten = with_commitlore_stub(tmp_path, rewritten)
     argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
             "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
             "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]
@@ -311,8 +327,31 @@ def test_a_finished_genesis_push_resumes_instead_of_pushing_again(tmp_path):
     assert resumed["resumed"] is True
     assert resumed["head"] == pushed["head"]
     assert resumed["remoteHeads"] == pushed["remoteHeads"]
+    assert resumed["commitlore"] == pushed["commitlore"]
     # 두 번째 실행은 아무것도 만들지 않는다. 작업 디렉토리조차 필요 없다.
     assert not (tmp_path / "work-again").exists()
+
+
+def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
+    plan_path = _compile(tmp_path)
+    ledger_path = tmp_path / "receipts.json"
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    identity = document["planCore"]["repositories"][0]["identity"]
+    ledger_path.write_text(json.dumps([{
+        "bootstrapOperationId": OPERATION_ID, "requestDigest": document["planCore"]["requestDigest"],
+        "operationId": f"publish:{identity}", "resourceType": "genesis-commit",
+        "resourceIdentity": identity, "afterStateDigest": "sha256:" + "a" * 64,
+        "createdAt": "2026-08-19T10:00:00Z", "rereadAt": "2026-08-19T10:00:00Z",
+        "verified": True, "committedPaths": sorted(document["files"]),
+        "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
+    }]), encoding="utf-8")
+    done = run([str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+                "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                "--ledger", str(ledger_path), "--author-name", "Test",
+                "--author-email", "test@example.invalid"])
+    assert done.returncode == 1
+    assert "COMMITLORE_MISSING_OR_INVALID" in json.loads(done.stderr)["error"]
+    assert not (tmp_path / "work").exists()
 
 
 def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path):
@@ -321,6 +360,7 @@ def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path)
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
+    rewritten = with_commitlore_stub(tmp_path, rewritten)
     argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
             "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
             "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]

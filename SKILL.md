@@ -35,8 +35,11 @@ agent-control-plane 이고, 그쪽이 세션·권한·용량을 소유한다. �
 | `STANDARD` | 오래 유지될 보통 프로젝트 | 명세 문서(compact PRD 또는 동급) |
 | `GUARDED` | 보안·인증·프로토콜·마이그레이션·민감 데이터·연구급 | + 아키텍처 ADR · acceptance oracle · 롤백 전략 · 보안 검증 명령 |
 
-CommitLore 는 `SIMPLE` 에서 `preferred`(실패 시 WARN), 나머지에서 `required`
-(실패 시 REVISE)다. 프로파일이 요구하는데 만들지 못한 산출물은 조용히 빠지지 않고
+CommitLore 는 `SIMPLE` 에서 `preferred`(실패 시 WARN), `STANDARD` 에서 `required`
+(실패 시 REVISE), `GUARDED` 에서 `required`(실패 시 BLOCK)다. genesis 뒤 로컬 체크아웃에서
+`init`·`doctor` 를 실행한다. PASS 또는 WARN 과 실패 상세는 `publish.py` 출력과 genesis
+영수증에 남는다. REVISE·BLOCK 은 이름 있는 거부로 게시와 Result 조립을 멈춘다.
+프로파일이 요구하는데 만들지 못한 산출물은 조용히 빠지지 않고
 `unresolvedGaps` 로 Plan 에 남는다.
 
 ## 파이프라인

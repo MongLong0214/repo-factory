@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MongLong0214/repo-factory/schemas/lean-review.schema.json",
+  "title": "Bootstrap CTO lean review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "removedItems"],
+  "properties": {
+    "verdict": {
+      "enum": ["LEAN_ACCEPT", "LEAN_REVISE", "CEO_DECISION_REQUIRED", "OWNER_DECISION_REQUIRED"]
+    },
+    "removedItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "reason"],
+        "properties": {
+          "item": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        }
+      }
+    }
+  }
+}
