@@ -17,6 +17,7 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 import publish as publish_module  # noqa: E402
 from apply import authorized_plan_receipt  # noqa: E402
+from plan import compile_plan  # noqa: E402
 from publish import CommitLoreRefusal, PublishError, publish_files, publish_receipt  # noqa: E402
 
 FILES = {"README.md": "# demo\n", ".agent-control-plane/project.json": "{}\n"}
@@ -210,6 +211,7 @@ def test_simple_missing_commitlore_warns_and_continues_with_a_receipt(tmp_path):
     receipt = publish_receipt({"bootstrapOperationId": "op", "requestDigest": "sha256:demo"},
                               heads, clock=lambda: "2026-08-19T10:00:00Z")
     assert receipt["commitlore"] == heads["commitlore"]
+    assert receipt["commitlore"]["scope"] == "genesis-checkout"
 
 
 def test_simple_success_is_pass_and_failure_is_never_pass(tmp_path):
@@ -237,6 +239,8 @@ def test_doctor_sees_origin_before_first_push_and_keeps_its_warning(tmp_path):
 
     heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, "STANDARD"), runner=run)
     assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["scope"] == "genesis-checkout"
+    assert heads["commitlore"]["warnings"] == ["warning: check local notes fetch"]
     assert heads["commitlore"]["detail"] == (
         "commitlore doctor passed: " + ("x" * 350 + "\nwarning: check local notes fetch")[-300:])
     assert [p[-1] for p in pushes] == ["main", "dev"]
@@ -262,7 +266,8 @@ def test_commitlore_timeout_uses_profile_policy(tmp_path, profile, outcome, comm
         heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
         observed = heads["commitlore"]
         assert [p[-1] for p in pushes] == ["main", "dev"]
-    assert observed == {"outcome": outcome, "detail": f"commitlore {command} timed out after 180s"}
+    assert observed == {"outcome": outcome, "scope": "genesis-checkout", "warnings": [],
+                        "detail": f"commitlore {command} timed out after 180s"}
 
 
 @pytest.mark.parametrize("failing_command", ["init", "doctor"])
@@ -277,8 +282,51 @@ def test_simple_nonzero_commitlore_command_is_a_warning(tmp_path, failing_comman
 
     heads = publish(tmp_path / failing_command, FILES, pushes,
                     plan=plan_for(FILES, "SIMPLE"), runner=run)
-    assert heads["commitlore"] == {"outcome": "WARN",
+    assert heads["commitlore"] == {"outcome": "WARN", "scope": "genesis-checkout",
+                                    "warnings": [],
                                     "detail": f"commitlore {failing_command} failed (2): observed failure"}
+
+
+@pytest.mark.parametrize("profile,exit_code,expected", [
+    ("STANDARD", 0, "PASS"), ("SIMPLE", 1, "WARN"),
+    ("STANDARD", 1, "REVISE"), ("GUARDED", 1, "BLOCK"),
+])
+def test_doctor_warning_keeps_its_line_and_exit_code_policy(tmp_path, profile, exit_code, expected):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return exit_code, "  WARNING: notes fetch has no remote notes yet  \n", ""
+        return git_runner(argv, cwd)
+
+    if expected in ("REVISE", "BLOCK"):
+        with pytest.raises(CommitLoreRefusal) as caught:
+            publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observation = caught.value.observation
+        assert pushes == []
+    else:
+        heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observation = heads["commitlore"]
+    assert observation["outcome"] == expected
+    assert observation["scope"] == "genesis-checkout"
+    assert observation["warnings"] == ["WARNING: notes fetch has no remote notes yet"]
+    if exit_code == 0:
+        receipt = publish_receipt({"bootstrapOperationId": "op", "requestDigest": "sha256:demo"},
+                                  heads, clock=lambda: "2026-08-19T10:00:00Z")
+        assert receipt["commitlore"]["warnings"] == observation["warnings"]
+
+
+def test_doctor_warning_list_is_trimmed_to_ten_lines(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return 0, "\n".join(f" WARN {index} " for index in range(12)), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], plan=plan_for(FILES, "SIMPLE"), runner=run)
+    assert heads["commitlore"]["warnings"] == [f"WARN {index}" for index in range(10)]
 
 
 # --- RF-S20: STANDARD required CommitLore absence requires bootstrap revision -----------
@@ -310,8 +358,19 @@ def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_pa
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
-    files = {**FILES, ".agent-control-plane/project.json":
-             json.dumps({"commitlore": {"mode": "preferred"}}) + "\n"}
+    request = {"schema": "repo-factory.bootstrap-request.v1", "runId": "clone",
+               "seed": "a demo", "bootstrapProfile": "SIMPLE", "priority": "NORMAL",
+               "repositories": [{"role": "primary", "name": "demo"}],
+               "visibility": "public", "origin": {"channel": "cli"}}
+    verification = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary",
+                     "cwd": ".", "timeoutSeconds": 600, "envAllowlist": ["CI"],
+                     "network": "deny", "required": True}]
+    compiled = compile_plan(request, verification, stack="node",
+                            ci_values={"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22",
+                                       "INSTALL_CMD": "npm install", "TEST_CMD": "npm test",
+                                       "BUILD_CMD": "node --check index.js"},
+                            operation_id="11111111-2222-3333-4444-555555555555")
+    files = dict(compiled["files"])
 
     def run(argv, cwd):
         done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True,
@@ -321,6 +380,9 @@ def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_pa
     workdir = tmp_path / "tree"
     heads = publish(workdir, files, [], plan=plan_for(files), runner=run)
     assert heads["commitlore"]["outcome"] == "PASS", heads["commitlore"]
+    receipt = publish_receipt(compiled["planCore"], heads,
+                              clock=lambda: "2026-08-19T10:00:00Z")
+    assert receipt["commitlore"]["scope"] == "genesis-checkout"
     tracked = subprocess.run(["git", "ls-files"], cwd=workdir, capture_output=True,
                              text=True, check=True).stdout.splitlines()
     assert tracked == sorted(files)
@@ -335,6 +397,12 @@ def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_pa
     subprocess.run(["git", "clone", "-q", "-b", "dev", str(bare), str(clone)], check=True)
     manifest = json.loads((clone / ".agent-control-plane/project.json").read_text(encoding="utf-8"))
     assert manifest["commitlore"]["mode"] == "preferred"
+    agents = (clone / "AGENTS.md").read_text(encoding="utf-8")
+    assert "## CommitLore" in agents
+    assert "`preferred`" in agents
+    assert "commitlore init --mcp-scope none" in agents
+    assert "commit trailers" in agents
+    assert heads["commitlore"]["scope"] == "genesis-checkout"
     assert subprocess.run(["git", "ls-files"], cwd=clone, capture_output=True,
                           text=True, check=True).stdout.splitlines() == sorted(files)
     assert (workdir / ".git/hooks/commit-msg").is_file()

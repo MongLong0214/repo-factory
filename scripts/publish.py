@@ -13,8 +13,9 @@
 저장소 안에 운영 정보를 넣는 §4.6 위반이 된다.
 
 CommitLore init·doctor 는 클론마다 실행한다. genesis 관측은 원격이 설정된 이 로컬
-저장소에서 두 명령이 성공했음을 증명한다. 클론에 전달되는 계약은 매니페스트의
-`commitlore.mode` 이며 hook 과 로컬 git 설정은 전달되지 않는다.
+저장소가 두 명령을 받아들이는지만 증명한다. 클론의 활성화는 클론에서 실행할 단계다.
+클론에 전달되는 계약은 매니페스트의 `commitlore.mode` 와 AGENTS.md 이며 hook 과
+로컬 git 설정은 전달되지 않는다.
 """
 from __future__ import annotations
 
@@ -103,24 +104,30 @@ def publish_receipt(plan: Dict[str, object], heads: Dict[str, object], *, clock)
     }
 
 
-def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, str]:
+def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]:
     """Genesis 뒤, 원격 push 앞에 실제 로컬 저장소의 Decision Memory를 확인한다."""
     on_failure = load_profile(profile)["commitlore"]["onFailure"]
+    warnings: List[str] = []
     for argv in (["commitlore", "init", "--mcp-scope", "none", "--no-unattended"],
                  ["commitlore", "doctor"]):
         try:
             code, out, err = runner(argv, workdir)
         except subprocess.TimeoutExpired as error:
-            return {"outcome": on_failure,
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
                     "detail": f"{' '.join(argv[:2])} timed out after {error.timeout}s"}
         except OSError as error:
-            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
+                    "detail": f"{argv[0]} unavailable: {error}"}
+        if argv[1] == "doctor":
+            warnings = [line.strip() for line in (out + "\n" + err).splitlines()
+                        if "warn" in line.lower()][:10]
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
-            return {"outcome": on_failure,
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
                     "detail": f"{' '.join(argv[:2])} failed ({code}): {detail}"}
     diagnostic = "\n".join(part for part in (out.strip(), err.strip()) if part)
-    return {"outcome": "PASS", "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
+    return {"outcome": "PASS", "scope": "genesis-checkout", "warnings": warnings,
+            "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
 
 
 def publish_files(

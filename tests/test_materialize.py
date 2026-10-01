@@ -108,6 +108,19 @@ def test_agents_names_the_manifest_as_the_contract_rather_than_restating_it():
     assert "contract change" in agents.lower()
 
 
+@pytest.mark.parametrize("profile,mode", [("SIMPLE", "preferred"),
+                                           ("STANDARD", "required"),
+                                           ("GUARDED", "required")])
+def test_agents_carries_the_clone_time_commitlore_step_from_the_profile(profile, mode):
+    request = {**REQUEST, "bootstrapProfile": profile}
+    generated = compile_plan(request, VERIFICATION,
+                             operation_id="11111111-2222-3333-4444-555555555555")
+    agents = generated["files"]["AGENTS.md"]
+    assert f"CommitLore is `{mode}`" in agents
+    assert "commitlore init --mcp-scope none" in agents
+    assert "commit trailers" in agents
+
+
 def test_readme_and_agents_both_list_the_verification_commands():
     result = compiled()
 

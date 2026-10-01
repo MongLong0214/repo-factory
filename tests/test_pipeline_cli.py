@@ -14,7 +14,9 @@ reached. **A stage is covered at the depth the test enters it, not at the depth 
 from __future__ import annotations
 
 import json
+import importlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +46,55 @@ CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm 
 
 def run(argv, **kwargs):
     return subprocess.run([sys.executable, *argv], capture_output=True, text=True, **kwargs)
+
+
+@pytest.mark.parametrize("document", [SKILL / "scripts" / "dogfood.sh", SKILL / "README.md"])
+def test_documented_stage_commands_supply_every_required_parser_option(document, monkeypatch):
+    """Read each command and the stage's live argparse parser, not a copied option list."""
+    import argparse
+
+    source = document.read_text(encoding="utf-8").replace("\\\n", " ")
+    invocations = re.findall(r"(?m)^python3 scripts/([a-z-]+)\.py([^\n]*)", source)
+    assert invocations, document
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+
+    class ParserCaptured(Exception):
+        pass
+
+    for stage, arguments in invocations:
+        parser = None
+
+        def capture(self, args=None, namespace=None):
+            nonlocal parser
+            parser = self
+            raise ParserCaptured
+
+        with monkeypatch.context() as patch:
+            patch.setattr(argparse.ArgumentParser, "parse_args", capture)
+            with pytest.raises(ParserCaptured):
+                importlib.import_module(stage.replace("-", "_")).main([])
+        present = set(re.findall(r"--[a-z][a-z-]*", arguments))
+        required = {option for action in parser._actions if action.required
+                    for option in action.option_strings if option.startswith("--")}
+        assert required <= present, f"{document.name}: {stage}.py lacks {required - present}"
+
+
+def test_result_cli_requires_the_receipt_and_refuses_an_input_digest(tmp_path):
+    missing = run([str(SCRIPTS / "result.py"), "--input", "unused.json",
+                   "--verification", "unused.json"])
+    assert missing.returncode == 2
+    assert "--authorization" in missing.stderr
+
+    payload = tmp_path / "result-input.json"
+    payload.write_text(json.dumps({"planDigest": "caller-supplied"}), encoding="utf-8")
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text("{}", encoding="utf-8")
+    verification = tmp_path / "verification.json"
+    verification.write_text("[]", encoding="utf-8")
+    refused = run([str(SCRIPTS / "result.py"), "--input", str(payload),
+                   "--authorization", str(authorization), "--verification", str(verification)])
+    assert refused.returncode == 1
+    assert "planDigest belongs to the approval receipt" in refused.stdout
 
 
 def with_commitlore_stub(tmp_path, environment):
@@ -157,7 +208,6 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     ledger = json.loads((tmp_path / "receipts.json").read_text(encoding="utf-8"))
     (tmp_path / "result-in.json").write_text(json.dumps({
         "runId": REQUEST["runId"], "plan": document["planCore"],
-        "planDigest": document["diffSummary"]["planDigest"],
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
                           "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
         "receipts": ledger,
@@ -166,6 +216,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     }), encoding="utf-8")
 
     assembled = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                     "--authorization", str(tmp_path / "auth.json"),
                      "--verification", str(tmp_path / "verification.json")])
     assert assembled.returncode == 0, assembled.stdout[-600:] + assembled.stderr[-600:]
     result = json.loads(assembled.stdout)
@@ -181,13 +232,19 @@ def test_result_refuses_on_the_command_line_when_the_contract_is_not_the_approve
     (tmp_path / "other-verification.json").write_text(json.dumps(substituted), encoding="utf-8")
     (tmp_path / "result-in.json").write_text(json.dumps({
         "runId": REQUEST["runId"], "plan": document["planCore"],
-        "planDigest": document["diffSummary"]["planDigest"],
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
                           "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
         "receipts": [], "bootstrapVerification": [],
     }), encoding="utf-8")
 
+    (tmp_path / "auth.json").write_text(json.dumps({
+        "planDigest": document["diffSummary"]["planDigest"],
+        "bootstrapOperationId": document["planCore"]["bootstrapOperationId"],
+        "authority": "OWNER", "approvedBy": {"actor": "owner:test"},
+        "approvedAt": "2026-08-19T09:00:00Z",
+    }), encoding="utf-8")
     done = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                "--authorization", str(tmp_path / "auth.json"),
                 "--verification", str(tmp_path / "other-verification.json")])
     assert done.returncode == 1
     assert "error" in json.loads(done.stdout)

@@ -34,10 +34,18 @@ COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "templates",
 # name, file, (find, replace), tests that must fail once the guard is gone.
 GUARDS: List[Dict[str, object]] = [
     {
-        "name": "result checks the supplied digest before accepting a changed profile",
+        "name": "result checks the approver's receipt before accepting a changed profile",
         "file": "scripts/result.py",
-        "mutate": ('    if digest(plan) != plan_digest:', '    if False:'),
+        "mutate": ('        _check_authorization(plan, authorization)', '        pass'),
         "killed_by": ["tests/test_slice4_result.py::test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning"],
+    },
+    {
+        "name": "doctor warnings remain visible even when doctor exits zero",
+        "file": "scripts/publish.py",
+        "mutate": ('            warnings = [line.strip() for line in (out + "\\n" + err).splitlines()\n'
+                   '                        if "warn" in line.lower()][:10]',
+                   '            warnings = []'),
+        "killed_by": ["tests/test_publish.py::test_doctor_warning_keeps_its_line_and_exit_code_policy"],
     },
     {
         "name": "publish checks authorization before reading the plan's policy or running git",
@@ -125,8 +133,10 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "absent CommitLore is a profile failure, never PASS",
         "file": "scripts/publish.py",
-        "mutate": ('            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}',
-                   '            return {"outcome": "PASS", "detail": f"{argv[0]} unavailable: {error}"}'),
+        "mutate": ('            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,\n'
+                   '                    "detail": f"{argv[0]} unavailable: {error}"}',
+                   '            return {"outcome": "PASS", "scope": "genesis-checkout", "warnings": warnings,\n'
+                   '                    "detail": f"{argv[0]} unavailable: {error}"}'),
         "killed_by": ["tests/test_publish.py::test_simple_missing_commitlore_warns_and_continues_with_a_receipt"],
     },
     {

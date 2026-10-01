@@ -86,14 +86,18 @@ python3 scripts/plan.py \
   --ci-values ci.json --operation-id "$(uuidgen)" --observe > compiled.json
 
 python3 scripts/authorize.py --plan compiled.json \
-  --authority HERMES --actor "hermes:ceo" > authorization.json
+  --authority OWNER --actor "owner:example" > authorization.json
 
 python3 scripts/apply.py --plan compiled.json --ledger receipts.json \
   --phase before-files --authorization authorization.json
 
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
+  --authorization authorization.json \
   --remote-url git@github.com:owner/name.git \
   --author-name "Repo Factory" --author-email "factory@example.invalid"
+
+python3 scripts/result.py --input result-input.json \
+  --authorization authorization.json --verification verification.json
 ```
 
 ## 테스트
