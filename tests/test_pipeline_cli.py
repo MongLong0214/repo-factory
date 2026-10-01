@@ -17,6 +17,7 @@ import json
 import importlib
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -73,10 +74,11 @@ def test_documented_stage_commands_supply_every_required_parser_option(document,
             patch.setattr(argparse.ArgumentParser, "parse_args", capture)
             with pytest.raises(ParserCaptured):
                 importlib.import_module(stage.replace("-", "_")).main([])
-        present = set(re.findall(r"--[a-z][a-z-]*", arguments))
-        required = {option for action in parser._actions if action.required
-                    for option in action.option_strings if option.startswith("--")}
-        assert required <= present, f"{document.name}: {stage}.py lacks {required - present}"
+        tokens = shlex.split(f"python3 scripts/{stage}.py{arguments}")
+        options = tokens[2:]
+        if ">" in options:
+            options = options[:options.index(">")]
+        parser.parse_args(options)
 
 
 def test_result_cli_requires_the_receipt_and_refuses_an_input_digest(tmp_path):
@@ -102,7 +104,11 @@ def with_commitlore_stub(tmp_path, environment):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     executable = bin_dir / "commitlore"
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = doctor ]; then\n"
+        "  printf '%s\\n' '{\"schema\":\"commitlore_doctor.v2\",\"checks\":[]}'\n"
+        "fi\nexit 0\n", encoding="utf-8")
     executable.chmod(0o755)
     return {**environment, "PATH": f"{bin_dir}:{environment.get('PATH', '')}"}
 
@@ -234,7 +240,14 @@ def test_result_refuses_on_the_command_line_when_the_contract_is_not_the_approve
         "runId": REQUEST["runId"], "plan": document["planCore"],
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
                           "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
-        "receipts": [], "bootstrapVerification": [],
+        "receipts": [
+            {"operationId": op["operationId"], "resourceIdentity": op["resourceIdentity"]}
+            for op in document["planCore"]["githubOperations"]
+        ] + [{"operationId": "publish:github:MongLong0214/demo",
+              "resourceType": "genesis-commit", "resourceIdentity": "github:MongLong0214/demo",
+              "commitlore": {"outcome": "PASS", "scope": "genesis-checkout"}}],
+        "bootstrapVerification": [{"commandId": "test", "repositoryIdentity": "github:MongLong0214/demo",
+                                   "exactHead": "a" * 40, "status": "PASS"}],
     }), encoding="utf-8")
 
     (tmp_path / "auth.json").write_text(json.dumps({
@@ -247,7 +260,8 @@ def test_result_refuses_on_the_command_line_when_the_contract_is_not_the_approve
                 "--authorization", str(tmp_path / "auth.json"),
                 "--verification", str(tmp_path / "other-verification.json")])
     assert done.returncode == 1
-    assert "error" in json.loads(done.stdout)
+    assert json.loads(done.stdout)["error"] == (
+        "the verification commands handed to the result are not the ones the plan approved")
 
 
 GH_STUB = SKILL / "tests" / "fixtures" / "gh_bootstrap_stub"
@@ -422,6 +436,32 @@ def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
                 "--author-email", "test@example.invalid"])
     assert done.returncode == 1
     assert "COMMITLORE_MISSING_OR_INVALID" in json.loads(done.stderr)["error"]
+    assert not (tmp_path / "work").exists()
+
+
+def test_a_prior_pass_without_scope_cannot_resume(tmp_path):
+    plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    identity = document["planCore"]["repositories"][0]["identity"]
+    ledger_path = tmp_path / "receipts.json"
+    ledger_path.write_text(json.dumps([{
+        "bootstrapOperationId": OPERATION_ID, "requestDigest": document["planCore"]["requestDigest"],
+        "operationId": f"publish:{identity}", "resourceType": "genesis-commit",
+        "resourceIdentity": identity, "afterStateDigest": "sha256:" + "a" * 64,
+        "createdAt": "2026-08-19T10:00:00Z", "rereadAt": "2026-08-19T10:00:00Z",
+        "verified": True, "committedPaths": sorted(document["files"]),
+        "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
+        "commitlore": {"outcome": "PASS", "detail": "old observation"},
+    }]), encoding="utf-8")
+    done = run([str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+                "--authorization", str(authorization),
+                "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                "--ledger", str(ledger_path), "--author-name", "Test",
+                "--author-email", "test@example.invalid"])
+    assert done.returncode == 1
+    assert "COMMITLORE_MISSING_OR_INVALID" in json.loads(done.stderr)["error"]
+    assert "predate the scoped shape" in json.loads(done.stderr)["error"]
     assert not (tmp_path / "work").exists()
 
 

@@ -20,6 +20,7 @@ CommitLore init·doctor 는 클론마다 실행한다. genesis 관측은 원격�
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -59,7 +60,7 @@ class PublishError(RuntimeError):
 class CommitLoreRefusal(PublishError):
     """프로파일 정책에 따라 genesis 게시를 멈춘다."""
 
-    def __init__(self, observation: Dict[str, str]):
+    def __init__(self, observation: Dict[str, object]):
         self.observation = observation
         label = ("bootstrap revision required" if observation["outcome"] == "REVISE"
                  else "blocking decision memory refusal")
@@ -109,7 +110,7 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
     on_failure = load_profile(profile)["commitlore"]["onFailure"]
     warnings: List[str] = []
     for argv in (["commitlore", "init", "--mcp-scope", "none", "--no-unattended"],
-                 ["commitlore", "doctor"]):
+                 ["commitlore", "doctor", "--json"]):
         try:
             code, out, err = runner(argv, workdir)
         except subprocess.TimeoutExpired as error:
@@ -119,8 +120,23 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
             return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
                     "detail": f"{argv[0]} unavailable: {error}"}
         if argv[1] == "doctor":
-            warnings = [line.strip() for line in (out + "\n" + err).splitlines()
-                        if "warn" in line.lower()][:10]
+            try:
+                report = json.loads(out)
+                if not isinstance(report, dict) or report.get("schema") != "commitlore_doctor.v2":
+                    raise ValueError("invalid schema")
+                checks = report["checks"]
+                if not isinstance(checks, list) or not all(
+                    isinstance(check, dict) and check.get("status") in
+                    ("ok", "warn", "fail", "skipped") for check in checks
+                ):
+                    raise ValueError("invalid checks")
+                for check in checks:
+                    if check["status"] in ("warn", "fail"):
+                        message = check.get("detail") or check.get("title") or check["status"]
+                        warnings.append(f"{check['id']}: {message}" if check.get("id") else str(message))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": [],
+                        "detail": f"commitlore doctor returned an invalid JSON report: {error}"}
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
             return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
@@ -369,9 +385,11 @@ def main(argv: List[str] = None) -> int:
             policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
             if (not isinstance(observation, dict) or
                     observation.get("outcome") not in ("PASS", policy) or
+                    observation.get("scope") != "genesis-checkout" or
                     (observation.get("outcome") != "PASS" and not observation.get("detail"))):
                 print(json.dumps({"error": "COMMITLORE_MISSING_OR_INVALID: a prior genesis receipt "
-                                           "cannot resume without an explicit CommitLore outcome",
+                                           "cannot resume without an explicit CommitLore outcome; "
+                                           "the observation may predate the scoped shape",
                                   "commitlore": observation}, ensure_ascii=False), file=sys.stderr)
                 return 1
             landed = sorted(prior.get("committedPaths") or [])

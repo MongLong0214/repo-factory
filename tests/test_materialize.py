@@ -118,6 +118,8 @@ def test_agents_carries_the_clone_time_commitlore_step_from_the_profile(profile,
     agents = generated["files"]["AGENTS.md"]
     assert f"CommitLore is `{mode}`" in agents
     assert "commitlore init --mcp-scope none" in agents
+    assert "commitlore doctor" in agents
+    assert agents.index("commitlore init --mcp-scope none") < agents.index("commitlore doctor")
     assert "commit trailers" in agents
 
 
