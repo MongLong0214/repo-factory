@@ -126,7 +126,7 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
                 if not isinstance(report, dict) or report.get("schema") != "commitlore_doctor.v2":
                     raise ValueError("invalid schema")
                 report_status = report.get("status")
-                if not isinstance(report_status, str):
+                if report_status not in ("ok", "degraded", "failed"):
                     raise ValueError("invalid status")
                 checks = report["checks"]
                 if not isinstance(checks, list) or not all(
@@ -145,6 +145,20 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
                 return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": [],
                         "detail": f"commitlore doctor returned an invalid JSON report: {error}"}
+            if code == 0:
+                contradictions = []
+                if report_status == "failed":
+                    contradictions.append("report status is failed")
+                if any(check["status"] == "fail" for check in checks):
+                    contradictions.append("a check has status fail")
+                if "exitCode" in report and (type(report["exitCode"]) is not int or
+                                             report["exitCode"] != 0):
+                    contradictions.append(f"report exitCode is {report['exitCode']!r}")
+                if contradictions:
+                    return {"outcome": on_failure, "scope": "genesis-checkout",
+                            "warnings": warnings, "reportStatus": report_status,
+                            "detail": ("commitlore doctor " + "; ".join(contradictions) +
+                                       " while the process exited 0")}
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
             return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,

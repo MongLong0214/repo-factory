@@ -55,6 +55,19 @@ GUARDS: List[Dict[str, object]] = [
         "killed_by": ["tests/test_publish.py::test_doctor_preserves_all_fifteen_structured_warnings"],
     },
     {
+        "name": "doctor rejects a report status outside the contract",
+        "file": "scripts/publish.py",
+        "mutate": ('                if report_status not in ("ok", "degraded", "failed"):',
+                   '                if False:'),
+        "killed_by": ["tests/test_publish.py::test_unknown_doctor_report_status_uses_failure_policy"],
+    },
+    {
+        "name": "contradictory doctor report follows the profile failure policy",
+        "file": "scripts/publish.py",
+        "mutate": ('                if contradictions:', '                if False:'),
+        "killed_by": ["tests/test_publish.py::test_failed_doctor_report_with_zero_process_exit_uses_profile_policy[GUARDED-BLOCK]"],
+    },
+    {
         "name": "a skipped doctor check remains visible with its reason",
         "file": "scripts/publish.py",
         "mutate": ('                        if check["status"] == "skipped":',

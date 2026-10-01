@@ -26,8 +26,17 @@ REMOTE = "git@github.com:MongLong0214/demo.git"
 
 
 def doctor_report(checks=None, **summary):
-    return json.dumps({"schema": "commitlore_doctor.v2", "status": "healthy", "summary": summary,
+    return json.dumps({"schema": "commitlore_doctor.v2", "status": "ok", "summary": summary,
                        "checks": checks or []})
+
+
+def doctor_observation(profile, report):
+    def run(argv, cwd):
+        if argv[1] == "doctor":
+            return 0, json.dumps(report), ""
+        return 0, "ready", ""
+
+    return publish_module.observe_commitlore(profile, Path("."), run)
 
 
 def plan_for(files: Dict[str, str], profile: str = "SIMPLE") -> Dict[str, object]:
@@ -394,6 +403,71 @@ def test_doctor_zero_warning_summary_is_not_a_finding(tmp_path):
     heads = publish(tmp_path / "tree", FILES, [], runner=run)
     assert heads["commitlore"]["outcome"] == "PASS"
     assert heads["commitlore"]["warnings"] == []
+
+
+@pytest.mark.parametrize("profile,expected", [("GUARDED", "BLOCK"), ("SIMPLE", "WARN")])
+def test_failed_doctor_report_with_zero_process_exit_uses_profile_policy(profile, expected):
+    report = json.loads(doctor_report([{"id": "notes-refspec", "status": "warn",
+                                        "detail": "notes are not shared"}]))
+    report.update(status="failed", exitCode=0)
+
+    observed = doctor_observation(profile, report)
+
+    assert observed == {"outcome": expected, "scope": "genesis-checkout",
+                        "warnings": ["notes-refspec: notes are not shared"],
+                        "reportStatus": "failed",
+                        "detail": "commitlore doctor report status is failed while the process exited 0"}
+
+
+def test_failed_check_in_degraded_doctor_report_with_zero_process_exit_uses_failure_policy():
+    report = json.loads(doctor_report([
+        {"id": "notes-refspec", "status": "warn", "detail": "notes are not shared"},
+        {"id": "hook", "status": "fail", "detail": "hook is broken"},
+        {"id": "optional", "status": "skipped", "skipReason": "not_applicable"},
+    ]))
+    report.update(status="degraded", exitCode=0)
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed == {"outcome": "BLOCK", "scope": "genesis-checkout",
+                        "warnings": ["notes-refspec: notes are not shared", "hook: hook is broken",
+                                     "optional: skipped (not_applicable)"],
+                        "reportStatus": "degraded",
+                        "detail": "commitlore doctor a check has status fail while the process exited 0"}
+
+
+@pytest.mark.parametrize("report_exit_code", [1, False])
+def test_inconsistent_doctor_report_exit_code_with_zero_process_exit_uses_failure_policy(report_exit_code):
+    report = json.loads(doctor_report())
+    report["exitCode"] = report_exit_code
+
+    observed = doctor_observation("SIMPLE", report)
+
+    assert observed == {"outcome": "WARN", "scope": "genesis-checkout", "warnings": [],
+                        "reportStatus": "ok",
+                        "detail": (f"commitlore doctor report exitCode is {report_exit_code!r} "
+                                   "while the process exited 0")}
+
+
+def test_unknown_doctor_report_status_uses_failure_policy():
+    report = json.loads(doctor_report())
+    report["status"] = "healthy"
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed == {"outcome": "BLOCK", "scope": "genesis-checkout", "warnings": [],
+                        "detail": "commitlore doctor returned an invalid JSON report: invalid status"}
+
+
+def test_ok_doctor_report_with_zero_process_exit_passes():
+    report = json.loads(doctor_report([{"id": "ready", "status": "ok"}]))
+    report["exitCode"] = 0
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed["outcome"] == "PASS"
+    assert observed["reportStatus"] == "ok"
+    assert observed["warnings"] == []
 
 
 # --- RF-S20: STANDARD required CommitLore absence requires bootstrap revision -----------
