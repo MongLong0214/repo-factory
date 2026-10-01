@@ -13,12 +13,14 @@
 저장소 안에 운영 정보를 넣는 §4.6 위반이 된다.
 
 CommitLore init·doctor 는 클론마다 실행한다. genesis 관측은 원격이 설정된 이 로컬
-저장소에서 두 명령이 성공했음을 증명한다. 클론에 전달되는 계약은 매니페스트의
-`commitlore.mode` 이며 hook 과 로컬 git 설정은 전달되지 않는다.
+저장소가 두 명령을 받아들이는지만 증명한다. 클론의 활성화는 클론에서 실행할 단계다.
+클론에 전달되는 계약은 매니페스트의 `commitlore.mode` 와 AGENTS.md 이며 hook 과
+로컬 git 설정은 전달되지 않는다.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -58,7 +60,7 @@ class PublishError(RuntimeError):
 class CommitLoreRefusal(PublishError):
     """프로파일 정책에 따라 genesis 게시를 멈춘다."""
 
-    def __init__(self, observation: Dict[str, str]):
+    def __init__(self, observation: Dict[str, object]):
         self.observation = observation
         label = ("bootstrap revision required" if observation["outcome"] == "REVISE"
                  else "blocking decision memory refusal")
@@ -103,24 +105,69 @@ def publish_receipt(plan: Dict[str, object], heads: Dict[str, object], *, clock)
     }
 
 
-def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, str]:
+def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]:
     """Genesis 뒤, 원격 push 앞에 실제 로컬 저장소의 Decision Memory를 확인한다."""
     on_failure = load_profile(profile)["commitlore"]["onFailure"]
+    warnings: List[str] = []
+    report_status: Optional[str] = None
     for argv in (["commitlore", "init", "--mcp-scope", "none", "--no-unattended"],
-                 ["commitlore", "doctor"]):
+                 ["commitlore", "doctor", "--json"]):
         try:
             code, out, err = runner(argv, workdir)
         except subprocess.TimeoutExpired as error:
-            return {"outcome": on_failure,
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
                     "detail": f"{' '.join(argv[:2])} timed out after {error.timeout}s"}
         except OSError as error:
-            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
+                    "detail": f"{argv[0]} unavailable: {error}"}
+        if argv[1] == "doctor":
+            try:
+                report = json.loads(out)
+                if not isinstance(report, dict) or report.get("schema") != "commitlore_doctor.v2":
+                    raise ValueError("invalid schema")
+                report_status = report.get("status")
+                if report_status not in ("ok", "degraded", "failed"):
+                    raise ValueError("invalid status")
+                checks = report["checks"]
+                if not isinstance(checks, list) or not all(
+                    isinstance(check, dict) and check.get("status") in
+                    ("ok", "warn", "fail", "skipped") for check in checks
+                ):
+                    raise ValueError("invalid checks")
+                for check in checks:
+                    if check["status"] != "ok":
+                        if check["status"] == "skipped":
+                            reason = check.get("skipReason") or check.get("title") or check.get("detail")
+                            message = f"skipped ({reason})" if reason else "skipped"
+                        else:
+                            message = check.get("detail") or check.get("title") or check["status"]
+                        warnings.append(f"{check['id']}: {message}" if check.get("id") else str(message))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": [],
+                        "detail": f"commitlore doctor returned an invalid JSON report: {error}"}
+            if code == 0:
+                contradictions = []
+                if report_status == "failed":
+                    contradictions.append("report status is failed")
+                if any(check["status"] == "fail" for check in checks):
+                    contradictions.append("a check has status fail")
+                if "exitCode" in report and (type(report["exitCode"]) is not int or
+                                             report["exitCode"] != 0):
+                    contradictions.append(f"report exitCode is {report['exitCode']!r}")
+                if contradictions:
+                    return {"outcome": on_failure, "scope": "genesis-checkout",
+                            "warnings": warnings, "reportStatus": report_status,
+                            "detail": ("commitlore doctor " + "; ".join(contradictions) +
+                                       " while the process exited 0")}
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
-            return {"outcome": on_failure,
+            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
+                    **({"reportStatus": report_status} if report_status is not None else {}),
                     "detail": f"{' '.join(argv[:2])} failed ({code}): {detail}"}
     diagnostic = "\n".join(part for part in (out.strip(), err.strip()) if part)
-    return {"outcome": "PASS", "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
+    return {"outcome": "PASS", "scope": "genesis-checkout", "warnings": warnings,
+            "reportStatus": report_status,
+            "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
 
 
 def publish_files(
@@ -362,9 +409,11 @@ def main(argv: List[str] = None) -> int:
             policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
             if (not isinstance(observation, dict) or
                     observation.get("outcome") not in ("PASS", policy) or
+                    observation.get("scope") != "genesis-checkout" or
                     (observation.get("outcome") != "PASS" and not observation.get("detail"))):
                 print(json.dumps({"error": "COMMITLORE_MISSING_OR_INVALID: a prior genesis receipt "
-                                           "cannot resume without an explicit CommitLore outcome",
+                                           "cannot resume without an explicit CommitLore outcome; "
+                                           "the observation may predate the scoped shape",
                                   "commitlore": observation}, ensure_ascii=False), file=sys.stderr)
                 return 1
             landed = sorted(prior.get("committedPaths") or [])

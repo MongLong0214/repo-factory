@@ -39,22 +39,25 @@ CommitLore 는 `SIMPLE` 에서 `preferred`(실패 시 WARN), `STANDARD` 에서 `
 (실패 시 REVISE), `GUARDED` 에서 `required`(실패 시 BLOCK)다. genesis 뒤 로컬 체크아웃에서
 원격을 설정하고 첫 push 전에 `init`·`doctor` 를 실행한다. 두 명령은 클론마다 실행해야 한다.
 genesis 관측은 원격이 설정된 그 로컬 저장소에서의 성공을 증명하며, 다른 클론에 전달되는
-계약은 매니페스트의 `commitlore.mode` 다. hook 과 로컬 git 설정은 클론에 전달되지 않는다.
-PASS 또는 WARN 과 doctor 진단의 끝부분 또는 실패 상세는 `publish.py` 출력과 genesis
-영수증에 남는다. REVISE·BLOCK 은 이름 있는 거부로 게시와 Result 조립을 멈춘다.
+계약은 매니페스트의 `commitlore.mode` 와 `AGENTS.md` 의 초기화 단계다. hook 과 로컬
+git 설정은 클론에 전달되지 않는다.
+genesis 시점에는 원격에 notes 가 아직 없으므로 notes-fetch 경고는 예상할 수 있다.
+경고는 실패로 취급하지 않지만 `publish.py` 출력과 genesis 영수증의 `warnings` 에
+남긴다. 관측 범위는 `genesis-checkout` 이다. PASS 또는 WARN 과 진단 상세도 이곳에
+남는다. REVISE·BLOCK 은 이름 있는 거부로 게시와 Result 조립을 멈춘다.
 프로파일이 요구하는데 만들지 못한 산출물은 조용히 빠지지 않고
 `unresolvedGaps` 로 Plan 에 남는다.
 
 ## 파이프라인
 
 ```
-BootstrapRequest ──▶ plan.py ──▶ authorize.py ──▶ apply.py --phase before-files ──▶ publish.py
-                        │                                              │
-                        │                                              ▼
-                        └────────────────▶ apply.py --phase after-files
-                                                       │
-                                                       ▼
-                                                   result.py
+BootstrapRequest ──▶ plan.py ──▶ authorize.py
+                                  │
+                                  └── authorization.json ──▶ apply.py (both phases)
+                                                       ├──▶ publish.py
+                                                       └──▶ result.py
+
+실행 순서: apply before-files ──▶ publish ──▶ apply after-files ──▶ result
 ```
 
 단계 순서가 의도다. `project-ci` 를 요구하는 ruleset 이 그 워크플로를 실어 나르는
@@ -82,14 +85,15 @@ Operation** 이 되고, 원장이 그것을 재개로 못 알아본다.
 
 ```bash
 python3 scripts/authorize.py --plan compiled.json \
-  --authority HERMES --actor "hermes:ceo" > authorization.json
+  --authority OWNER --actor "owner:example" > authorization.json
 ```
 
 **`apply` 와 다른 명령인 것이 요점이다.** 승인이 Plan 안의 필드였을 때는 그 필드를 고치고
 다시 digest 한 Plan 이 스스로를 승인한 것과 구별되지 않았다. 영수증은 **어떤 digest 를**
 승인했는지 말하므로, Plan 이 한 바이트라도 바뀌면 그 승인이 더 이상 그 Plan 을 안 가리킨다.
 통합 구성에서는 이 문서를 제어평면이 만든다.
-같은 `authorization.json` 을 `apply.py` 와 `publish.py` 양쪽의 `--authorization` 에 전달한다.
+같은 `authorization.json` 을 `apply.py`, `publish.py`, `result.py` 의
+`--authorization` 에 전달한다.
 
 서명은 아니다. 이 파일을 쓸 수 있는 사람은 승인을 주장할 수 있다. 사는 것은 주장이 별개의
 아티팩트가 되고 행위자·시각·묶인 digest 를 갖는다는 것이다.
@@ -143,12 +147,13 @@ python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
 
 ```bash
 python3 scripts/result.py --input result-input.json \
-  --verification verification.json
+  --authorization authorization.json --verification verification.json
 ```
 
 `--verification` 은 Plan 을 컴파일할 때 쓴 그 목록이다. Plan 은 digest 만 싣기 때문에,
 Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인된 계약과 같은지를 여기서
-대조한다. 다른 목록을 대면 거부한다.
+대조한다. 다른 목록을 대면 거부한다. `result-input.json` 에 독립적인 `planDigest` 는
+넣지 않는다. Result 의 digest 는 승인 영수증에서 온다.
 
 원장을 그대로 넘긴다 — genesis 영수증까지. 파일을 올린 push 는 외부 쓰기이고, 그 행을
 빼고 세면 파일이 한 번도 안 올라간 부트스트랩이 완료로 보고된다.

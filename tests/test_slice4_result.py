@@ -148,7 +148,7 @@ def result_args(**overrides) -> dict:
     args = dict(
         run_id=REQUEST["runId"],
         plan=compiled["planCore"],
-        plan_digest=diff_summary(compiled)["planDigest"],
+        authorization=approval(compiled["planCore"]),
         repositories=[{"role": "primary", "identity": IDENTITY,
                        "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
         receipts=receipts,
@@ -224,10 +224,30 @@ def test_profile_policy_mismatch_cannot_make_a_required_failure_a_warning():
 def test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning():
     args = result_args(profile="STANDARD")
     args["plan"]["bootstrapProfile"] = "SIMPLE"
+    assert digest(args["plan"]) != args["authorization"]["planDigest"]
     receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
     receipt["commitlore"] = {"outcome": "WARN", "detail": "doctor failed"}
-    with pytest.raises(ResultError, match="PLAN_DIGEST_MISMATCH"):
+    with pytest.raises(ResultError, match="AUTHORIZATION_MISSING"):
         build_result(**args)
+
+
+@pytest.mark.parametrize("change", [
+    {"bootstrapOperationId": "another-operation"},
+    {"revoked": True},
+    {"supersededBy": "another-receipt"},
+    {"approvedAt": ""},
+    {"approvedBy": {}},
+])
+def test_result_refuses_an_invalid_approval_receipt(change):
+    args = result_args()
+    args["authorization"].update(change)
+    with pytest.raises(ResultError, match="AUTHORIZATION_(MISSING|SPENT)"):
+        build_result(**args)
+
+
+def test_result_digest_comes_from_the_approval_receipt():
+    args = result_args()
+    assert build_result(**args)["planDigest"] == args["authorization"]["planDigest"]
 
 
 def test_simple_warning_requires_failure_detail():
@@ -389,4 +409,4 @@ def test_a_repository_with_no_default_branch_operation_refuses_the_result():
     receipts = [r for r in args["receipts"] if not r["resourceIdentity"].endswith("#default-branch")]
 
     with pytest.raises(ResultError, match="no approved operation set"):
-        build_result(**result_args(plan=plan_without, plan_digest=digest(plan_without), receipts=receipts))
+        build_result(**result_args(plan=plan_without, authorization=approval(plan_without), receipts=receipts))

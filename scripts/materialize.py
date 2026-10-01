@@ -83,7 +83,7 @@ def _readme(project_id: str, seed: str, commands: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _agents(project_id: str, commands: List[Dict[str, Any]]) -> str:
+def _agents(project_id: str, commands: List[Dict[str, Any]], commitlore_mode: str) -> str:
     """프로젝트 로컬 정보만. 운영 정보는 제어평면이 갖는다."""
     lines = [
         f"# {project_id} — working rules",
@@ -103,6 +103,13 @@ def _agents(project_id: str, commands: List[Dict[str, Any]]) -> str:
     ]
     lines += [f"- `{c['id']}` — `{' '.join(c['argv'])}`" for c in commands]
     lines += [
+        "",
+        "## CommitLore",
+        "",
+        f"CommitLore is `{commitlore_mode}` for this repository. After cloning, run",
+        "`commitlore init --mcp-scope none`, then `commitlore doctor` in this clone.",
+        "Decision records live in",
+        "commit trailers; Git does not carry active hooks into a fresh clone.",
         "",
         "## Rules",
         "",
@@ -308,7 +315,7 @@ def materialize(
     files = {
         MANIFEST_PATH: json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         "README.md": _readme(project_id, seed, commands),
-        "AGENTS.md": _agents(project_id, commands),
+        "AGENTS.md": _agents(project_id, commands, manifest["commitlore"]["mode"]),
     }
     if stack is not None:
         if stack not in available_stacks():

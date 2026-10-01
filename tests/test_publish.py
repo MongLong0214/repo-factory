@@ -17,11 +17,26 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 import publish as publish_module  # noqa: E402
 from apply import authorized_plan_receipt  # noqa: E402
+from plan import compile_plan  # noqa: E402
 from publish import CommitLoreRefusal, PublishError, publish_files, publish_receipt  # noqa: E402
 
 FILES = {"README.md": "# demo\n", ".agent-control-plane/project.json": "{}\n"}
 IDENTITY = "github:MongLong0214/demo"
 REMOTE = "git@github.com:MongLong0214/demo.git"
+
+
+def doctor_report(checks=None, **summary):
+    return json.dumps({"schema": "commitlore_doctor.v2", "status": "ok", "summary": summary,
+                       "checks": checks or []})
+
+
+def doctor_observation(profile, report):
+    def run(argv, cwd):
+        if argv[1] == "doctor":
+            return 0, json.dumps(report), ""
+        return 0, "ready", ""
+
+    return publish_module.observe_commitlore(profile, Path("."), run)
 
 
 def plan_for(files: Dict[str, str], profile: str = "SIMPLE") -> Dict[str, object]:
@@ -44,7 +59,7 @@ def local_runner(pushes: List[List[str]], remote_heads: Dict[str, str] = None):
     reported success without moving the remote gets represented."""
     def run(argv: List[str], cwd: Path) -> Tuple[int, str, str]:
         if argv[0] == "commitlore":
-            return 0, "ready", ""
+            return 0, doctor_report() if argv[1] == "doctor" else "ready", ""
         if argv[:2] == ["git", "push"]:
             pushes.append(argv)
             return 0, "", ""
@@ -210,6 +225,7 @@ def test_simple_missing_commitlore_warns_and_continues_with_a_receipt(tmp_path):
     receipt = publish_receipt({"bootstrapOperationId": "op", "requestDigest": "sha256:demo"},
                               heads, clock=lambda: "2026-08-19T10:00:00Z")
     assert receipt["commitlore"] == heads["commitlore"]
+    assert receipt["commitlore"]["scope"] == "genesis-checkout"
 
 
 def test_simple_success_is_pass_and_failure_is_never_pass(tmp_path):
@@ -232,13 +248,18 @@ def test_doctor_sees_origin_before_first_push_and_keeps_its_warning(tmp_path):
                 return 2, "", f"no remote is configured: {err}"
             assert origin.strip() == REMOTE
             assert pushes == []
-            return 0, "x" * 350, "warning: check local notes fetch\n"
+            return 0, doctor_report([{"id": "notes-refspec", "status": "warn",
+                                      "detail": "check local notes fetch"}], padding="x" * 350), ""
         return git_runner(argv, cwd)
 
     heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, "STANDARD"), runner=run)
     assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["scope"] == "genesis-checkout"
+    assert heads["commitlore"]["warnings"] == ["notes-refspec: check local notes fetch"]
     assert heads["commitlore"]["detail"] == (
-        "commitlore doctor passed: " + ("x" * 350 + "\nwarning: check local notes fetch")[-300:])
+        "commitlore doctor passed: " + doctor_report(
+            [{"id": "notes-refspec", "status": "warn", "detail": "check local notes fetch"}],
+            padding="x" * 350)[-300:])
     assert [p[-1] for p in pushes] == ["main", "dev"]
 
 
@@ -262,7 +283,8 @@ def test_commitlore_timeout_uses_profile_policy(tmp_path, profile, outcome, comm
         heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
         observed = heads["commitlore"]
         assert [p[-1] for p in pushes] == ["main", "dev"]
-    assert observed == {"outcome": outcome, "detail": f"commitlore {command} timed out after 180s"}
+    assert observed == {"outcome": outcome, "scope": "genesis-checkout", "warnings": [],
+                        "detail": f"commitlore {command} timed out after 180s"}
 
 
 @pytest.mark.parametrize("failing_command", ["init", "doctor"])
@@ -272,13 +294,180 @@ def test_simple_nonzero_commitlore_command_is_a_warning(tmp_path, failing_comman
 
     def run(argv, cwd):
         if argv[:2] == ["commitlore", failing_command]:
+            if failing_command == "doctor":
+                return 2, doctor_report([{"id": "failed-check", "status": "fail",
+                                          "detail": "observed failure"}]), ""
             return 2, "", "observed failure"
         return git_runner(argv, cwd)
 
     heads = publish(tmp_path / failing_command, FILES, pushes,
                     plan=plan_for(FILES, "SIMPLE"), runner=run)
-    assert heads["commitlore"] == {"outcome": "WARN",
-                                    "detail": f"commitlore {failing_command} failed (2): observed failure"}
+    observed = heads["commitlore"]
+    assert observed["outcome"] == "WARN"
+    assert observed["scope"] == "genesis-checkout"
+    assert observed["warnings"] == (["failed-check: observed failure"] if failing_command == "doctor" else [])
+    assert observed["detail"] == ("commitlore doctor failed (2): " + doctor_report(
+        [{"id": "failed-check", "status": "fail", "detail": "observed failure"}])
+        if failing_command == "doctor" else "commitlore init failed (2): observed failure")
+
+
+@pytest.mark.parametrize("profile,exit_code,expected", [
+    ("STANDARD", 0, "PASS"), ("SIMPLE", 1, "WARN"),
+    ("STANDARD", 1, "REVISE"), ("GUARDED", 1, "BLOCK"),
+])
+def test_doctor_warning_keeps_its_line_and_exit_code_policy(tmp_path, profile, exit_code, expected):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return exit_code, doctor_report([{"id": "notes-refspec", "status": "warn",
+                                              "detail": "notes fetch has no remote notes yet"}]), ""
+        return git_runner(argv, cwd)
+
+    if expected in ("REVISE", "BLOCK"):
+        with pytest.raises(CommitLoreRefusal) as caught:
+            publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observation = caught.value.observation
+        assert pushes == []
+    else:
+        heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observation = heads["commitlore"]
+    assert observation["outcome"] == expected
+    assert observation["scope"] == "genesis-checkout"
+    assert observation["warnings"] == ["notes-refspec: notes fetch has no remote notes yet"]
+    if exit_code == 0:
+        receipt = publish_receipt({"bootstrapOperationId": "op", "requestDigest": "sha256:demo"},
+                                  heads, clock=lambda: "2026-08-19T10:00:00Z")
+        assert receipt["commitlore"]["warnings"] == observation["warnings"]
+
+
+def test_doctor_preserves_all_fifteen_structured_warnings(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return 0, doctor_report([{"id": f"check-{index}", "status": "warn",
+                                      "detail": f"warning {index} " + "x" * 350}
+                                     for index in range(15)]), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], plan=plan_for(FILES, "SIMPLE"), runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["warnings"] == [f"check-{index}: warning {index} " + "x" * 350
+                                                for index in range(15)]
+    assert "check-11" not in heads["commitlore"]["detail"]
+
+
+def test_doctor_skipped_check_and_degraded_report_remain_visible(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            report = json.loads(doctor_report([
+                {"id": "inject-version", "status": "skipped", "skipReason": "version_unreadable",
+                 "title": "PreToolUse hook version", "detail": "could not read the hook version"},
+            ]))
+            report["status"] = "degraded"
+            return 0, json.dumps(report), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], plan=plan_for(FILES, "STANDARD"), runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["reportStatus"] == "degraded"
+    assert heads["commitlore"]["warnings"] == ["inject-version: skipped (version_unreadable)"]
+
+
+def test_doctor_skipped_check_without_reason_uses_title(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return 0, doctor_report([{"id": "inject-version", "status": "skipped",
+                                      "title": "PreToolUse hook version"}]), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], runner=run)
+    assert heads["commitlore"]["warnings"] == ["inject-version: skipped (PreToolUse hook version)"]
+
+
+def test_doctor_zero_warning_summary_is_not_a_finding(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return 0, doctor_report([{"id": "ready", "status": "ok", "detail": "all set"}],
+                                    warn=0, text="0 warnings"), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["warnings"] == []
+
+
+@pytest.mark.parametrize("profile,expected", [("GUARDED", "BLOCK"), ("SIMPLE", "WARN")])
+def test_failed_doctor_report_with_zero_process_exit_uses_profile_policy(profile, expected):
+    report = json.loads(doctor_report([{"id": "notes-refspec", "status": "warn",
+                                        "detail": "notes are not shared"}]))
+    report.update(status="failed", exitCode=0)
+
+    observed = doctor_observation(profile, report)
+
+    assert observed == {"outcome": expected, "scope": "genesis-checkout",
+                        "warnings": ["notes-refspec: notes are not shared"],
+                        "reportStatus": "failed",
+                        "detail": "commitlore doctor report status is failed while the process exited 0"}
+
+
+def test_failed_check_in_degraded_doctor_report_with_zero_process_exit_uses_failure_policy():
+    report = json.loads(doctor_report([
+        {"id": "notes-refspec", "status": "warn", "detail": "notes are not shared"},
+        {"id": "hook", "status": "fail", "detail": "hook is broken"},
+        {"id": "optional", "status": "skipped", "skipReason": "not_applicable"},
+    ]))
+    report.update(status="degraded", exitCode=0)
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed == {"outcome": "BLOCK", "scope": "genesis-checkout",
+                        "warnings": ["notes-refspec: notes are not shared", "hook: hook is broken",
+                                     "optional: skipped (not_applicable)"],
+                        "reportStatus": "degraded",
+                        "detail": "commitlore doctor a check has status fail while the process exited 0"}
+
+
+@pytest.mark.parametrize("report_exit_code", [1, False])
+def test_inconsistent_doctor_report_exit_code_with_zero_process_exit_uses_failure_policy(report_exit_code):
+    report = json.loads(doctor_report())
+    report["exitCode"] = report_exit_code
+
+    observed = doctor_observation("SIMPLE", report)
+
+    assert observed == {"outcome": "WARN", "scope": "genesis-checkout", "warnings": [],
+                        "reportStatus": "ok",
+                        "detail": (f"commitlore doctor report exitCode is {report_exit_code!r} "
+                                   "while the process exited 0")}
+
+
+def test_unknown_doctor_report_status_uses_failure_policy():
+    report = json.loads(doctor_report())
+    report["status"] = "healthy"
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed == {"outcome": "BLOCK", "scope": "genesis-checkout", "warnings": [],
+                        "detail": "commitlore doctor returned an invalid JSON report: invalid status"}
+
+
+def test_ok_doctor_report_with_zero_process_exit_passes():
+    report = json.loads(doctor_report([{"id": "ready", "status": "ok"}]))
+    report["exitCode"] = 0
+
+    observed = doctor_observation("GUARDED", report)
+
+    assert observed["outcome"] == "PASS"
+    assert observed["reportStatus"] == "ok"
+    assert observed["warnings"] == []
 
 
 # --- RF-S20: STANDARD required CommitLore absence requires bootstrap revision -----------
@@ -303,15 +492,29 @@ def test_guarded_missing_commitlore_refuses_before_push_as_blocking(tmp_path):
     assert pushes == []
 
 
-def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_path):
+@pytest.mark.parametrize("profile,mode", [("SIMPLE", "preferred"),
+                                           ("STANDARD", "required"),
+                                           ("GUARDED", "required")])
+def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_path, profile, mode):
     if shutil.which("commitlore") is None:
         pytest.skip("commitlore executable is unavailable; injected-runner tests cover the stage")
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
-    files = {**FILES, ".agent-control-plane/project.json":
-             json.dumps({"commitlore": {"mode": "preferred"}}) + "\n"}
+    request = {"schema": "repo-factory.bootstrap-request.v1", "runId": "clone",
+               "seed": "a demo", "bootstrapProfile": profile, "priority": "NORMAL",
+               "repositories": [{"role": "primary", "name": "demo"}],
+               "visibility": "public", "origin": {"channel": "cli"}}
+    verification = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "primary",
+                     "cwd": ".", "timeoutSeconds": 600, "envAllowlist": ["CI"],
+                     "network": "deny", "required": True}]
+    compiled = compile_plan(request, verification, stack="node",
+                            ci_values={"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22",
+                                       "INSTALL_CMD": "npm install", "TEST_CMD": "npm test",
+                                       "BUILD_CMD": "node --check index.js"},
+                            operation_id="11111111-2222-3333-4444-555555555555")
+    files = dict(compiled["files"])
 
     def run(argv, cwd):
         done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True,
@@ -319,8 +522,11 @@ def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_pa
         return done.returncode, done.stdout, done.stderr
 
     workdir = tmp_path / "tree"
-    heads = publish(workdir, files, [], plan=plan_for(files), runner=run)
+    heads = publish(workdir, files, [], plan=plan_for(files, profile), runner=run)
     assert heads["commitlore"]["outcome"] == "PASS", heads["commitlore"]
+    receipt = publish_receipt(compiled["planCore"], heads,
+                              clock=lambda: "2026-08-19T10:00:00Z")
+    assert receipt["commitlore"]["scope"] == "genesis-checkout"
     tracked = subprocess.run(["git", "ls-files"], cwd=workdir, capture_output=True,
                              text=True, check=True).stdout.splitlines()
     assert tracked == sorted(files)
@@ -334,7 +540,15 @@ def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_pa
     clone = tmp_path / "fresh-clone"
     subprocess.run(["git", "clone", "-q", "-b", "dev", str(bare), str(clone)], check=True)
     manifest = json.loads((clone / ".agent-control-plane/project.json").read_text(encoding="utf-8"))
-    assert manifest["commitlore"]["mode"] == "preferred"
+    assert manifest["commitlore"]["mode"] == mode
+    agents = (clone / "AGENTS.md").read_text(encoding="utf-8")
+    assert "## CommitLore" in agents
+    assert f"`{mode}`" in agents
+    assert "commitlore init --mcp-scope none" in agents
+    assert "commitlore doctor" in agents
+    assert agents.index("commitlore init --mcp-scope none") < agents.index("commitlore doctor")
+    assert "commit trailers" in agents
+    assert heads["commitlore"]["scope"] == "genesis-checkout"
     assert subprocess.run(["git", "ls-files"], cwd=clone, capture_output=True,
                           text=True, check=True).stdout.splitlines() == sorted(files)
     assert (workdir / ".git/hooks/commit-msg").is_file()

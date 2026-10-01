@@ -221,7 +221,7 @@ def test_the_whole_chain_produces_a_result_the_control_plane_accepts():
         op["operationId"] for op in compiled["planCore"]["githubOperations"]
     } | {f"publish:{identity}"}
     result = build_result(
-        run_id="contract", plan=compiled["planCore"], plan_digest=diff_summary(compiled)["planDigest"],
+        run_id="contract", plan=compiled["planCore"], authorization=approval(compiled["planCore"]),
         repositories=[{"role": "primary", "identity": identity, "defaultBranch": "dev",
                        "createdBranches": ["main", "dev"]}],
         receipts=receipts,

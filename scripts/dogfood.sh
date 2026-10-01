@@ -81,6 +81,7 @@ python3 scripts/apply.py --plan "$OUT/compiled.json" --ledger "$OUT/receipts.jso
 echo "── 4. genesis push"
 rm -rf "$OUT/work"
 python3 scripts/publish.py --plan "$OUT/compiled.json" --workdir "$OUT/work" \
+  --authorization "$OUT/authorization.json" \
   --remote-url "git@github.com:$OWNER/$NAME.git" --ledger "$OUT/receipts.json" \
   --author-name "Repo Factory" --author-email "factory@users.noreply.github.com" > "$OUT/publish.json"
 HEAD_SHA="$(python3 -c "import json;print(json.load(open('$OUT/publish.json'))['head'])")"
@@ -158,7 +159,7 @@ compiled = json.load(open(f"{out}/compiled.json"))
 published = json.load(open(f"{out}/publish.json"))
 json.dump({
     "runId": json.load(open(f"{out}/request.json"))["runId"],
-    "plan": compiled["planCore"], "planDigest": compiled["diffSummary"]["planDigest"],
+    "plan": compiled["planCore"],
     "repositories": [{"role": "primary", "identity": identity,
                       "defaultBranch": published.get("defaultBranch", "dev"),
                       "createdBranches": sorted(published["remoteHeads"])}],
@@ -171,6 +172,7 @@ json.dump({
 }, open(f"{out}/result-input.json", "w"), ensure_ascii=False, indent=2)
 PY
 python3 scripts/result.py --input "$OUT/result-input.json" \
+  --authorization "$OUT/authorization.json" \
   --verification "$OUT/verification.json" > "$OUT/result.json"
 
 echo "── done: $OUT/result.json"

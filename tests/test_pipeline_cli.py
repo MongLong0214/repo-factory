@@ -14,7 +14,10 @@ reached. **A stage is covered at the depth the test enters it, not at the depth 
 from __future__ import annotations
 
 import json
+import importlib
 import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -46,12 +49,66 @@ def run(argv, **kwargs):
     return subprocess.run([sys.executable, *argv], capture_output=True, text=True, **kwargs)
 
 
+@pytest.mark.parametrize("document", [SKILL / "scripts" / "dogfood.sh", SKILL / "README.md"])
+def test_documented_stage_commands_supply_every_required_parser_option(document, monkeypatch):
+    """Read each command and the stage's live argparse parser, not a copied option list."""
+    import argparse
+
+    source = document.read_text(encoding="utf-8").replace("\\\n", " ")
+    invocations = re.findall(r"(?m)^python3 scripts/([a-z-]+)\.py([^\n]*)", source)
+    assert invocations, document
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+
+    class ParserCaptured(Exception):
+        pass
+
+    for stage, arguments in invocations:
+        parser = None
+
+        def capture(self, args=None, namespace=None):
+            nonlocal parser
+            parser = self
+            raise ParserCaptured
+
+        with monkeypatch.context() as patch:
+            patch.setattr(argparse.ArgumentParser, "parse_args", capture)
+            with pytest.raises(ParserCaptured):
+                importlib.import_module(stage.replace("-", "_")).main([])
+        tokens = shlex.split(f"python3 scripts/{stage}.py{arguments}")
+        options = tokens[2:]
+        if ">" in options:
+            options = options[:options.index(">")]
+        parser.parse_args(options)
+
+
+def test_result_cli_requires_the_receipt_and_refuses_an_input_digest(tmp_path):
+    missing = run([str(SCRIPTS / "result.py"), "--input", "unused.json",
+                   "--verification", "unused.json"])
+    assert missing.returncode == 2
+    assert "--authorization" in missing.stderr
+
+    payload = tmp_path / "result-input.json"
+    payload.write_text(json.dumps({"planDigest": "caller-supplied"}), encoding="utf-8")
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text("{}", encoding="utf-8")
+    verification = tmp_path / "verification.json"
+    verification.write_text("[]", encoding="utf-8")
+    refused = run([str(SCRIPTS / "result.py"), "--input", str(payload),
+                   "--authorization", str(authorization), "--verification", str(verification)])
+    assert refused.returncode == 1
+    assert "planDigest belongs to the approval receipt" in refused.stdout
+
+
 def with_commitlore_stub(tmp_path, environment):
     """Keep CLI-chain tests independent of the host's CommitLore installation."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     executable = bin_dir / "commitlore"
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = doctor ]; then\n"
+        "  printf '%s\\n' '{\"schema\":\"commitlore_doctor.v2\",\"status\":\"ok\",\"checks\":[]}'\n"
+        "fi\nexit 0\n", encoding="utf-8")
     executable.chmod(0o755)
     return {**environment, "PATH": f"{bin_dir}:{environment.get('PATH', '')}"}
 
@@ -157,7 +214,6 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     ledger = json.loads((tmp_path / "receipts.json").read_text(encoding="utf-8"))
     (tmp_path / "result-in.json").write_text(json.dumps({
         "runId": REQUEST["runId"], "plan": document["planCore"],
-        "planDigest": document["diffSummary"]["planDigest"],
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
                           "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
         "receipts": ledger,
@@ -166,6 +222,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     }), encoding="utf-8")
 
     assembled = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                     "--authorization", str(tmp_path / "auth.json"),
                      "--verification", str(tmp_path / "verification.json")])
     assert assembled.returncode == 0, assembled.stdout[-600:] + assembled.stderr[-600:]
     result = json.loads(assembled.stdout)
@@ -181,16 +238,30 @@ def test_result_refuses_on_the_command_line_when_the_contract_is_not_the_approve
     (tmp_path / "other-verification.json").write_text(json.dumps(substituted), encoding="utf-8")
     (tmp_path / "result-in.json").write_text(json.dumps({
         "runId": REQUEST["runId"], "plan": document["planCore"],
-        "planDigest": document["diffSummary"]["planDigest"],
         "repositories": [{"role": "primary", "identity": "github:MongLong0214/demo",
                           "defaultBranch": "dev", "createdBranches": ["main", "dev"]}],
-        "receipts": [], "bootstrapVerification": [],
+        "receipts": [
+            {"operationId": op["operationId"], "resourceIdentity": op["resourceIdentity"]}
+            for op in document["planCore"]["githubOperations"]
+        ] + [{"operationId": "publish:github:MongLong0214/demo",
+              "resourceType": "genesis-commit", "resourceIdentity": "github:MongLong0214/demo",
+              "commitlore": {"outcome": "PASS", "scope": "genesis-checkout"}}],
+        "bootstrapVerification": [{"commandId": "test", "repositoryIdentity": "github:MongLong0214/demo",
+                                   "exactHead": "a" * 40, "status": "PASS"}],
     }), encoding="utf-8")
 
+    (tmp_path / "auth.json").write_text(json.dumps({
+        "planDigest": document["diffSummary"]["planDigest"],
+        "bootstrapOperationId": document["planCore"]["bootstrapOperationId"],
+        "authority": "OWNER", "approvedBy": {"actor": "owner:test"},
+        "approvedAt": "2026-08-19T09:00:00Z",
+    }), encoding="utf-8")
     done = run([str(SCRIPTS / "result.py"), "--input", str(tmp_path / "result-in.json"),
+                "--authorization", str(tmp_path / "auth.json"),
                 "--verification", str(tmp_path / "other-verification.json")])
     assert done.returncode == 1
-    assert "error" in json.loads(done.stdout)
+    assert json.loads(done.stdout)["error"] == (
+        "the verification commands handed to the result are not the ones the plan approved")
 
 
 GH_STUB = SKILL / "tests" / "fixtures" / "gh_bootstrap_stub"
@@ -365,6 +436,32 @@ def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
                 "--author-email", "test@example.invalid"])
     assert done.returncode == 1
     assert "COMMITLORE_MISSING_OR_INVALID" in json.loads(done.stderr)["error"]
+    assert not (tmp_path / "work").exists()
+
+
+def test_a_prior_pass_without_scope_cannot_resume(tmp_path):
+    plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    identity = document["planCore"]["repositories"][0]["identity"]
+    ledger_path = tmp_path / "receipts.json"
+    ledger_path.write_text(json.dumps([{
+        "bootstrapOperationId": OPERATION_ID, "requestDigest": document["planCore"]["requestDigest"],
+        "operationId": f"publish:{identity}", "resourceType": "genesis-commit",
+        "resourceIdentity": identity, "afterStateDigest": "sha256:" + "a" * 64,
+        "createdAt": "2026-08-19T10:00:00Z", "rereadAt": "2026-08-19T10:00:00Z",
+        "verified": True, "committedPaths": sorted(document["files"]),
+        "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
+        "commitlore": {"outcome": "PASS", "detail": "old observation"},
+    }]), encoding="utf-8")
+    done = run([str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+                "--authorization", str(authorization),
+                "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                "--ledger", str(ledger_path), "--author-name", "Test",
+                "--author-email", "test@example.invalid"])
+    assert done.returncode == 1
+    assert "COMMITLORE_MISSING_OR_INVALID" in json.loads(done.stderr)["error"]
+    assert "predate the scoped shape" in json.loads(done.stderr)["error"]
     assert not (tmp_path / "work").exists()
 
 

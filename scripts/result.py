@@ -15,6 +15,11 @@
 
 세 번째가 이 계층의 이유다. 쓰기가 있었다는 것과 그 쓰기가 확인됐다는 것은 다르고,
 확인되지 않은 영수증은 아무것의 증거도 아니다(§16.2).
+
+`build_result` 는 `apply.py` 의 `_check_authorization` 과 같은 방식으로 Plan 을 별도의
+승인 영수증에 묶는다. 영수증은 서명이 아니므로 그 파일을 쓸 수 있는 사람은 승인을 주장할
+수 있다. 증거를 독립적으로 확인하고 활성화를 판정하는 책임은 수신자의
+`parseRepoFactoryResult` 와 활성화 단계에 있다.
 """
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from apply import PUBLISH_OPERATION  # noqa: E402
+from apply import ApplyError, PUBLISH_OPERATION, _check_authorization  # noqa: E402
 from canonical import digest  # noqa: E402
 from plan import load_profile  # noqa: E402
 
@@ -62,7 +67,7 @@ def build_result(
     *,
     run_id: str,
     plan: Dict[str, Any],
-    plan_digest: str,
+    authorization: Dict[str, Any],
     repositories: List[Dict[str, Any]],
     receipts: List[Dict[str, Any]],
     bootstrap_verification: List[Dict[str, Any]],
@@ -70,8 +75,10 @@ def build_result(
     ci_evidence: List[Dict[str, Any]] = None,
     unresolved_gaps: List[str] = None,
 ) -> Dict[str, Any]:
-    if digest(plan) != plan_digest:
-        raise ResultError("PLAN_DIGEST_MISMATCH: the supplied digest does not cover this plan")
+    try:
+        _check_authorization(plan, authorization)
+    except ApplyError as error:
+        raise ResultError(f"{error.code}: {error}") from error
     if not receipts:
         raise ResultError("a result with no external write receipt describes no bootstrap")
     if not bootstrap_verification:
@@ -195,7 +202,7 @@ def build_result(
         "schema": RESULT_SCHEMA_ID,
         "runId": run_id,
         "bootstrapOperationId": plan["bootstrapOperationId"],
-        "planDigest": plan_digest,
+        "planDigest": authorization["planDigest"],
         "projectManifestDigest": plan["projectManifestDigest"],
         "repositories": [
             {
@@ -230,7 +237,8 @@ def build_result(
 def main(argv: List[str] = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Assemble a RepoFactoryResult from an applied plan.")
-    parser.add_argument("--input", required=True, help="JSON with runId, plan, planDigest, repositories, receipts, bootstrapVerification")
+    parser.add_argument("--input", required=True, help="JSON with runId, plan, repositories, receipts, bootstrapVerification")
+    parser.add_argument("--authorization", required=True, help="approval receipt covering the plan")
     # 계약 자체는 Plan 에 없다 — Plan 은 digest 만 싣는다. 그래서 Result 를 조립하는 쪽이
     # 원본 목록을 다시 대야 하고, 그 목록이 승인된 계약과 같은지를 여기서 대조한다. 한동안
     # 이 인자가 CLI 에 없어서 `result.py --input` 은 TypeError 로 죽었고, `--help` 는 통과했다.
@@ -240,9 +248,12 @@ def main(argv: List[str] = None) -> int:
     args = parser.parse_args(argv)
     payload = json.loads(open(args.input, encoding="utf-8").read())
     commands = json.loads(open(args.verification, encoding="utf-8").read())
+    authorization = json.loads(open(args.authorization, encoding="utf-8").read())
     try:
+        if "planDigest" in payload:
+            raise ResultError("planDigest belongs to the approval receipt, not the result input")
         result = build_result(
-            run_id=payload["runId"], plan=payload["plan"], plan_digest=payload["planDigest"],
+            run_id=payload["runId"], plan=payload["plan"], authorization=authorization,
             repositories=payload["repositories"], receipts=payload["receipts"],
             bootstrap_verification=payload["bootstrapVerification"],
             verification_commands=commands,

@@ -34,10 +34,45 @@ COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "templates",
 # name, file, (find, replace), tests that must fail once the guard is gone.
 GUARDS: List[Dict[str, object]] = [
     {
-        "name": "result checks the supplied digest before accepting a changed profile",
+        "name": "result checks the approver's receipt before accepting a changed profile",
         "file": "scripts/result.py",
-        "mutate": ('    if digest(plan) != plan_digest:', '    if False:'),
+        "mutate": ('        _check_authorization(plan, authorization)', '        pass'),
         "killed_by": ["tests/test_slice4_result.py::test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning"],
+    },
+    {
+        "name": "clone instructions include doctor after init",
+        "file": "scripts/materialize.py",
+        "mutate": ('        "`commitlore init --mcp-scope none`, then `commitlore doctor` in this clone.",',
+                   '        "`commitlore init --mcp-scope none` in this clone.",'),
+        "killed_by": ["tests/test_materialize.py::test_agents_carries_the_clone_time_commitlore_step_from_the_profile",
+                      "tests/test_publish.py::test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged"],
+    },
+    {
+        "name": "every structured doctor warning remains visible",
+        "file": "scripts/publish.py",
+        "mutate": ('                    if check["status"] != "ok":',
+                   '                    if False:'),
+        "killed_by": ["tests/test_publish.py::test_doctor_preserves_all_fifteen_structured_warnings"],
+    },
+    {
+        "name": "doctor rejects a report status outside the contract",
+        "file": "scripts/publish.py",
+        "mutate": ('                if report_status not in ("ok", "degraded", "failed"):',
+                   '                if False:'),
+        "killed_by": ["tests/test_publish.py::test_unknown_doctor_report_status_uses_failure_policy"],
+    },
+    {
+        "name": "contradictory doctor report follows the profile failure policy",
+        "file": "scripts/publish.py",
+        "mutate": ('                if contradictions:', '                if False:'),
+        "killed_by": ["tests/test_publish.py::test_failed_doctor_report_with_zero_process_exit_uses_profile_policy[GUARDED-BLOCK]"],
+    },
+    {
+        "name": "a skipped doctor check remains visible with its reason",
+        "file": "scripts/publish.py",
+        "mutate": ('                        if check["status"] == "skipped":',
+                   '                        if False:'),
+        "killed_by": ["tests/test_publish.py::test_doctor_skipped_check_and_degraded_report_remain_visible"],
     },
     {
         "name": "publish checks authorization before reading the plan's policy or running git",
@@ -125,8 +160,10 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "absent CommitLore is a profile failure, never PASS",
         "file": "scripts/publish.py",
-        "mutate": ('            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}',
-                   '            return {"outcome": "PASS", "detail": f"{argv[0]} unavailable: {error}"}'),
+        "mutate": ('            return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,\n'
+                   '                    "detail": f"{argv[0]} unavailable: {error}"}',
+                   '            return {"outcome": "PASS", "scope": "genesis-checkout", "warnings": warnings,\n'
+                   '                    "detail": f"{argv[0]} unavailable: {error}"}'),
         "killed_by": ["tests/test_publish.py::test_simple_missing_commitlore_warns_and_continues_with_a_receipt"],
     },
     {
@@ -167,9 +204,17 @@ GUARDS: List[Dict[str, object]] = [
         "file": "scripts/publish.py",
         "mutate": ('            if (not isinstance(observation, dict) or\n'
                    '                    observation.get("outcome") not in ("PASS", policy) or\n'
+                   '                    observation.get("scope") != "genesis-checkout" or\n'
                    '                    (observation.get("outcome") != "PASS" and not observation.get("detail"))):',
                    '            if False:'),
         "killed_by": ["tests/test_pipeline_cli.py::test_a_prior_genesis_without_commitlore_outcome_cannot_resume"],
+    },
+    {
+        "name": "resume refuses an unscoped prior PASS",
+        "file": "scripts/publish.py",
+        "mutate": ('                    observation.get("scope") != "genesis-checkout" or',
+                   '                    False or'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_a_prior_pass_without_scope_cannot_resume"],
     },
     {
         "name": "the compiler validates its own output against the schema it ships",
