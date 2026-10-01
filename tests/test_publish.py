@@ -579,6 +579,7 @@ def test_publish_refuses_a_receipt_for_another_digest_before_any_git_command(tmp
     monkeypatch.setitem(publish_module.publish_files.__kwdefaults__, "runner", run)
     assert publish_module.main(["--plan", str(plan_path), "--authorization", str(auth_path),
                                 "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                                "--ledger", str(tmp_path / "receipts.json"),
                                 "--author-name", "Test", "--author-email", "test@example.com"]) == 1
     assert json.loads(capsys.readouterr().err)["error"] == "AUTHORIZATION_MISSING"
     assert calls == []

@@ -11,6 +11,7 @@
     "requestDigest",
     "bootstrapProfile",
     "authorization",
+    "ownerConstraints",
     "repositories",
     "files",
     "githubOperations",
@@ -41,6 +42,11 @@
         "HERMES",
         "OWNER"
       ]
+    },
+    "ownerConstraints": {
+      "description": "Owner constraints from the request, in request order, included in the approved plan digest.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
     },
     "environmentSnapshotId": {
       "description": "A reference to the observation, never its bytes. Mixing observation into this object would make the digest change when nothing about the intent did.",

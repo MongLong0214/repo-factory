@@ -239,14 +239,40 @@ def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     if request.get("visibility") == "public":
         reasons.append("public-exposure")
     for fact in request.get("humanGateFacts", []):
-        for gate in OWNER_GATES:
-            if gate in fact:
-                reasons.append(gate)
+        if fact not in OWNER_GATES:
+            raise PlanError(f"unknown humanGateFacts gate {fact!r}; known gates: {sorted(OWNER_GATES)}")
+        reasons.append(fact)
     reasons = sorted(set(reasons))
     return {
         "authorization": "OWNER" if reasons else "HERMES",
         "reasons": [{"gate": r, "why": OWNER_GATES[r]} for r in reasons],
     }
+
+
+def enforce_owner_constraints(constraints: List[str], operations: List[Dict[str, Any]]) -> None:
+    """Refuse an approved operation that would cross an owner's prohibition."""
+    for constraint in constraints:
+        for operation in operations:
+            desired = operation.get("desiredState") or {}
+            resource_type = operation["resourceType"]
+            intent = operation["intent"]
+            if constraint == "no-public-exposure" and (
+                    resource_type == "repository" and desired.get("private") is False
+                    or desired.get("visibility") == "public"):
+                raise PlanError(f"{constraint} forbids planned operation {operation['operationId']}")
+            # Today the compiler creates repositories/rulesets, updates settings, changes no
+            # paid plan, and publishes no package. Inspect the actual operations so a future
+            # replacement, billing write, or package publication cannot inherit that assumption.
+            if constraint == "no-paid-plan-change" and (
+                    resource_type in ("billing-plan", "subscription")
+                    or intent == "change-paid-plan" or desired.get("paidPlanChange") is True):
+                raise PlanError(f"{constraint} forbids planned operation {operation['operationId']}")
+            if constraint == "no-destructive-replacement" and (
+                    intent in ("replace", "delete") or desired.get("replacesExisting") is True):
+                raise PlanError(f"{constraint} forbids planned operation {operation['operationId']}")
+            if constraint == "no-irreversible-naming" and (
+                    resource_type in ("package", "package-publish") or intent == "publish"):
+                raise PlanError(f"{constraint} forbids planned operation {operation['operationId']}")
 
 
 def _utc_now() -> str:
@@ -394,6 +420,7 @@ def compile_plan(
         "requestDigest": digest(request, volatile="strip"),
         "bootstrapProfile": request["bootstrapProfile"],
         "authorization": gate["authorization"],
+        "ownerConstraints": list(request.get("ownerConstraints", [])),
         "repositories": [
             {"role": r["role"], "identity": f"github:{owner}/{r['name']}",
              "visibility": request["visibility"]}
@@ -458,6 +485,7 @@ def compile_plan(
         # 참조만 한다. 관측 바이트는 Plan 에 들어가지 않고, id 는 사실만 세므로 같은
         # 사실을 다시 관측해도 Plan digest 는 움직이지 않는다.
         core["environmentSnapshotId"] = environment_snapshot_id(environment)
+    enforce_owner_constraints(core["ownerConstraints"], core["githubOperations"])
     # 우리가 싣고 다니는 스키마로 우리 산출물을 검사한다. 없으면 잘못된 Plan 이 apply 까지
     # 가서 거기서 죽고, 스키마를 가진 경계는 그냥 지나친다.
     invalid = sorted(Draft202012Validator(_plan_schema()).iter_errors(core), key=str)
@@ -476,6 +504,7 @@ def diff_summary(compiled: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "planDigest": digest(core),
         "authorization": core["authorization"],
+        "ownerConstraints": core["ownerConstraints"],
         "repositories": [r["identity"] for r in core["repositories"]],
         "artifacts": compiled["artifacts"],
         "githubOperations": [o["operationId"] for o in core["githubOperations"]],

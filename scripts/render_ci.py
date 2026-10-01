@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -34,6 +35,8 @@ _USES = re.compile(r"uses:\s*(\S+)@(\S+)")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SETUP_ACTION = re.compile(r"uses:\s*(actions/setup-|dtolnay/rust-toolchain)")
 _ECHO_ONLY_STEP = re.compile(r"run:\s*echo\b[^\n]*$", re.MULTILINE)
+_RUNTIME_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_SHELL_OPERATORS = frozenset(";&|<>()$`")
 
 __all__ = ["CiRenderError", "available_stacks", "render", "effective_values", "DEFAULT_VALUES", "ci_findings", "required_tokens"]
 
@@ -101,6 +104,24 @@ def render(stack: str, values: Dict[str, str]) -> str:
     empty = sorted(name for name in needed if not str(values[name]).strip())
     if empty:
         raise CiRenderError(f"{stack}: empty value for {empty}; an empty command is a lane that verifies nothing")
+    for name in sorted(needed):
+        value = values[name]
+        # isprintable() 는 ASCII 제어문자뿐 아니라 U+0085·U+2028·U+2029 같은 유니코드 줄 구분자도
+        # 거부한다. 그 문자들은 run: 줄을 YAML 수준에서 끊어 렌더 결과를 깨뜨린다.
+        if not isinstance(value, str) or not value.isprintable():
+            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
+        if name.endswith("_CMD"):
+            try:
+                tokens = shlex.split(value)
+            except ValueError as error:
+                raise CiRenderError(f"{stack}: unsafe CI value for {name}: {error}") from error
+            if not tokens or not tokens[0] or any(
+                    any(char in _SHELL_OPERATORS or ord(char) < 32 or ord(char) == 127
+                        for char in token) for token in tokens):
+                raise CiRenderError(f"{stack}: unsafe CI value for {name}")
+            values[name] = shlex.join(tokens)
+        elif name.startswith("RUNTIME_") and not _RUNTIME_VERSION.fullmatch(value):
+            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
     return _TOKEN.sub(lambda m: str(values[m.group(1)]), text)
 
 

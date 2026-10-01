@@ -34,7 +34,7 @@ __all__ = [
     "ApplyError", "GitHubPort", "ReceiptLedger", "apply_plan",
     "RESOURCE_COLLISION", "PLAN_INTENT_CHANGED", "REREAD_MISMATCH", "PHASE_OUT_OF_ORDER",
     "UNKNOWN_PHASE", "UNSUPPORTED_INTENT", "OWNER_AUTHORIZATION_REQUIRED", "RESUMED_RESOURCE_ABSENT",
-    "LEDGER_CORRUPT", "RESUMED_RESOURCE_DRIFTED", "REMOTE_REFUSED", "AUTHORIZATION_MISSING",
+    "LEDGER_CORRUPT", "LEDGER_FOREIGN", "RESUMED_RESOURCE_DRIFTED", "REMOTE_REFUSED", "AUTHORIZATION_MISSING",
     "AUTHORIZATION_INSUFFICIENT", "AUTHORIZATION_SPENT", "AUTHORITY_RANK",
     "authorized_plan_receipt",
     "PHASES",
@@ -59,6 +59,7 @@ AUTHORIZATION_MISSING = "AUTHORIZATION_MISSING"
 AUTHORIZATION_INSUFFICIENT = "AUTHORIZATION_INSUFFICIENT"
 AUTHORIZATION_SPENT = "AUTHORIZATION_SPENT"
 LEDGER_CORRUPT = "LEDGER_CORRUPT"
+LEDGER_FOREIGN = "LEDGER_FOREIGN"
 RESUMED_RESOURCE_DRIFTED = "RESUMED_RESOURCE_DRIFTED"
 PHASE_OUT_OF_ORDER = "PHASE_OUT_OF_ORDER"
 UNSUPPORTED_INTENT = "UNSUPPORTED_INTENT"
@@ -100,6 +101,7 @@ class ReceiptLedger:
     def __init__(self, path: Path):
         self.path = path
         self._rows: Dict[str, Dict[str, Any]] = {}
+        self._owner = None
         if path.is_file():
             for row in json.loads(path.read_text(encoding="utf-8")):
                 # 중복은 마지막 행이 이기는 게 아니라 거부다. 이기게 두면 같은 operationId 로
@@ -115,13 +117,29 @@ class ReceiptLedger:
                                      f"a ledger row is missing {missing}; a receipt that does not "
                                      f"say what it verified cannot be read as proof that it did",
                                      [], {"operationId": row.get("operationId"), "missing": missing})
+                owner = (row["bootstrapOperationId"], row["requestDigest"])
+                if self._owner is not None and owner != self._owner:
+                    raise ApplyError(LEDGER_CORRUPT,
+                                     "the ledger mixes bootstrap operations or request digests",
+                                     [], {"operationId": row["operationId"]})
+                self._owner = owner
                 self._rows[row["operationId"]] = row
 
     def get(self, operation_id: str) -> Optional[Dict[str, Any]]:
         return self._rows.get(operation_id)
 
+    def assert_owner(self, bootstrap_operation_id: str, request_digest: str) -> None:
+        wanted = (bootstrap_operation_id, request_digest)
+        if self._owner is not None and self._owner != wanted:
+            raise ApplyError(LEDGER_FOREIGN,
+                             "the ledger belongs to a different bootstrap operation or request",
+                             self.all(), {"ledgerBootstrapOperationId": self._owner[0],
+                                          "planBootstrapOperationId": bootstrap_operation_id})
+
     def record(self, receipt: Dict[str, Any]) -> None:
+        self.assert_owner(receipt["bootstrapOperationId"], receipt["requestDigest"])
         self._rows[receipt["operationId"]] = receipt
+        self._owner = (receipt["bootstrapOperationId"], receipt["requestDigest"])
         # 다음 Operation 전에 쓴다. 프로세스가 여기서 죽어도 재개 지점이 남는다.
         #
         # 원자적으로 쓴다. 제자리 쓰기 도중에 죽으면 잘린 JSON 이 남고, 다음 실행은 원장을
@@ -340,6 +358,10 @@ def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,
             raise ApplyError(OWNER_AUTHORIZATION_REQUIRED,
                              "a Hermes-authorised plan may not create public repositories",
                              ledger.all(), {"repositories": public})
+
+    # 재개 원장은 이 요청의 출처여야 한다. 같은 operationId 의 행이 없어도 다른
+    # 부트스트랩의 원장에 새 쓰기를 시작해서는 안 된다.
+    ledger.assert_owner(plan["bootstrapOperationId"], plan["requestDigest"])
 
     # 원격을 읽기 전에 권한을 본다. 읽는 것도 부작용이 있는 호출이고, 무엇보다 승인 없이
     # 시작한 실행은 어디까지 갔든 승인 없이 간 것이다.

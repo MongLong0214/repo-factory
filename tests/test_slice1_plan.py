@@ -14,7 +14,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from canonical import CanonicalError, digest, volatile_findings  # noqa: E402
-from plan import PlanError, compile_plan, diff_summary, load_profile, main as plan_main  # noqa: E402
+from plan import PlanError, compile_plan, diff_summary, enforce_owner_constraints, load_profile, main as plan_main  # noqa: E402
 from materialize import ADR_PATH, SPEC_PATH  # noqa: E402
 
 VERIFICATION = [
@@ -146,9 +146,76 @@ def test_public_exposure_is_an_owner_decision_even_when_the_request_asked_for_it
 
 def test_a_declared_human_gate_fact_escalates_without_the_visibility_flag():
     destructive = copy.deepcopy(REQUEST)
-    destructive["humanGateFacts"] = ["destructive-replacement of the existing repository"]
+    destructive["humanGateFacts"] = ["destructive-replacement"]
 
     assert compiled(destructive)["humanGate"]["authorization"] == "OWNER"
+
+
+@pytest.mark.parametrize("fact", ["public-exposure-risk", "unknown-owner-gate"])
+def test_human_gate_fact_must_name_an_exact_known_gate(fact):
+    request = copy.deepcopy(REQUEST)
+    request["humanGateFacts"] = [fact]
+    with pytest.raises(PlanError) as caught:
+        compiled(request)
+    assert fact in str(caught.value)
+    assert all(gate in str(caught.value) for gate in (
+        "public-exposure", "paid-plan-change", "destructive-replacement", "irreversible-naming"))
+
+
+def test_owner_constraints_reach_the_approved_plan_and_diff_summary():
+    first = copy.deepcopy(REQUEST)
+    first["ownerConstraints"] = ["no-paid-plan-change", "no-destructive-replacement"]
+    second = copy.deepcopy(first)
+    second["ownerConstraints"][1] = "no-irreversible-naming"
+    a, b = compiled(first), compiled(second)
+    assert a["planCore"]["ownerConstraints"] == first["ownerConstraints"]
+    assert diff_summary(a)["ownerConstraints"] == first["ownerConstraints"]
+    assert diff_summary(a)["planDigest"] != diff_summary(b)["planDigest"]
+    assert compiled()["planCore"]["ownerConstraints"] == []
+    assert diff_summary(compiled())["ownerConstraints"] == []
+
+
+def test_no_public_exposure_refuses_a_public_request_before_a_plan_exists():
+    request = copy.deepcopy(REQUEST)
+    request["ownerConstraints"] = ["no-public-exposure"]
+    with pytest.raises(PlanError, match="no-public-exposure"):
+        compiled(request, stack="node", ci_values=CI_VALUES)
+
+
+def test_no_public_exposure_with_a_private_request_is_refused_by_the_factory_not_the_constraint():
+    """This factory creates public repositories only (#39), so the one request that could honour
+    `no-public-exposure` is the one it cannot finish. The refusal names the factory's limit, not
+    the constraint, so the owner learns which door is closed."""
+    private = copy.deepcopy(REQUEST)
+    private["visibility"] = "private"
+    private["ownerConstraints"] = ["no-public-exposure"]
+    with pytest.raises(PlanError, match="public repositories"):
+        compiled(private)
+
+
+def test_unknown_owner_constraint_is_refused_with_the_supported_list():
+    request = copy.deepcopy(REQUEST)
+    request["ownerConstraints"] = ["Never create a public repository"]
+    with pytest.raises(PlanError) as caught:
+        compiled(request)
+    message = str(caught.value)
+    assert "Never create a public repository" in message
+    assert all(item in message for item in ("no-public-exposure", "no-paid-plan-change",
+                                            "no-destructive-replacement", "no-irreversible-naming"))
+
+
+@pytest.mark.parametrize("constraint,operation", [
+    ("no-paid-plan-change", {"resourceType": "billing-plan", "intent": "update",
+                             "desiredState": {"plan": "pro"}}),
+    ("no-destructive-replacement", {"resourceType": "repository", "intent": "update",
+                                    "desiredState": {"replacesExisting": True}}),
+    ("no-irreversible-naming", {"resourceType": "package", "intent": "publish",
+                                "desiredState": {"name": "example"}}),
+], ids=["paid", "replacement", "package"])
+def test_owner_constraints_inspect_planned_operations(constraint, operation):
+    operation["operationId"] = "future-operation"
+    with pytest.raises(PlanError, match=constraint):
+        enforce_owner_constraints([constraint], [operation])
 
 
 # --- profile-aware artifact selection (PRD §6) -----------------------------------------
@@ -194,8 +261,8 @@ def test_simple_materializes_no_formal_documents_without_optional_requests():
 
 def test_standard_lean_revision_preserves_product_scope_and_required_artifacts():
     request = copy.deepcopy(REQUEST)
-    request["ownerConstraints"] = ["keep ledger data local"]
-    request["humanGateFacts"] = ["public exposure requires owner consent"]
+    request["ownerConstraints"] = ["no-paid-plan-change"]
+    request["humanGateFacts"] = ["public-exposure"]
     original = copy.deepcopy(request)
     requested = ["adr", "tickets", "research-dossier"]
     review = {"verdict": "LEAN_REVISE", "removedItems": [

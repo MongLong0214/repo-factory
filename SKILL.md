@@ -81,6 +81,10 @@ Operation** 이 되고, 원장이 그것을 재개로 못 알아본다.
 나오는 것: `planCore`(승인 대상) · `files`(올라갈 바이트) · `humanGate` · `unresolvedGaps`
 · `diffSummary` · `--observe` 를 줬으면 `environmentObservation`.
 
+요청의 `ownerConstraints` 는 `no-public-exposure`, `no-paid-plan-change`,
+`no-destructive-replacement`, `no-irreversible-naming` 만 받는다. 컴파일러는 계획된
+GitHub Operation 을 검사하고 위반을 거부한다. 자유 형식 문장은 집행할 수 없으므로 거부한다.
+
 ### 2. 승인
 
 ```bash
@@ -123,14 +127,14 @@ ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다.
 > Pro 이상을 요구하므로 private Plan 은 컴파일은 되지만 `after-files` 에서 반드시 죽는다.
 > 그때는 이미 원격 저장소가 하나 실재한다. **만들 수 없는 것은 계획하지 않는다.**
 >
-> 그 결과 모든 Plan 이 OWNER 게이트다(`public-exposure`). HERMES 영수증은
-> `AUTHORIZATION_INSUFFICIENT` 로 거부되고, 그게 맞다 — 공개 노출은 오너의 결정이다.
+> public Plan 은 OWNER 게이트다(`public-exposure`). HERMES 영수증은
+> `AUTHORIZATION_INSUFFICIENT` 로 거부된다 — 공개 노출은 오너의 결정이다.
 
 ### 4. genesis 커밋
 
 ```bash
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
-  --authorization authorization.json \
+  --authorization authorization.json --ledger receipts.json \
   --remote-url git@github.com:owner/name.git \
   --author-name "..." --author-email "..."
 ```
@@ -171,7 +175,8 @@ Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인�
 
 - 공개 노출 (public 저장소 생성, 또는 private → public)
 - 되돌리기 어려운 파괴적 작업
-- 오너가 요청서에 직접 표시한 사실
+- 오너가 요청서의 `humanGateFacts` 에 정확한 게이트 키로 표시한 사실
+  (`public-exposure`, `paid-plan-change`, `destructive-replacement`, `irreversible-naming`)
 
 ## 불변식
 

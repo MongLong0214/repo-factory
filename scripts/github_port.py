@@ -9,6 +9,14 @@
 쓰기 *전* preexisting 판정에도 쓰인다. 둘을 다른 코드로 두면 "만들기 전엔 없다고
 했는데 만든 뒤엔 있다고 하는" 두 눈이 생기고, 그 불일치는 조용하다.
 
+PRD §16.1(906행) 의 외부 쓰기 범위: `compile_plan` 은 repository,
+setting(default-branch, secret-scanning, code-scanning), ruleset 을 계획하고 이 포트가
+관측·적용한다. branch 는
+`publish.py` 의 genesis push 가 만들고 `git ls-remote` 로 재조회한다. issue,
+milestone, tag 는 genesis Plan 에 넣지 않는다. PRD §17.3(962행) 에 따라 활성화 뒤 제어평면의
+GitHub integration kernel 이 이 저장소의 projection code(issue update port 포함)를
+호출한다. `compile_plan` 은 이 세 리소스의 genesis-time 쓰기를 계획하지 않는다.
+
 **신뢰 게이트 자격증명은 여기 오지 않는다**(PRD §26 Security). Repo Factory 는
 오너의 평소 `gh` 인증으로 자기 저장소를 만들 뿐이고, `acp-production-gate` 를 게시할
 수 있는 App 자격증명은 제어평면만 갖는다.
@@ -222,14 +230,6 @@ class GhCliPort:
             return {"identity": identity, "resourceType": "setting",
                     "secretScanning": (analysis.get("secret_scanning") or {}).get("status"),
                     "pushProtection": (analysis.get("secret_scanning_push_protection") or {}).get("status")}
-        if resource_type == "branch":
-            if not ref:
-                raise GhError(f"branch identity must name a ref: {identity!r}")
-            observed = self._api(f"repos/{owner}/{repo}/branches/{ref}")
-            if observed is None:
-                return None
-            return {"identity": identity, "resourceType": "branch", "name": observed.get("name"),
-                    "head": (observed.get("commit") or {}).get("sha")}
         if resource_type == "issue":
             if not ref or not ref.isdecimal():
                 raise GhError(f"issue identity must name a numeric issue number: {identity!r}")
@@ -325,16 +325,6 @@ class GhCliPort:
             code, _, err = self.run(argv, json.dumps(body))
             if code != 0:
                 raise GhError(f"creating ruleset {ref} failed ({code}): {err.strip()[:200]}")
-            return
-        if resource_type == "branch":
-            if not ref or not spec.get("fromSha"):
-                raise GhError(f"branch creation needs a ref and a fromSha: {identity!r}")
-            argv = [self.gh, "api", "--method", "POST", f"repos/{owner}/{repo}/git/refs",
-                    "-f", f"ref=refs/heads/{ref}", "-f", f"sha={spec['fromSha']}"]
-            self.calls.append(argv)
-            code, _, err = self.run(argv)
-            if code != 0:
-                raise GhError(f"creating branch {ref} failed ({code}): {err.strip()[:200]}")
             return
         raise GhError(f"no creation is implemented for resourceType {resource_type!r}")
 

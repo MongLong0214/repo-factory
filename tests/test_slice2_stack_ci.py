@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -145,6 +146,51 @@ def test_an_empty_command_is_refused_because_it_verifies_nothing():
     blanked = dict(VALUES["node"], TEST_CMD="   ")
     with pytest.raises(CiRenderError, match="empty value"):
         render("node", blanked)
+
+
+@pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
+@pytest.mark.parametrize("slot", ["INSTALL_CMD", "TEST_CMD", "BUILD_CMD"])
+@pytest.mark.parametrize("value", ["npm test; printf injected", "npm test && curl x",
+                                    "npm test | tee", "a > b", "$(x)", "`id`",
+                                    "npm test\necho injected", "npm test 'unfinished",
+                                    "npm test ';' printf", "npm test\x01echo"])
+def test_unsafe_caller_ci_value_is_refused_before_render(stack, slot, value):
+    with pytest.raises(CiRenderError, match=slot):
+        render(stack, {slot: value})
+
+
+@pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
+@pytest.mark.parametrize("slot", ["INSTALL_CMD", "TEST_CMD", "BUILD_CMD"])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"], ids=["U+2028", "U+2029", "U+0085"])
+def test_a_unicode_line_separator_is_refused_before_it_breaks_the_workflow(stack, slot, separator):
+    """An ASCII-only control check let these through, and the rendered `run:` line no longer
+    parsed as YAML while `ci_findings` still returned nothing (review round 2 of #54, RF-54-04)."""
+    with pytest.raises(CiRenderError, match=slot):
+        render(stack, {slot: f"npm test{separator}echo injected"})
+
+
+def test_a_quoted_command_argument_round_trips_as_one_argument():
+    command = 'python -m pip install -e ".[test]"'
+    workflow = render("python", {"INSTALL_CMD": command})
+    line = next(line.strip().removeprefix("run: ") for line in workflow.splitlines()
+                if line.strip().startswith("run: python -m pip"))
+    assert line == "python -m pip install -e '.[test]'"
+    assert shlex.split(line) == shlex.split(command)
+
+
+@pytest.mark.parametrize("value", ["3.11;echo injected", "$(x)", "1\n2"])
+def test_runtime_version_is_a_simple_token(value):
+    with pytest.raises(CiRenderError, match="RUNTIME_LOWER"):
+        render("python", {"RUNTIME_LOWER": value})
+
+
+def test_factory_defaults_for_all_stacks_render_cleanly_including_python_quotes():
+    assert DEFAULT_VALUES["python"]["INSTALL_CMD"] == 'python -m pip install -e ".[test]"'
+    for stack in available_stacks():
+        workflow = render(stack, {})
+        assert ci_findings(workflow) == []
+        for slot in ("INSTALL_CMD", "TEST_CMD", "BUILD_CMD"):
+            assert "run: " + shlex.join(shlex.split(DEFAULT_VALUES[stack][slot])) in workflow
 
 
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])

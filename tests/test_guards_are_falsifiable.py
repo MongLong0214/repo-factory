@@ -202,18 +202,18 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "resume refuses a genesis receipt with no CommitLore observation",
         "file": "scripts/publish.py",
-        "mutate": ('            if (not isinstance(observation, dict) or\n'
-                   '                    observation.get("outcome") not in ("PASS", policy) or\n'
-                   '                    observation.get("scope") != "genesis-checkout" or\n'
-                   '                    (observation.get("outcome") != "PASS" and not observation.get("detail"))):',
-                   '            if False:'),
+        "mutate": ('        if (not isinstance(observation, dict) or\n'
+                   '                observation.get("outcome") not in ("PASS", policy) or\n'
+                   '                observation.get("scope") != "genesis-checkout" or\n'
+                   '                (observation.get("outcome") != "PASS" and not observation.get("detail"))):',
+                   '        if False:'),
         "killed_by": ["tests/test_pipeline_cli.py::test_a_prior_genesis_without_commitlore_outcome_cannot_resume"],
     },
     {
         "name": "resume refuses an unscoped prior PASS",
         "file": "scripts/publish.py",
-        "mutate": ('                    observation.get("scope") != "genesis-checkout" or',
-                   '                    False or'),
+        "mutate": ('                observation.get("scope") != "genesis-checkout" or',
+                   '                False or'),
         "killed_by": ["tests/test_pipeline_cli.py::test_a_prior_pass_without_scope_cannot_resume"],
     },
     {
@@ -575,7 +575,7 @@ GUARDS: List[Dict[str, object]] = [
         "killed_by": ["tests/test_slice3_apply.py::test_a_remote_refusal_reports_the_receipts_and_a_resume_point"],
     },
     {
-        "name": "a visibility this factory cannot finish is refused at compile time",
+        "name": "a plan this factory cannot finish is not compiled",
         "file": "scripts/plan.py",
         "mutate": ('    if request.get("visibility") != "public":', "    if False:"),
         "killed_by": ["tests/test_slice1_plan.py::test_a_plan_this_factory_cannot_finish_is_not_compiled"],
@@ -583,7 +583,7 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "publish resumes rather than pushing a second genesis",
         "file": "scripts/publish.py",
-        "mutate": ('        if prior is not None and prior.get("verified"):', "        if False:"),
+        "mutate": ('    if prior is not None and prior.get("verified"):', "    if False:"),
         "killed_by": ["tests/test_pipeline_cli.py::test_a_finished_genesis_push_resumes_instead_of_pushing_again"],
     },
     {
@@ -639,6 +639,94 @@ GUARDS: List[Dict[str, object]] = [
         "mutate": ('                        "state": setup.get("state"), "querySuite": setup.get("query_suite")}',
                    '                        "state": "configured", "querySuite": "default"}'),
         "killed_by": ["tests/test_github_port.py::test_the_port_reads_the_code_scanning_setup_it_was_asked_about"],
+    },
+    {
+        "name": "a foreign receipt cannot enter the ledger",
+        "file": "scripts/apply.py",
+        "mutate": ("        if self._owner is not None and self._owner != wanted:", "        if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_foreign_receipt_cannot_change_ledger_bytes"],
+    },
+    {
+        "name": "a mixed ledger cannot be loaded as provenance",
+        "file": "scripts/apply.py",
+        "mutate": ("                if self._owner is not None and owner != self._owner:", "                if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_mixed_ledger_is_refused_on_load"],
+    },
+    {
+        "name": "apply checks ledger provenance before remote observation",
+        "file": "scripts/apply.py",
+        "mutate": ('    ledger.assert_owner(plan["bootstrapOperationId"], plan["requestDigest"])',
+                   '    pass'),
+        "killed_by": ["tests/test_slice3_apply.py::test_apply_refuses_a_foreign_ledger_before_observing_remote"],
+    },
+    {
+        "name": "publish checks ledger provenance before git",
+        "file": "scripts/publish.py",
+        "mutate": ('        ledger.assert_owner(core["bootstrapOperationId"], core["requestDigest"])',
+                   '        pass'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_publish_refuses_a_foreign_ledger_before_running_git"],
+    },
+    {
+        "name": "unknown owner gate facts are refused",
+        "file": "scripts/plan.py",
+        "mutate": ('        if fact not in OWNER_GATES:', '        if False:'),
+        "killed_by": ["tests/test_slice1_plan.py::test_human_gate_fact_must_name_an_exact_known_gate"],
+    },
+    {
+        "name": "public exposure cannot cross an owner constraint",
+        "file": "scripts/plan.py",
+        "mutate": ('            if constraint == "no-public-exposure" and (',
+                   '            if False and ('),
+        "killed_by": ["tests/test_slice1_plan.py::test_no_public_exposure_refuses_a_public_request_before_a_plan_exists"],
+    },
+    {
+        "name": "unknown owner constraint text is refused by the request schema",
+        "file": "schemas/bootstrap-request.schema.json",
+        "mutate": ('"items": { "enum": ["no-public-exposure", "no-paid-plan-change", "no-destructive-replacement", "no-irreversible-naming"] }',
+                   '"items": { "type": "string", "minLength": 1 }'),
+        "killed_by": ["tests/test_slice1_plan.py::test_unknown_owner_constraint_is_refused_with_the_supported_list"],
+    },
+    {
+        "name": "paid plan changes cannot cross an owner constraint",
+        "file": "scripts/plan.py",
+        "mutate": ('            if constraint == "no-paid-plan-change" and (',
+                   '            if False and ('),
+        "killed_by": ["tests/test_slice1_plan.py::test_owner_constraints_inspect_planned_operations[paid]"],
+    },
+    {
+        "name": "destructive replacements cannot cross an owner constraint",
+        "file": "scripts/plan.py",
+        "mutate": ('            if constraint == "no-destructive-replacement" and (',
+                   '            if False and ('),
+        "killed_by": ["tests/test_slice1_plan.py::test_owner_constraints_inspect_planned_operations[replacement]"],
+    },
+    {
+        "name": "package publication cannot cross an owner constraint",
+        "file": "scripts/plan.py",
+        "mutate": ('            if constraint == "no-irreversible-naming" and (',
+                   '            if False and ('),
+        "killed_by": ["tests/test_slice1_plan.py::test_owner_constraints_inspect_planned_operations[package]"],
+    },
+    {
+        "name": "publish requires a receipt ledger before starting",
+        "file": "scripts/publish.py",
+        "mutate": ('    parser.add_argument("--ledger", required=True, type=Path,',
+                   '    parser.add_argument("--ledger", required=False, type=Path,'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_publish_requires_a_ledger_before_any_git_call"],
+    },
+    {
+        "name": "unsafe caller CI values are refused",
+        "file": "scripts/render_ci.py",
+        "mutate": ('_SHELL_OPERATORS = frozenset(";&|<>()$`")',
+                   '_SHELL_OPERATORS = frozenset()'),
+        "killed_by": ["tests/test_slice2_stack_ci.py::test_unsafe_caller_ci_value_is_refused_before_render[npm test; printf injected-TEST_CMD-node]"],
+    },
+    {
+        "name": "a Unicode line separator in a CI value is refused",
+        "file": "scripts/render_ci.py",
+        "mutate": ("        if not isinstance(value, str) or not value.isprintable():",
+                   "        if not isinstance(value, str):"),
+        "killed_by": ["tests/test_slice2_stack_ci.py::test_a_unicode_line_separator_is_refused_before_it_breaks_the_workflow[U+2028-TEST_CMD-node]"],
     },
 ]
 

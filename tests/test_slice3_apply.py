@@ -13,7 +13,7 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 from apply import (  # noqa: E402
     AUTHORIZATION_INSUFFICIENT, AUTHORIZATION_MISSING, AUTHORIZATION_SPENT,
-    LEDGER_CORRUPT, PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
+    LEDGER_CORRUPT, LEDGER_FOREIGN, PHASE_OUT_OF_ORDER, PLAN_INTENT_CHANGED, REREAD_MISMATCH, RESOURCE_COLLISION,
     RESUMED_RESOURCE_ABSENT, RESUMED_RESOURCE_DRIFTED, UNKNOWN_PHASE, UNSUPPORTED_INTENT,
     ApplyError, ReceiptLedger, REMOTE_REFUSED, apply_plan, authorized_plan_receipt,
 )
@@ -85,6 +85,43 @@ def ledger(tmp_path: Path) -> ReceiptLedger:
     return ReceiptLedger(tmp_path / "receipts.json")
 
 
+@pytest.mark.parametrize("changed", ["bootstrapOperationId", "requestDigest"])
+def test_foreign_receipt_cannot_change_ledger_bytes(tmp_path, changed):
+    book = ledger(tmp_path)
+    book.record(genesis_receipt("alpha"))
+    intact = book.path.read_bytes()
+    foreign = dict(genesis_receipt("beta"))
+    foreign[changed] = "other-operation" if changed == "bootstrapOperationId" else "sha256:" + "b" * 64
+    with pytest.raises(ApplyError) as caught:
+        book.record(foreign)
+    assert caught.value.code == LEDGER_FOREIGN
+    assert book.path.read_bytes() == intact
+    assert book.get(foreign["operationId"]) is None
+
+
+@pytest.mark.parametrize("changed", ["bootstrapOperationId", "requestDigest"])
+def test_mixed_ledger_is_refused_on_load(tmp_path, changed):
+    first, second = genesis_receipt("alpha"), genesis_receipt("beta")
+    second[changed] = "other-operation" if changed == "bootstrapOperationId" else "sha256:" + "b" * 64
+    path = tmp_path / "receipts.json"
+    path.write_text(json.dumps([first, second]), encoding="utf-8")
+    with pytest.raises(ApplyError) as caught:
+        ReceiptLedger(path)
+    assert caught.value.code == LEDGER_CORRUPT
+
+
+def test_apply_refuses_a_foreign_ledger_before_observing_remote(tmp_path):
+    book = ledger(tmp_path)
+    book.record(genesis_receipt("alpha"))
+    foreign = plan("beta")
+    foreign["bootstrapOperationId"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    port = FakeGitHub()
+    with pytest.raises(ApplyError) as caught:
+        apply_plan(foreign, port, ReceiptLedger(book.path), authorization=approval(foreign))
+    assert caught.value.code == LEDGER_FOREIGN
+    assert port.creates == [] and port.state == {}
+
+
 # --- RF-S14: post-write reread ---------------------------------------------------------
 
 def test_every_applied_resource_carries_a_verified_receipt(tmp_path):
@@ -144,7 +181,7 @@ def test_the_same_resource_under_a_changed_intent_is_refused(tmp_path):
     with pytest.raises(ApplyError) as caught:
         apply_plan(plan("alpha", request_digest="sha256:" + "b" * 64), FakeGitHub(), ReceiptLedger(book.path), authorization=approval(plan("alpha", request_digest="sha256:" + "b" * 64)))
 
-    assert caught.value.code == PLAN_INTENT_CHANGED
+    assert caught.value.code == LEDGER_FOREIGN
 
 
 # --- RF-S24: plan-before-apply ---------------------------------------------------------
