@@ -490,6 +490,19 @@ def test_publish_refuses_a_foreign_ledger_before_running_git(tmp_path):
     assert not workdir.exists()
 
 
+def test_publish_requires_a_ledger_before_any_git_call(tmp_path):
+    plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
+    workdir = tmp_path / "work"
+    done = run([str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+                "--authorization", str(authorization), "--workdir", str(workdir),
+                "--remote-url", REMOTE, "--author-name", "Test",
+                "--author-email", "test@example.invalid"])
+    assert done.returncode == 2
+    assert "--ledger" in done.stderr
+    assert not workdir.exists()
+
+
 def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path):
     plan_path = _compile(tmp_path)
     authorization = _authorize(tmp_path, plan_path)
@@ -527,6 +540,7 @@ def test_publish_refuses_a_plan_document_that_carries_no_files(tmp_path):
     done = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "empty.json"),
                 "--authorization", str(authorization),
                 "--workdir", str(tmp_path / "w"), "--remote-url", "https://example.invalid/x.git",
+                "--ledger", str(tmp_path / "receipts.json"),
                 "--author-name", "a", "--author-email", "b@example.invalid"])
     assert done.returncode == 2
     assert "files" in done.stderr

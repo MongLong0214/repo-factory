@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -34,6 +35,8 @@ _USES = re.compile(r"uses:\s*(\S+)@(\S+)")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SETUP_ACTION = re.compile(r"uses:\s*(actions/setup-|dtolnay/rust-toolchain)")
 _ECHO_ONLY_STEP = re.compile(r"run:\s*echo\b[^\n]*$", re.MULTILINE)
+_RUNTIME_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_SHELL_OPERATORS = frozenset(";&|<>()$`")
 
 __all__ = ["CiRenderError", "available_stacks", "render", "effective_values", "DEFAULT_VALUES", "ci_findings", "required_tokens"]
 
@@ -92,12 +95,6 @@ def effective_values(stack: str, values: Dict[str, str] = None) -> Dict[str, str
 
 def render(stack: str, values: Dict[str, str]) -> str:
     """토큰을 값으로 바꾸고, 모자란 값은 빈 문자열이 아니라 실패로 만든다."""
-    # 호출자 값은 run: 줄에 그대로 들어간다. 줄바꿈은 YAML 을 늘리고, 이 두
-    # 치환 문법은 workflow shell 에서 호출자가 승인하지 않은 명령을 실행한다.
-    for name, value in (values or {}).items():
-        if (not isinstance(value, str) or not value.isprintable()
-                or "`" in value or "$(" in value):
-            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
     values = effective_values(stack, values)
     text = _template(stack)
     needed = set(_TOKEN.findall(text))
@@ -107,6 +104,22 @@ def render(stack: str, values: Dict[str, str]) -> str:
     empty = sorted(name for name in needed if not str(values[name]).strip())
     if empty:
         raise CiRenderError(f"{stack}: empty value for {empty}; an empty command is a lane that verifies nothing")
+    for name in sorted(needed):
+        value = values[name]
+        if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
+        if name.endswith("_CMD"):
+            try:
+                tokens = shlex.split(value)
+            except ValueError as error:
+                raise CiRenderError(f"{stack}: unsafe CI value for {name}: {error}") from error
+            if not tokens or not tokens[0] or any(
+                    any(char in _SHELL_OPERATORS or ord(char) < 32 or ord(char) == 127
+                        for char in token) for token in tokens):
+                raise CiRenderError(f"{stack}: unsafe CI value for {name}")
+            values[name] = shlex.join(tokens)
+        elif name.startswith("RUNTIME_") and not _RUNTIME_VERSION.fullmatch(value):
+            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
     return _TOKEN.sub(lambda m: str(values[m.group(1)]), text)
 
 

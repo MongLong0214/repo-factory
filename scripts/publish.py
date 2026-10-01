@@ -359,7 +359,7 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--author-email", required=True)
     parser.add_argument("--message", default="genesis: repository contract and verification",
                         help="the genesis commit subject; no session identifier is added (PRD §4.6)")
-    parser.add_argument("--ledger", type=Path, default=None,
+    parser.add_argument("--ledger", required=True, type=Path,
                         help="receipt ledger to record the genesis push into; after-files needs it")
     parser.add_argument("--repository-identity", default=None,
                         help="which planned repository this push targets; inferred when the plan names one")
@@ -400,52 +400,50 @@ def main(argv: List[str] = None) -> int:
     # 이미 밀었는가. `apply` 에는 재개 이야기가 있는데 genesis 푸시에는 없었다 — 완료된
     # 부트스트랩을 다시 돌리면 원격이 앞서 있어서 `git push` 가 거부하고, 그 거부가 이름
     # 없는 git 오류로 그대로 올라왔다. 원장은 이 질문에 답할 수 있는 자리다.
-    ledger = None
-    if args.ledger is not None:
-        from apply import ReceiptLedger
+    from apply import ReceiptLedger
 
-        try:
-            ledger = ReceiptLedger(args.ledger)
-            ledger.assert_owner(core["bootstrapOperationId"], core["requestDigest"])
-        except ApplyError as error:
-            print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence},
+    try:
+        ledger = ReceiptLedger(args.ledger)
+        ledger.assert_owner(core["bootstrapOperationId"], core["requestDigest"])
+    except ApplyError as error:
+        print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence},
+                         ensure_ascii=False), file=sys.stderr)
+        return 1
+    prior = ledger.get(f"publish:{identity}")
+    if prior is not None and prior.get("verified"):
+        observation = prior.get("commitlore")
+        policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
+        if (not isinstance(observation, dict) or
+                observation.get("outcome") not in ("PASS", policy) or
+                observation.get("scope") != "genesis-checkout" or
+                (observation.get("outcome") != "PASS" and not observation.get("detail"))):
+            print(json.dumps({"error": "COMMITLORE_MISSING_OR_INVALID: a prior genesis receipt "
+                                       "cannot resume without an explicit CommitLore outcome; "
+                                       "the observation may predate the scoped shape",
+                              "commitlore": observation}, ensure_ascii=False), file=sys.stderr)
+            return 1
+        landed = sorted(prior.get("committedPaths") or [])
+        if landed != sorted(files):
+            # 같은 저장소에 이미 다른 파일 집합이 착지해 있다. 두 번째 genesis 는 없다.
+            print(json.dumps({"error": "this repository already carries a genesis commit from "
+                                       "a different file set; a second genesis is not a resume",
+                              "landed": landed, "planned": sorted(files)},
                              ensure_ascii=False), file=sys.stderr)
             return 1
-        prior = ledger.get(f"publish:{identity}")
-        if prior is not None and prior.get("verified"):
-            observation = prior.get("commitlore")
-            policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
-            if (not isinstance(observation, dict) or
-                    observation.get("outcome") not in ("PASS", policy) or
-                    observation.get("scope") != "genesis-checkout" or
-                    (observation.get("outcome") != "PASS" and not observation.get("detail"))):
-                print(json.dumps({"error": "COMMITLORE_MISSING_OR_INVALID: a prior genesis receipt "
-                                           "cannot resume without an explicit CommitLore outcome; "
-                                           "the observation may predate the scoped shape",
-                                  "commitlore": observation}, ensure_ascii=False), file=sys.stderr)
-                return 1
-            landed = sorted(prior.get("committedPaths") or [])
-            if landed != sorted(files):
-                # 같은 저장소에 이미 다른 파일 집합이 착지해 있다. 두 번째 genesis 는 없다.
-                print(json.dumps({"error": "this repository already carries a genesis commit from "
-                                           "a different file set; a second genesis is not a resume",
-                                  "landed": landed, "planned": sorted(files)},
-                                 ensure_ascii=False), file=sys.stderr)
-                return 1
-            # 영수증이 과거의 푸시를 말한다. 지금 원격이 거기 있는지는 다시 읽어서 본다.
-            current = _remote_heads(Path(args.workdir), args.remote_url)
-            if current is not None and current == dict(prior["remoteHeads"]):
-                print(json.dumps({k: prior[k] for k in
-                                  ("head", "remoteHeads", "committedPaths", "branches")}
-                                 | {"repositoryIdentity": identity, "resumed": True,
-                                    "commitlore": observation},
-                                 ensure_ascii=False, indent=2))
-                return 0
-            print(json.dumps({"error": "the ledger records a genesis push that the remote no longer "
-                                       "matches; the repository moved since the receipt was written",
-                              "receipt": prior["remoteHeads"], "remote": current},
-                             ensure_ascii=False), file=sys.stderr)
-            return 1
+        # 영수증이 과거의 푸시를 말한다. 지금 원격이 거기 있는지는 다시 읽어서 본다.
+        current = _remote_heads(Path(args.workdir), args.remote_url)
+        if current is not None and current == dict(prior["remoteHeads"]):
+            print(json.dumps({k: prior[k] for k in
+                              ("head", "remoteHeads", "committedPaths", "branches")}
+                             | {"repositoryIdentity": identity, "resumed": True,
+                                "commitlore": observation},
+                             ensure_ascii=False, indent=2))
+            return 0
+        print(json.dumps({"error": "the ledger records a genesis push that the remote no longer "
+                                   "matches; the repository moved since the receipt was written",
+                          "receipt": prior["remoteHeads"], "remote": current},
+                         ensure_ascii=False), file=sys.stderr)
+        return 1
 
     try:
         heads = publish_files(
@@ -466,13 +464,12 @@ def main(argv: List[str] = None) -> int:
             payload["commitlore"] = error.observation
         print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
         return 1
-    if ledger is not None:
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
 
-        def now() -> str:
-            return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    def now() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-        ledger.record(publish_receipt(core, heads, clock=now))
+    ledger.record(publish_receipt(core, heads, clock=now))
     print(json.dumps(heads, ensure_ascii=False, indent=2))
     return 0
 

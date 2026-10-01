@@ -81,6 +81,10 @@ Operation** 이 되고, 원장이 그것을 재개로 못 알아본다.
 나오는 것: `planCore`(승인 대상) · `files`(올라갈 바이트) · `humanGate` · `unresolvedGaps`
 · `diffSummary` · `--observe` 를 줬으면 `environmentObservation`.
 
+요청의 `ownerConstraints` 는 `no-public-exposure`, `no-paid-plan-change`,
+`no-destructive-replacement`, `no-irreversible-naming` 만 받는다. 컴파일러는 계획된
+GitHub Operation 을 검사하고 위반을 거부한다. 자유 형식 문장은 집행할 수 없으므로 거부한다.
+
 ### 2. 승인
 
 ```bash
@@ -118,19 +122,18 @@ ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다.
 원격이 거부하면 `REMOTE_REFUSED` 로 멈추고 **거기까지의 영수증과 안전한 재개 지점을 함께**
 낸다 (§16.4). 예외가 그대로 새면 그 목록이 스택 트레이스가 된다.
 
-> **이 공장은 public 저장소를 만든다.** `visibility: public` 이 아닌 요청은 컴파일 단계에서
-> 거부된다 — 모든 프로필이 branch ruleset 을 계획하고, private 저장소의 ruleset 은 GitHub
-> Pro 이상을 요구하므로 private Plan 은 컴파일은 되지만 `after-files` 에서 반드시 죽는다.
-> 그때는 이미 원격 저장소가 하나 실재한다. **만들 수 없는 것은 계획하지 않는다.**
+> **이 배포는 public 저장소를 완료할 수 있다.** private 요청은 Plan 에 남기지만
+> `unresolvedGaps` 에 private branch ruleset 이 GitHub Pro 를 요구한다는 사실을 적는다.
+> 이 배포의 private Plan 은 `after-files` 를 완료할 수 없다.
 >
-> 그 결과 모든 Plan 이 OWNER 게이트다(`public-exposure`). HERMES 영수증은
-> `AUTHORIZATION_INSUFFICIENT` 로 거부되고, 그게 맞다 — 공개 노출은 오너의 결정이다.
+> public Plan 은 OWNER 게이트다(`public-exposure`). HERMES 영수증은
+> `AUTHORIZATION_INSUFFICIENT` 로 거부된다 — 공개 노출은 오너의 결정이다.
 
 ### 4. genesis 커밋
 
 ```bash
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
-  --authorization authorization.json \
+  --authorization authorization.json --ledger receipts.json \
   --remote-url git@github.com:owner/name.git \
   --author-name "..." --author-email "..."
 ```

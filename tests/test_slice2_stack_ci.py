@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -147,16 +148,39 @@ def test_an_empty_command_is_refused_because_it_verifies_nothing():
         render("node", blanked)
 
 
-@pytest.mark.parametrize("value", ["npm test\necho injected", "npm test `id`", "npm test $(id)"])
-def test_unsafe_caller_ci_value_is_refused_before_render(value):
-    with pytest.raises(CiRenderError, match="TEST_CMD"):
-        render("node", {"TEST_CMD": value})
+@pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
+@pytest.mark.parametrize("slot", ["INSTALL_CMD", "TEST_CMD", "BUILD_CMD"])
+@pytest.mark.parametrize("value", ["npm test; printf injected", "npm test && curl x",
+                                    "npm test | tee", "a > b", "$(x)", "`id`",
+                                    "npm test\necho injected", "npm test 'unfinished",
+                                    "npm test ';' printf", "npm test\x01echo"])
+def test_unsafe_caller_ci_value_is_refused_before_render(stack, slot, value):
+    with pytest.raises(CiRenderError, match=slot):
+        render(stack, {slot: value})
+
+
+def test_a_quoted_command_argument_round_trips_as_one_argument():
+    command = 'python -m pip install -e ".[test]"'
+    workflow = render("python", {"INSTALL_CMD": command})
+    line = next(line.strip().removeprefix("run: ") for line in workflow.splitlines()
+                if line.strip().startswith("run: python -m pip"))
+    assert line == "python -m pip install -e '.[test]'"
+    assert shlex.split(line) == shlex.split(command)
+
+
+@pytest.mark.parametrize("value", ["3.11;echo injected", "$(x)", "1\n2"])
+def test_runtime_version_is_a_simple_token(value):
+    with pytest.raises(CiRenderError, match="RUNTIME_LOWER"):
+        render("python", {"RUNTIME_LOWER": value})
 
 
 def test_factory_defaults_for_all_stacks_render_cleanly_including_python_quotes():
     assert DEFAULT_VALUES["python"]["INSTALL_CMD"] == 'python -m pip install -e ".[test]"'
     for stack in available_stacks():
-        assert ci_findings(render(stack, {})) == []
+        workflow = render(stack, {})
+        assert ci_findings(workflow) == []
+        for slot in ("INSTALL_CMD", "TEST_CMD", "BUILD_CMD"):
+            assert "run: " + shlex.join(shlex.split(DEFAULT_VALUES[stack][slot])) in workflow
 
 
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])

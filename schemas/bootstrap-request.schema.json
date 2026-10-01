@@ -23,7 +23,7 @@
       "items": { "$ref": "#/$defs/repositoryIntent" }
     },
     "visibility": {
-      "description": "Intent only, and this factory finishes only `public`. Public exposure is an owner gate regardless of what this says (PRD \u00a77 Phase F). `private` stays in the enum so the compiler can refuse it with a reason rather than a schema error: every profile plans a branch ruleset, and rulesets on private repositories require GitHub Pro.",
+      "description": "Repository visibility intent. Public exposure is an owner gate (Phase F). Private requests compile with an unresolved gap in deployments without GitHub Pro because private branch rulesets cannot be created there.",
       "enum": ["private", "public"]
     },
     "remoteOwner": {
@@ -33,8 +33,9 @@
       "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
     },
     "ownerConstraints": {
+      "description": "Enforceable owner prohibitions. Free-form text is refused because the factory cannot enforce it.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": { "enum": ["no-public-exposure", "no-paid-plan-change", "no-destructive-replacement", "no-irreversible-naming"] },
       "default": []
     },
     "humanGateFacts": {

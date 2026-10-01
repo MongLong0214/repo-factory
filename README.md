@@ -50,6 +50,10 @@ ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다. (`scrip
 영수증은 과거에 썼다는 증거이지 지금 있다는 증거가 아니므로, 재개할 때 원격을 다시
 읽는다. (`scripts/apply.py`)
 
+`ownerConstraints` 는 `no-public-exposure`, `no-paid-plan-change`,
+`no-destructive-replacement`, `no-irreversible-naming` 중에서 고른다. 컴파일러가 계획의
+Operation 과 대조해 위반을 거부한다. 집행할 수 없는 자유 형식 문장은 받지 않는다.
+
 **genesis 커밋은 계획된 집합이고 그 이상이 아니다.**
 작업 디렉토리가 비어 있어야 하고, 커밋과 푸시 사이에서 실제 경로 집합을 계획된 집합과
 대조한다. (`scripts/publish.py`)
@@ -92,7 +96,7 @@ python3 scripts/apply.py --plan compiled.json --ledger receipts.json \
   --phase before-files --authorization authorization.json
 
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
-  --authorization authorization.json \
+  --authorization authorization.json --ledger receipts.json \
   --remote-url git@github.com:owner/name.git \
   --author-name "Repo Factory" --author-email "factory@example.invalid"
 

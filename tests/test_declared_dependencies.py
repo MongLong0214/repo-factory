@@ -29,7 +29,7 @@ SCRIPTS = ROOT / "scripts"
 STDLIB = {
     "__future__", "argparse", "ast", "base64", "collections", "contextlib", "copy", "dataclasses",
     "datetime", "enum", "functools", "hashlib", "importlib", "io", "itertools", "json", "os",
-    "pathlib", "py_compile", "re", "shutil", "string", "subprocess", "sys", "tempfile", "textwrap",
+    "pathlib", "py_compile", "re", "shlex", "shutil", "string", "subprocess", "sys", "tempfile", "textwrap",
     "time", "types", "typing", "unittest", "urllib", "uuid", "warnings", "xml",
 }
 
