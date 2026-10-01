@@ -721,6 +721,13 @@ GUARDS: List[Dict[str, object]] = [
                    '_SHELL_OPERATORS = frozenset()'),
         "killed_by": ["tests/test_slice2_stack_ci.py::test_unsafe_caller_ci_value_is_refused_before_render[npm test; printf injected-TEST_CMD-node]"],
     },
+    {
+        "name": "a Unicode line separator in a CI value is refused",
+        "file": "scripts/render_ci.py",
+        "mutate": ("        if not isinstance(value, str) or not value.isprintable():",
+                   "        if not isinstance(value, str):"),
+        "killed_by": ["tests/test_slice2_stack_ci.py::test_a_unicode_line_separator_is_refused_before_it_breaks_the_workflow[U+2028-TEST_CMD-node]"],
+    },
 ]
 
 

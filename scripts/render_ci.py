@@ -106,7 +106,9 @@ def render(stack: str, values: Dict[str, str]) -> str:
         raise CiRenderError(f"{stack}: empty value for {empty}; an empty command is a lane that verifies nothing")
     for name in sorted(needed):
         value = values[name]
-        if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        # isprintable() 는 ASCII 제어문자뿐 아니라 U+0085·U+2028·U+2029 같은 유니코드 줄 구분자도
+        # 거부한다. 그 문자들은 run: 줄을 YAML 수준에서 끊어 렌더 결과를 깨뜨린다.
+        if not isinstance(value, str) or not value.isprintable():
             raise CiRenderError(f"{stack}: unsafe CI value for {name}")
         if name.endswith("_CMD"):
             try:

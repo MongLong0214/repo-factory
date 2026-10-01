@@ -159,6 +159,16 @@ def test_unsafe_caller_ci_value_is_refused_before_render(stack, slot, value):
         render(stack, {slot: value})
 
 
+@pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
+@pytest.mark.parametrize("slot", ["INSTALL_CMD", "TEST_CMD", "BUILD_CMD"])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"], ids=["U+2028", "U+2029", "U+0085"])
+def test_a_unicode_line_separator_is_refused_before_it_breaks_the_workflow(stack, slot, separator):
+    """An ASCII-only control check let these through, and the rendered `run:` line no longer
+    parsed as YAML while `ci_findings` still returned nothing (review round 2 of #54, RF-54-04)."""
+    with pytest.raises(CiRenderError, match=slot):
+        render(stack, {slot: f"npm test{separator}echo injected"})
+
+
 def test_a_quoted_command_argument_round_trips_as_one_argument():
     command = 'python -m pip install -e ".[test]"'
     workflow = render("python", {"INSTALL_CMD": command})
