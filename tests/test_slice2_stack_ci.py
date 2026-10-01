@@ -147,6 +147,18 @@ def test_an_empty_command_is_refused_because_it_verifies_nothing():
         render("node", blanked)
 
 
+@pytest.mark.parametrize("value", ["npm test\necho injected", "npm test `id`", "npm test $(id)"])
+def test_unsafe_caller_ci_value_is_refused_before_render(value):
+    with pytest.raises(CiRenderError, match="TEST_CMD"):
+        render("node", {"TEST_CMD": value})
+
+
+def test_factory_defaults_for_all_stacks_render_cleanly_including_python_quotes():
+    assert DEFAULT_VALUES["python"]["INSTALL_CMD"] == 'python -m pip install -e ".[test]"'
+    for stack in available_stacks():
+        assert ci_findings(render(stack, {})) == []
+
+
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
 def test_every_stack_declares_the_values_it_needs(stack: str):
     assert set(required_tokens(stack)) <= set(VALUES[stack]), "the fixture is missing a token the template requires"

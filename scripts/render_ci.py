@@ -92,6 +92,12 @@ def effective_values(stack: str, values: Dict[str, str] = None) -> Dict[str, str
 
 def render(stack: str, values: Dict[str, str]) -> str:
     """토큰을 값으로 바꾸고, 모자란 값은 빈 문자열이 아니라 실패로 만든다."""
+    # 호출자 값은 run: 줄에 그대로 들어간다. 줄바꿈은 YAML 을 늘리고, 이 두
+    # 치환 문법은 workflow shell 에서 호출자가 승인하지 않은 명령을 실행한다.
+    for name, value in (values or {}).items():
+        if (not isinstance(value, str) or not value.isprintable()
+                or "`" in value or "$(" in value):
+            raise CiRenderError(f"{stack}: unsafe CI value for {name}")
     values = effective_values(stack, values)
     text = _template(stack)
     needed = set(_TOKEN.findall(text))

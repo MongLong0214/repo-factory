@@ -171,7 +171,8 @@ Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인�
 
 - 공개 노출 (public 저장소 생성, 또는 private → public)
 - 되돌리기 어려운 파괴적 작업
-- 오너가 요청서에 직접 표시한 사실
+- 오너가 요청서의 `humanGateFacts` 에 정확한 게이트 키로 표시한 사실
+  (`public-exposure`, `paid-plan-change`, `destructive-replacement`, `irreversible-naming`)
 
 ## 불변식
 

@@ -146,9 +146,33 @@ def test_public_exposure_is_an_owner_decision_even_when_the_request_asked_for_it
 
 def test_a_declared_human_gate_fact_escalates_without_the_visibility_flag():
     destructive = copy.deepcopy(REQUEST)
-    destructive["humanGateFacts"] = ["destructive-replacement of the existing repository"]
+    destructive["humanGateFacts"] = ["destructive-replacement"]
 
     assert compiled(destructive)["humanGate"]["authorization"] == "OWNER"
+
+
+@pytest.mark.parametrize("fact", ["public-exposure-risk", "unknown-owner-gate"])
+def test_human_gate_fact_must_name_an_exact_known_gate(fact):
+    request = copy.deepcopy(REQUEST)
+    request["humanGateFacts"] = [fact]
+    with pytest.raises(PlanError) as caught:
+        compiled(request)
+    assert fact in str(caught.value)
+    assert all(gate in str(caught.value) for gate in (
+        "public-exposure", "paid-plan-change", "destructive-replacement", "irreversible-naming"))
+
+
+def test_owner_constraints_reach_the_approved_plan_and_diff_summary():
+    first = copy.deepcopy(REQUEST)
+    first["ownerConstraints"] = ["keep ledger local", "ship weekly"]
+    second = copy.deepcopy(first)
+    second["ownerConstraints"][1] = "ship daily"
+    a, b = compiled(first), compiled(second)
+    assert a["planCore"]["ownerConstraints"] == ["keep ledger local", "ship weekly"]
+    assert diff_summary(a)["ownerConstraints"] == first["ownerConstraints"]
+    assert diff_summary(a)["planDigest"] != diff_summary(b)["planDigest"]
+    assert compiled()["planCore"]["ownerConstraints"] == []
+    assert diff_summary(compiled())["ownerConstraints"] == []
 
 
 # --- profile-aware artifact selection (PRD §6) -----------------------------------------
@@ -195,7 +219,7 @@ def test_simple_materializes_no_formal_documents_without_optional_requests():
 def test_standard_lean_revision_preserves_product_scope_and_required_artifacts():
     request = copy.deepcopy(REQUEST)
     request["ownerConstraints"] = ["keep ledger data local"]
-    request["humanGateFacts"] = ["public exposure requires owner consent"]
+    request["humanGateFacts"] = ["public-exposure"]
     original = copy.deepcopy(request)
     requested = ["adr", "tickets", "research-dossier"]
     review = {"verdict": "LEAN_REVISE", "removedItems": [

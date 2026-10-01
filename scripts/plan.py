@@ -239,9 +239,9 @@ def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     if request.get("visibility") == "public":
         reasons.append("public-exposure")
     for fact in request.get("humanGateFacts", []):
-        for gate in OWNER_GATES:
-            if gate in fact:
-                reasons.append(gate)
+        if fact not in OWNER_GATES:
+            raise PlanError(f"unknown humanGateFacts gate {fact!r}; known gates: {sorted(OWNER_GATES)}")
+        reasons.append(fact)
     reasons = sorted(set(reasons))
     return {
         "authorization": "OWNER" if reasons else "HERMES",
@@ -394,6 +394,7 @@ def compile_plan(
         "requestDigest": digest(request, volatile="strip"),
         "bootstrapProfile": request["bootstrapProfile"],
         "authorization": gate["authorization"],
+        "ownerConstraints": list(request.get("ownerConstraints", [])),
         "repositories": [
             {"role": r["role"], "identity": f"github:{owner}/{r['name']}",
              "visibility": request["visibility"]}
@@ -476,6 +477,7 @@ def diff_summary(compiled: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "planDigest": digest(core),
         "authorization": core["authorization"],
+        "ownerConstraints": core["ownerConstraints"],
         "repositories": [r["identity"] for r in core["repositories"]],
         "artifacts": compiled["artifacts"],
         "githubOperations": [o["operationId"] for o in core["githubOperations"]],

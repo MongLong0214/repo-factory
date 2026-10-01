@@ -276,12 +276,14 @@ def test_public_is_passed_through_only_when_the_plan_state_says_so():
     assert "--public" in gh.seen[-1]
 
 
-def test_a_branch_needs_a_ref_and_a_source_commit():
-    port = GhCliPort(runner=ScriptedGh([]))
-    with pytest.raises(GhError, match="ref"):
-        port.observe("branch", "github:MongLong0214/alpha")
-    with pytest.raises(GhError, match="fromSha"):
-        port.create("branch", "github:MongLong0214/alpha#dev", {})
+def test_branch_observation_and_creation_are_refused_without_gh_calls():
+    runner = ScriptedGh([])
+    port = GhCliPort(runner=runner)
+    with pytest.raises(GhError, match="no observation is implemented"):
+        port.observe("branch", "github:MongLong0214/alpha#dev")
+    with pytest.raises(GhError, match="no creation is implemented"):
+        port.create("branch", "github:MongLong0214/alpha#dev", {"fromSha": "a" * 40})
+    assert port.calls == []
 
 
 def test_an_unobservable_resource_type_is_refused_rather_than_silently_skipped():

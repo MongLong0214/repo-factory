@@ -640,6 +640,46 @@ GUARDS: List[Dict[str, object]] = [
                    '                        "state": "configured", "querySuite": "default"}'),
         "killed_by": ["tests/test_github_port.py::test_the_port_reads_the_code_scanning_setup_it_was_asked_about"],
     },
+    {
+        "name": "a foreign receipt cannot enter the ledger",
+        "file": "scripts/apply.py",
+        "mutate": ("        if self._owner is not None and self._owner != wanted:", "        if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_foreign_receipt_cannot_change_ledger_bytes"],
+    },
+    {
+        "name": "a mixed ledger cannot be loaded as provenance",
+        "file": "scripts/apply.py",
+        "mutate": ("                if self._owner is not None and owner != self._owner:", "                if False:"),
+        "killed_by": ["tests/test_slice3_apply.py::test_mixed_ledger_is_refused_on_load"],
+    },
+    {
+        "name": "apply checks ledger provenance before remote observation",
+        "file": "scripts/apply.py",
+        "mutate": ('    ledger.assert_owner(plan["bootstrapOperationId"], plan["requestDigest"])',
+                   '    pass'),
+        "killed_by": ["tests/test_slice3_apply.py::test_apply_refuses_a_foreign_ledger_before_observing_remote"],
+    },
+    {
+        "name": "publish checks ledger provenance before git",
+        "file": "scripts/publish.py",
+        "mutate": ('            ledger.assert_owner(core["bootstrapOperationId"], core["requestDigest"])',
+                   '            pass'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_publish_refuses_a_foreign_ledger_before_running_git"],
+    },
+    {
+        "name": "unknown owner gate facts are refused",
+        "file": "scripts/plan.py",
+        "mutate": ('        if fact not in OWNER_GATES:', '        if False:'),
+        "killed_by": ["tests/test_slice1_plan.py::test_human_gate_fact_must_name_an_exact_known_gate"],
+    },
+    {
+        "name": "unsafe caller CI values are refused",
+        "file": "scripts/render_ci.py",
+        "mutate": ('        if (not isinstance(value, str) or not value.isprintable()\n'
+                   '                or "`" in value or "$(" in value):',
+                   '        if False:'),
+        "killed_by": ["tests/test_slice2_stack_ci.py::test_unsafe_caller_ci_value_is_refused_before_render"],
+    },
 ]
 
 

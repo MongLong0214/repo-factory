@@ -400,10 +400,18 @@ def main(argv: List[str] = None) -> int:
     # 이미 밀었는가. `apply` 에는 재개 이야기가 있는데 genesis 푸시에는 없었다 — 완료된
     # 부트스트랩을 다시 돌리면 원격이 앞서 있어서 `git push` 가 거부하고, 그 거부가 이름
     # 없는 git 오류로 그대로 올라왔다. 원장은 이 질문에 답할 수 있는 자리다.
-    if args.ledger is not None and Path(args.ledger).is_file():
+    ledger = None
+    if args.ledger is not None:
         from apply import ReceiptLedger
 
-        prior = ReceiptLedger(args.ledger).get(f"publish:{identity}")
+        try:
+            ledger = ReceiptLedger(args.ledger)
+            ledger.assert_owner(core["bootstrapOperationId"], core["requestDigest"])
+        except ApplyError as error:
+            print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence},
+                             ensure_ascii=False), file=sys.stderr)
+            return 1
+        prior = ledger.get(f"publish:{identity}")
         if prior is not None and prior.get("verified"):
             observation = prior.get("commitlore")
             policy = load_profile(core["bootstrapProfile"])["commitlore"]["onFailure"]
@@ -458,15 +466,13 @@ def main(argv: List[str] = None) -> int:
             payload["commitlore"] = error.observation
         print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
         return 1
-    if args.ledger is not None:
+    if ledger is not None:
         from datetime import datetime, timezone
-
-        from apply import ReceiptLedger
 
         def now() -> str:
             return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-        ReceiptLedger(args.ledger).record(publish_receipt(core, heads, clock=now))
+        ledger.record(publish_receipt(core, heads, clock=now))
     print(json.dumps(heads, ensure_ascii=False, indent=2))
     return 0
 

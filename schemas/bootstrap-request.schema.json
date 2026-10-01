@@ -38,7 +38,7 @@
       "default": []
     },
     "humanGateFacts": {
-      "description": "What is already known to require an owner decision, so Phase F does not rediscover it.",
+      "description": "Exact owner gate keys already known to require an owner decision: public-exposure, paid-plan-change, destructive-replacement, irreversible-naming (Phase F).",
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "default": []
