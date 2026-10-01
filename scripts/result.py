@@ -70,6 +70,8 @@ def build_result(
     ci_evidence: List[Dict[str, Any]] = None,
     unresolved_gaps: List[str] = None,
 ) -> Dict[str, Any]:
+    if digest(plan) != plan_digest:
+        raise ResultError("PLAN_DIGEST_MISMATCH: the supplied digest does not cover this plan")
     if not receipts:
         raise ResultError("a result with no external write receipt describes no bootstrap")
     if not bootstrap_verification:

@@ -27,6 +27,7 @@ def approval(plan_core, authority: str = "OWNER"):
     return authorized_plan_receipt(plan_core, authority=authority, actor="owner:isaac",
                                    approved_at="2026-08-19T09:00:00Z")
 
+from canonical import digest  # noqa: E402
 from plan import compile_plan, diff_summary  # noqa: E402
 from publish import publish_receipt  # noqa: E402
 from result import FORBIDDEN_CLAIMS, RECEIPT_FIELDS, ResultError, build_result  # noqa: E402
@@ -205,8 +206,7 @@ def test_a_missing_commitlore_observation_cannot_be_assembled_as_success():
 
 @pytest.mark.parametrize("profile,outcome", [("STANDARD", "REVISE"), ("GUARDED", "BLOCK")])
 def test_required_commitlore_failure_refuses_result_assembly(profile, outcome):
-    args = result_args()
-    args["plan"]["bootstrapProfile"] = profile
+    args = result_args(profile=profile)
     receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
     receipt["commitlore"] = {"outcome": outcome, "detail": "commitlore unavailable"}
     with pytest.raises(ResultError, match=f"COMMITLORE_{outcome}"):
@@ -218,6 +218,15 @@ def test_profile_policy_mismatch_cannot_make_a_required_failure_a_warning():
     receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
     receipt["commitlore"] = {"outcome": "WARN", "detail": "missing binary"}
     with pytest.raises(ResultError, match="COMMITLORE_OUTCOME_INVALID"):
+        build_result(**args)
+
+
+def test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning():
+    args = result_args(profile="STANDARD")
+    args["plan"]["bootstrapProfile"] = "SIMPLE"
+    receipt = next(r for r in args["receipts"] if r["resourceType"] == "genesis-commit")
+    receipt["commitlore"] = {"outcome": "WARN", "detail": "doctor failed"}
+    with pytest.raises(ResultError, match="PLAN_DIGEST_MISMATCH"):
         build_result(**args)
 
 
@@ -380,4 +389,4 @@ def test_a_repository_with_no_default_branch_operation_refuses_the_result():
     receipts = [r for r in args["receipts"] if not r["resourceIdentity"].endswith("#default-branch")]
 
     with pytest.raises(ResultError, match="no approved operation set"):
-        build_result(**result_args(plan=plan_without, receipts=receipts))
+        build_result(**result_args(plan=plan_without, plan_digest=digest(plan_without), receipts=receipts))

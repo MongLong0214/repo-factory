@@ -1,8 +1,11 @@
 """The genesis commit is the planned set, and nothing else (PRD §7 Phase G, §8)."""
 from __future__ import annotations
 
-import subprocess
+import hashlib
+import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -12,9 +15,9 @@ import pytest
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
+import publish as publish_module  # noqa: E402
+from apply import authorized_plan_receipt  # noqa: E402
 from publish import CommitLoreRefusal, PublishError, publish_files, publish_receipt  # noqa: E402
-
-import hashlib
 
 FILES = {"README.md": "# demo\n", ".agent-control-plane/project.json": "{}\n"}
 IDENTITY = "github:MongLong0214/demo"
@@ -42,7 +45,7 @@ def local_runner(pushes: List[List[str]], remote_heads: Dict[str, str] = None):
     def run(argv: List[str], cwd: Path) -> Tuple[int, str, str]:
         if argv[0] == "commitlore":
             return 0, "ready", ""
-        if argv[:2] == ["git", "push"] or argv[:3] == ["git", "remote", "add"]:
+        if argv[:2] == ["git", "push"]:
             pushes.append(argv)
             return 0, "", ""
         if argv[:2] == ["git", "ls-remote"]:
@@ -218,6 +221,50 @@ def test_simple_success_is_pass_and_failure_is_never_pass(tmp_path):
     assert failure["commitlore"]["outcome"] != "PASS"
 
 
+def test_doctor_sees_origin_before_first_push_and_keeps_its_warning(tmp_path):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            code, origin, err = run(["git", "remote", "get-url", "origin"], cwd)
+            if code != 0:
+                return 2, "", f"no remote is configured: {err}"
+            assert origin.strip() == REMOTE
+            assert pushes == []
+            return 0, "x" * 350, "warning: check local notes fetch\n"
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, "STANDARD"), runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["detail"] == (
+        "commitlore doctor passed: " + ("x" * 350 + "\nwarning: check local notes fetch")[-300:])
+    assert [p[-1] for p in pushes] == ["main", "dev"]
+
+
+@pytest.mark.parametrize("profile,outcome", [("SIMPLE", "WARN"), ("GUARDED", "BLOCK")])
+@pytest.mark.parametrize("command", ["init", "doctor"])
+def test_commitlore_timeout_uses_profile_policy(tmp_path, profile, outcome, command):
+    pushes = []
+    git_runner = local_runner(pushes)
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", command]:
+            raise subprocess.TimeoutExpired(argv, 180)
+        return git_runner(argv, cwd)
+
+    if outcome == "BLOCK":
+        with pytest.raises(CommitLoreRefusal, match="COMMITLORE_BLOCK") as caught:
+            publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observed = caught.value.observation
+        assert pushes == []
+    else:
+        heads = publish(tmp_path / "tree", FILES, pushes, plan=plan_for(FILES, profile), runner=run)
+        observed = heads["commitlore"]
+        assert [p[-1] for p in pushes] == ["main", "dev"]
+    assert observed == {"outcome": outcome, "detail": f"commitlore {command} timed out after 180s"}
+
+
 @pytest.mark.parametrize("failing_command", ["init", "doctor"])
 def test_simple_nonzero_commitlore_command_is_a_warning(tmp_path, failing_command):
     pushes = []
@@ -259,28 +306,69 @@ def test_guarded_missing_commitlore_refuses_before_push_as_blocking(tmp_path):
 def test_real_commitlore_leaves_genesis_tracked_files_and_blobs_unchanged(tmp_path):
     if shutil.which("commitlore") is None:
         pytest.skip("commitlore executable is unavailable; injected-runner tests cover the stage")
-    pushes = []
-    git_runner = local_runner(pushes)
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
+                 "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
+    files = {**FILES, ".agent-control-plane/project.json":
+             json.dumps({"commitlore": {"mode": "preferred"}}) + "\n"}
 
     def run(argv, cwd):
-        if argv[0] == "commitlore":
-            done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=90)
-            return done.returncode, done.stdout, done.stderr
-        return git_runner(argv, cwd)
+        done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True,
+                              timeout=180, env=rewritten)
+        return done.returncode, done.stdout, done.stderr
 
     workdir = tmp_path / "tree"
-    heads = publish(workdir, FILES, pushes, plan=plan_for(FILES), runner=run)
+    heads = publish(workdir, files, [], plan=plan_for(files), runner=run)
     assert heads["commitlore"]["outcome"] == "PASS", heads["commitlore"]
     tracked = subprocess.run(["git", "ls-files"], cwd=workdir, capture_output=True,
                              text=True, check=True).stdout.splitlines()
-    assert tracked == sorted(FILES)
+    assert tracked == sorted(files)
     for path in tracked:
         blob = subprocess.run(["git", "show", f"HEAD:{path}"], cwd=workdir,
                               capture_output=True, check=True).stdout
-        assert hashlib.sha256(blob).hexdigest() == hashlib.sha256(FILES[path].encode()).hexdigest()
+        assert hashlib.sha256(blob).hexdigest() == hashlib.sha256(files[path].encode()).hexdigest()
         assert (workdir / path).read_bytes() == blob
     assert subprocess.run(["git", "status", "--porcelain"], cwd=workdir,
                           capture_output=True, text=True, check=True).stdout == ""
+    clone = tmp_path / "fresh-clone"
+    subprocess.run(["git", "clone", "-q", "-b", "dev", str(bare), str(clone)], check=True)
+    manifest = json.loads((clone / ".agent-control-plane/project.json").read_text(encoding="utf-8"))
+    assert manifest["commitlore"]["mode"] == "preferred"
+    assert subprocess.run(["git", "ls-files"], cwd=clone, capture_output=True,
+                          text=True, check=True).stdout.splitlines() == sorted(files)
+    assert (workdir / ".git/hooks/commit-msg").is_file()
+    assert not (clone / ".git/hooks/commit-msg").exists()
+    source_config = (workdir / ".git/config").read_text(encoding="utf-8")
+    clone_config = (clone / ".git/config").read_text(encoding="utf-8")
+    assert source_config != clone_config
+    assert REMOTE in source_config
+    assert REMOTE not in clone_config
+
+
+def test_publish_refuses_a_receipt_for_another_digest_before_any_git_command(tmp_path, monkeypatch, capsys):
+    core = {**plan_for(FILES, "STANDARD"), "bootstrapOperationId": "op-1",
+            "authorization": "OWNER"}
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({"planCore": core, "files": FILES}), encoding="utf-8")
+    other = {**core, "bootstrapProfile": "SIMPLE"}
+    approval = authorized_plan_receipt(other, authority="OWNER", actor="owner:test",
+                                       approved_at="2026-08-19T09:00:00Z")
+    auth_path = tmp_path / "authorization.json"
+    auth_path.write_text(json.dumps(approval), encoding="utf-8")
+    calls = []
+
+    def run(argv, cwd, env=None):
+        calls.append(argv)
+        raise AssertionError("git must not run before authorization")
+
+    monkeypatch.setitem(publish_module.publish_files.__kwdefaults__, "runner", run)
+    assert publish_module.main(["--plan", str(plan_path), "--authorization", str(auth_path),
+                                "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
+                                "--author-name", "Test", "--author-email", "test@example.com"]) == 1
+    assert json.loads(capsys.readouterr().err)["error"] == "AUTHORIZATION_MISSING"
+    assert calls == []
+    assert not (tmp_path / "work").exists()
 
 
 def test_commitlore_file_effect_refuses_publication(tmp_path):

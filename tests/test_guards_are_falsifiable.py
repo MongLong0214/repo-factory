@@ -34,6 +34,36 @@ COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "templates",
 # name, file, (find, replace), tests that must fail once the guard is gone.
 GUARDS: List[Dict[str, object]] = [
     {
+        "name": "result checks the supplied digest before accepting a changed profile",
+        "file": "scripts/result.py",
+        "mutate": ('    if digest(plan) != plan_digest:', '    if False:'),
+        "killed_by": ["tests/test_slice4_result.py::test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning"],
+    },
+    {
+        "name": "publish checks authorization before reading the plan's policy or running git",
+        "file": "scripts/publish.py",
+        "mutate": ('        _check_authorization(core, authorization)', '        pass'),
+        "killed_by": ["tests/test_publish.py::test_publish_refuses_a_receipt_for_another_digest_before_any_git_command"],
+    },
+    {
+        "name": "CommitLore doctor sees origin before the first push",
+        "file": "scripts/publish.py",
+        "mutate": ('    run_all([\n        ["git", "branch", default_branch],\n'
+                   '        ["git", "remote", "add", "origin", remote_url],\n'
+                   '    ])\n\n    commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)',
+                   '    commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)\n'
+                   '    run_all([\n        ["git", "branch", default_branch],\n'
+                   '        ["git", "remote", "add", "origin", remote_url],\n    ])'),
+        "killed_by": ["tests/test_publish.py::test_doctor_sees_origin_before_first_push_and_keeps_its_warning"],
+    },
+    {
+        "name": "CommitLore timeout follows the selected profile policy",
+        "file": "scripts/publish.py",
+        "mutate": ('        except subprocess.TimeoutExpired as error:',
+                   '        except RuntimeError as error:'),
+        "killed_by": ["tests/test_publish.py::test_commitlore_timeout_uses_profile_policy"],
+    },
+    {
         "name": "lean review cannot remove product scope or required artifacts",
         "file": "scripts/plan.py",
         "mutate": ("    if outside_options:", "    if False:"),

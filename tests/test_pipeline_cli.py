@@ -117,6 +117,7 @@ def test_the_pipeline_runs_end_to_end_through_its_command_line(tmp_path):
     # available. A local stand-in keeps the chain deterministic on CI hosts without CommitLore.
     rewritten = with_commitlore_stub(tmp_path, rewritten)
     published = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "compiled.json"),
+                     "--authorization", str(tmp_path / "auth.json"),
                      "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
                      "--ledger", str(tmp_path / "receipts.json"),
                      "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"],
@@ -207,6 +208,15 @@ def _compile(tmp_path, operation_id=OPERATION_ID, name="compiled.json"):
     assert done.returncode == 0, done.stderr[-600:]
     (tmp_path / name).write_text(done.stdout, encoding="utf-8")
     return tmp_path / name
+
+
+def _authorize(tmp_path, plan_path):
+    issued = run([str(SCRIPTS / "authorize.py"), "--plan", str(plan_path),
+                  "--authority", "OWNER", "--actor", "owner:isaac"])
+    assert issued.returncode == 0, issued.stderr[-600:]
+    path = tmp_path / "publish-auth.json"
+    path.write_text(issued.stdout, encoding="utf-8")
+    return path
 
 
 def _gh_stub(tmp_path):
@@ -307,12 +317,14 @@ def test_a_finished_genesis_push_resumes_instead_of_pushing_again(tmp_path):
     (fetch first)`. 원장은 이 질문에 답할 수 있는 자리이고, 답하지 않으면 완료된 것을
     다시 돌리는 것이 실패로 보인다."""
     plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
     rewritten = with_commitlore_stub(tmp_path, rewritten)
     argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+            "--authorization", str(authorization),
             "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
             "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]
 
@@ -334,6 +346,7 @@ def test_a_finished_genesis_push_resumes_instead_of_pushing_again(tmp_path):
 
 def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
     plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
     ledger_path = tmp_path / "receipts.json"
     document = json.loads(plan_path.read_text(encoding="utf-8"))
     identity = document["planCore"]["repositories"][0]["identity"]
@@ -346,6 +359,7 @@ def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
         "remoteHeads": {"main": "a" * 40, "dev": "a" * 40},
     }]), encoding="utf-8")
     done = run([str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+                "--authorization", str(authorization),
                 "--workdir", str(tmp_path / "work"), "--remote-url", REMOTE,
                 "--ledger", str(ledger_path), "--author-name", "Test",
                 "--author-email", "test@example.invalid"])
@@ -356,12 +370,14 @@ def test_a_prior_genesis_without_commitlore_outcome_cannot_resume(tmp_path):
 
 def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path):
     plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     rewritten = {**os.environ, "GIT_CONFIG_COUNT": "1",
                  "GIT_CONFIG_KEY_0": f"url.{bare}.insteadOf", "GIT_CONFIG_VALUE_0": REMOTE}
     rewritten = with_commitlore_stub(tmp_path, rewritten)
     argv = [str(SCRIPTS / "publish.py"), "--plan", str(plan_path),
+            "--authorization", str(authorization),
             "--remote-url", REMOTE, "--ledger", str(tmp_path / "receipts.json"),
             "--author-name", "Repo Factory", "--author-email", "factory@example.invalid"]
     assert run([*argv, "--workdir", str(tmp_path / "work")], env=rewritten).returncode == 0
@@ -371,6 +387,7 @@ def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path)
     (tmp_path / "narrower.json").write_text(json.dumps(document), encoding="utf-8")
 
     done = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "narrower.json"),
+                "--authorization", str(authorization),
                 "--workdir", str(tmp_path / "work2"), "--remote-url", REMOTE,
                 "--ledger", str(tmp_path / "receipts.json"),
                 "--author-name", "a", "--author-email", "b@example.invalid"], env=rewritten)
@@ -380,8 +397,13 @@ def test_a_second_genesis_over_a_different_file_set_is_refused_by_name(tmp_path)
 
 
 def test_publish_refuses_a_plan_document_that_carries_no_files(tmp_path):
-    (tmp_path / "empty.json").write_text(json.dumps({"planCore": {}}), encoding="utf-8")
+    plan_path = _compile(tmp_path)
+    authorization = _authorize(tmp_path, plan_path)
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    del document["files"]
+    (tmp_path / "empty.json").write_text(json.dumps(document), encoding="utf-8")
     done = run([str(SCRIPTS / "publish.py"), "--plan", str(tmp_path / "empty.json"),
+                "--authorization", str(authorization),
                 "--workdir", str(tmp_path / "w"), "--remote-url", "https://example.invalid/x.git",
                 "--author-name", "a", "--author-email", "b@example.invalid"])
     assert done.returncode == 2

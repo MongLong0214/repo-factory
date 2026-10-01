@@ -11,6 +11,10 @@
 
 커밋에 세션 식별자를 남기지 않는다. 생성 저장소는 공개일 수 있고, 그 경우 트레일러는
 저장소 안에 운영 정보를 넣는 §4.6 위반이 된다.
+
+CommitLore init·doctor 는 클론마다 실행한다. genesis 관측은 원격이 설정된 이 로컬
+저장소에서 두 명령이 성공했음을 증명한다. 클론에 전달되는 계약은 매니페스트의
+`commitlore.mode` 이며 hook 과 로컬 git 설정은 전달되지 않는다.
 """
 from __future__ import annotations
 
@@ -106,13 +110,17 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, str]:
                  ["commitlore", "doctor"]):
         try:
             code, out, err = runner(argv, workdir)
-        except (FileNotFoundError, OSError) as error:
+        except subprocess.TimeoutExpired as error:
+            return {"outcome": on_failure,
+                    "detail": f"{' '.join(argv[:2])} timed out after {error.timeout}s"}
+        except OSError as error:
             return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
             return {"outcome": on_failure,
                     "detail": f"{' '.join(argv[:2])} failed ({code}): {detail}"}
-    return {"outcome": "PASS", "detail": "commitlore init and doctor passed"}
+    diagnostic = "\n".join(part for part in (out.strip(), err.strip()) if part)
+    return {"outcome": "PASS", "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
 
 
 def publish_files(
@@ -219,6 +227,11 @@ def publish_files(
             "something rewrote content between the plan and the commit."
         )
 
+    run_all([
+        ["git", "branch", default_branch],
+        ["git", "remote", "add", "origin", remote_url],
+    ])
+
     commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)
     # init 는 hook/index 만 배치해야 한다. 추적 파일이나 새 저장소 파일을 만졌다면
     # genesis 뒤의 로컬 트리가 계획된 파일 집합과 달라진 것이므로 게시하지 않는다.
@@ -230,8 +243,6 @@ def publish_files(
         raise CommitLoreRefusal(commitlore)
 
     run_all([
-        ["git", "branch", default_branch],
-        ["git", "remote", "add", "origin", remote_url],
         ["git", "push", "-q", "origin", release_branch],
         ["git", "push", "-q", "origin", default_branch],
     ])
@@ -293,6 +304,8 @@ def main(argv: List[str] = None) -> int:
 
     parser = argparse.ArgumentParser(description="Push an approved plan's file set as the genesis commit.")
     parser.add_argument("--plan", required=True, type=Path, help="compiler output carrying `files`")
+    parser.add_argument("--authorization", required=True, type=Path,
+                        help="approval receipt covering the plan core, from scripts/authorize.py")
     parser.add_argument("--workdir", required=True, type=Path, help="empty scratch directory to build the commit in")
     parser.add_argument("--remote-url", required=True, help="the created repository's git URL")
     parser.add_argument("--author-name", required=True)
@@ -308,8 +321,22 @@ def main(argv: List[str] = None) -> int:
     args = parser.parse_args(argv)
 
     document = json.loads(args.plan.read_text(encoding="utf-8"))
-    files = document.get("files")
     core = document.get("planCore", document)
+    from apply import ApplyError, _check_authorization
+
+    try:
+        authorization = json.loads(args.authorization.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"cannot read the approval receipt: {error}", file=sys.stderr)
+        return 2
+    try:
+        _check_authorization(core, authorization)
+    except ApplyError as error:
+        print(json.dumps({"error": error.code, "message": str(error), "evidence": error.evidence},
+                         ensure_ascii=False), file=sys.stderr)
+        return 1
+
+    files = document.get("files")
     if not isinstance(files, dict) or not files:
         print(json.dumps({"error": "the plan document carries no `files` map to publish"},
                          ensure_ascii=False), file=sys.stderr)

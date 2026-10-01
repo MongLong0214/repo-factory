@@ -243,7 +243,7 @@ def authorized_plan_receipt(plan: Dict[str, Any], *, authority: str, actor: str,
 
 
 def _check_authorization(plan: Dict[str, Any], receipt: Optional[Dict[str, Any]],
-                         ledger: ReceiptLedger) -> None:
+                         ledger: Optional[ReceiptLedger] = None) -> None:
     """승인은 Plan 안의 문자열이 아니라 Plan 을 가리키는 별개의 문서다.
 
     `authorization: "OWNER"` 가 Plan 안에 있으면, 그 값을 고치고 다시 digest 한 Plan 은
@@ -253,37 +253,38 @@ def _check_authorization(plan: Dict[str, Any], receipt: Optional[Dict[str, Any]]
     서명은 아니다. 이 파일을 쓸 수 있는 사람은 승인을 주장할 수 있다. 이것이 사는 것은
     주장이 **별개의 아티팩트**가 되고, 행위자·시각·묶인 digest 를 갖고, 읽는 쪽이 눈앞의
     Plan 과 대조할 수 있다는 것이다."""
+    recorded = ledger.all() if ledger is not None else []
     required = plan.get("authorization", "OWNER")
     if receipt is None:
         raise ApplyError(AUTHORIZATION_MISSING,
                          f"this plan needs a {required} approval receipt and none was supplied; "
                          f"a plan asserting its own authority is not an approval",
-                         ledger.all(), {"required": required})
+                         recorded, {"required": required})
     stated = digest(plan)
     if receipt.get("planDigest") != stated:
         raise ApplyError(AUTHORIZATION_MISSING,
                          f"the approval receipt covers {receipt.get('planDigest')} and this plan "
                          f"digests to {stated}",
-                         ledger.all(), {"approved": receipt.get("planDigest"), "plan": stated})
+                         recorded, {"approved": receipt.get("planDigest"), "plan": stated})
     if receipt.get("bootstrapOperationId") != plan["bootstrapOperationId"]:
         raise ApplyError(AUTHORIZATION_MISSING,
                          "the approval receipt was issued for a different bootstrap operation",
-                         ledger.all(), {"operationId": receipt.get("bootstrapOperationId")})
+                         recorded, {"operationId": receipt.get("bootstrapOperationId")})
     held = AUTHORITY_RANK.get(str(receipt.get("authority")), -1)
     if held < AUTHORITY_RANK.get(required, 1):
         raise ApplyError(AUTHORIZATION_INSUFFICIENT,
                          f"this plan needs {required} and the receipt carries "
                          f"{receipt.get('authority')!r}",
-                         ledger.all(), {"required": required, "held": receipt.get("authority")})
+                         recorded, {"required": required, "held": receipt.get("authority")})
     if receipt.get("revoked") or receipt.get("supersededBy"):
         raise ApplyError(AUTHORIZATION_SPENT,
                          "the approval receipt has been revoked or superseded",
-                         ledger.all(), {"supersededBy": receipt.get("supersededBy"),
+                         recorded, {"supersededBy": receipt.get("supersededBy"),
                                         "revoked": bool(receipt.get("revoked"))})
     if not receipt.get("approvedAt") or not (receipt.get("approvedBy") or {}).get("actor"):
         raise ApplyError(AUTHORIZATION_MISSING,
                          "the approval receipt does not say who approved it, or when",
-                         ledger.all(), {})
+                         recorded, {})
 
 
 def apply_plan(plan: Dict[str, Any], port: GitHubPort, ledger: ReceiptLedger,

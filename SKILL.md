@@ -37,7 +37,10 @@ agent-control-plane 이고, 그쪽이 세션·권한·용량을 소유한다. �
 
 CommitLore 는 `SIMPLE` 에서 `preferred`(실패 시 WARN), `STANDARD` 에서 `required`
 (실패 시 REVISE), `GUARDED` 에서 `required`(실패 시 BLOCK)다. genesis 뒤 로컬 체크아웃에서
-`init`·`doctor` 를 실행한다. PASS 또는 WARN 과 실패 상세는 `publish.py` 출력과 genesis
+원격을 설정하고 첫 push 전에 `init`·`doctor` 를 실행한다. 두 명령은 클론마다 실행해야 한다.
+genesis 관측은 원격이 설정된 그 로컬 저장소에서의 성공을 증명하며, 다른 클론에 전달되는
+계약은 매니페스트의 `commitlore.mode` 다. hook 과 로컬 git 설정은 클론에 전달되지 않는다.
+PASS 또는 WARN 과 doctor 진단의 끝부분 또는 실패 상세는 `publish.py` 출력과 genesis
 영수증에 남는다. REVISE·BLOCK 은 이름 있는 거부로 게시와 Result 조립을 멈춘다.
 프로파일이 요구하는데 만들지 못한 산출물은 조용히 빠지지 않고
 `unresolvedGaps` 로 Plan 에 남는다.
@@ -86,6 +89,7 @@ python3 scripts/authorize.py --plan compiled.json \
 다시 digest 한 Plan 이 스스로를 승인한 것과 구별되지 않았다. 영수증은 **어떤 digest 를**
 승인했는지 말하므로, Plan 이 한 바이트라도 바뀌면 그 승인이 더 이상 그 Plan 을 안 가리킨다.
 통합 구성에서는 이 문서를 제어평면이 만든다.
+같은 `authorization.json` 을 `apply.py` 와 `publish.py` 양쪽의 `--authorization` 에 전달한다.
 
 서명은 아니다. 이 파일을 쓸 수 있는 사람은 승인을 주장할 수 있다. 사는 것은 주장이 별개의
 아티팩트가 되고 행위자·시각·묶인 digest 를 갖는다는 것이다.
@@ -122,6 +126,7 @@ ruleset 이 `active` 로 만들어진 것과 같은 통과를 받는다.
 
 ```bash
 python3 scripts/publish.py --plan compiled.json --workdir /tmp/genesis \
+  --authorization authorization.json \
   --remote-url git@github.com:owner/name.git \
   --author-name "..." --author-email "..."
 ```
