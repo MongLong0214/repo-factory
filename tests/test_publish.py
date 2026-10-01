@@ -26,7 +26,7 @@ REMOTE = "git@github.com:MongLong0214/demo.git"
 
 
 def doctor_report(checks=None, **summary):
-    return json.dumps({"schema": "commitlore_doctor.v2", "summary": summary,
+    return json.dumps({"schema": "commitlore_doctor.v2", "status": "healthy", "summary": summary,
                        "checks": checks or []})
 
 
@@ -348,6 +348,38 @@ def test_doctor_preserves_all_fifteen_structured_warnings(tmp_path):
     assert heads["commitlore"]["warnings"] == [f"check-{index}: warning {index} " + "x" * 350
                                                 for index in range(15)]
     assert "check-11" not in heads["commitlore"]["detail"]
+
+
+def test_doctor_skipped_check_and_degraded_report_remain_visible(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            report = json.loads(doctor_report([
+                {"id": "inject-version", "status": "skipped", "skipReason": "version_unreadable",
+                 "title": "PreToolUse hook version", "detail": "could not read the hook version"},
+            ]))
+            report["status"] = "degraded"
+            return 0, json.dumps(report), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], plan=plan_for(FILES, "STANDARD"), runner=run)
+    assert heads["commitlore"]["outcome"] == "PASS"
+    assert heads["commitlore"]["reportStatus"] == "degraded"
+    assert heads["commitlore"]["warnings"] == ["inject-version: skipped (version_unreadable)"]
+
+
+def test_doctor_skipped_check_without_reason_uses_title(tmp_path):
+    git_runner = local_runner([])
+
+    def run(argv, cwd):
+        if argv[:2] == ["commitlore", "doctor"]:
+            return 0, doctor_report([{"id": "inject-version", "status": "skipped",
+                                      "title": "PreToolUse hook version"}]), ""
+        return git_runner(argv, cwd)
+
+    heads = publish(tmp_path / "tree", FILES, [], runner=run)
+    assert heads["commitlore"]["warnings"] == ["inject-version: skipped (PreToolUse hook version)"]
 
 
 def test_doctor_zero_warning_summary_is_not_a_finding(tmp_path):

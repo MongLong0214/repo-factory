@@ -107,7 +107,7 @@ def with_commitlore_stub(tmp_path, environment):
     executable.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = doctor ]; then\n"
-        "  printf '%s\\n' '{\"schema\":\"commitlore_doctor.v2\",\"checks\":[]}'\n"
+        "  printf '%s\\n' '{\"schema\":\"commitlore_doctor.v2\",\"status\":\"healthy\",\"checks\":[]}'\n"
         "fi\nexit 0\n", encoding="utf-8")
     executable.chmod(0o755)
     return {**environment, "PATH": f"{bin_dir}:{environment.get('PATH', '')}"}

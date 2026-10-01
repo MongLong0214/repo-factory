@@ -15,6 +15,11 @@
 
 세 번째가 이 계층의 이유다. 쓰기가 있었다는 것과 그 쓰기가 확인됐다는 것은 다르고,
 확인되지 않은 영수증은 아무것의 증거도 아니다(§16.2).
+
+`build_result` 는 `apply.py` 의 `_check_authorization` 과 같은 방식으로 Plan 을 별도의
+승인 영수증에 묶는다. 영수증은 서명이 아니므로 그 파일을 쓸 수 있는 사람은 승인을 주장할
+수 있다. 증거를 독립적으로 확인하고 활성화를 판정하는 책임은 수신자의
+`parseRepoFactoryResult` 와 활성화 단계에 있다.
 """
 from __future__ import annotations
 

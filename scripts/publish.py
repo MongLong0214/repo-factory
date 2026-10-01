@@ -109,6 +109,7 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
     """Genesis 뒤, 원격 push 앞에 실제 로컬 저장소의 Decision Memory를 확인한다."""
     on_failure = load_profile(profile)["commitlore"]["onFailure"]
     warnings: List[str] = []
+    report_status: Optional[str] = None
     for argv in (["commitlore", "init", "--mcp-scope", "none", "--no-unattended"],
                  ["commitlore", "doctor", "--json"]):
         try:
@@ -124,6 +125,9 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
                 report = json.loads(out)
                 if not isinstance(report, dict) or report.get("schema") != "commitlore_doctor.v2":
                     raise ValueError("invalid schema")
+                report_status = report.get("status")
+                if not isinstance(report_status, str):
+                    raise ValueError("invalid status")
                 checks = report["checks"]
                 if not isinstance(checks, list) or not all(
                     isinstance(check, dict) and check.get("status") in
@@ -131,8 +135,12 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
                 ):
                     raise ValueError("invalid checks")
                 for check in checks:
-                    if check["status"] in ("warn", "fail"):
-                        message = check.get("detail") or check.get("title") or check["status"]
+                    if check["status"] != "ok":
+                        if check["status"] == "skipped":
+                            reason = check.get("skipReason") or check.get("title") or check.get("detail")
+                            message = f"skipped ({reason})" if reason else "skipped"
+                        else:
+                            message = check.get("detail") or check.get("title") or check["status"]
                         warnings.append(f"{check['id']}: {message}" if check.get("id") else str(message))
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
                 return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": [],
@@ -140,9 +148,11 @@ def observe_commitlore(profile: str, workdir: Path, runner) -> Dict[str, object]
         if code != 0:
             detail = (err.strip() or out.strip() or "no diagnostic output")[:300]
             return {"outcome": on_failure, "scope": "genesis-checkout", "warnings": warnings,
+                    **({"reportStatus": report_status} if report_status is not None else {}),
                     "detail": f"{' '.join(argv[:2])} failed ({code}): {detail}"}
     diagnostic = "\n".join(part for part in (out.strip(), err.strip()) if part)
     return {"outcome": "PASS", "scope": "genesis-checkout", "warnings": warnings,
+            "reportStatus": report_status,
             "detail": f"commitlore doctor passed: {diagnostic[-300:]}"}
 
 

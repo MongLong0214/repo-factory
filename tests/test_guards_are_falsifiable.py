@@ -50,9 +50,16 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "every structured doctor warning remains visible",
         "file": "scripts/publish.py",
-        "mutate": ('                    if check["status"] in ("warn", "fail"):',
+        "mutate": ('                    if check["status"] != "ok":',
                    '                    if False:'),
         "killed_by": ["tests/test_publish.py::test_doctor_preserves_all_fifteen_structured_warnings"],
+    },
+    {
+        "name": "a skipped doctor check remains visible with its reason",
+        "file": "scripts/publish.py",
+        "mutate": ('                        if check["status"] == "skipped":',
+                   '                        if False:'),
+        "killed_by": ["tests/test_publish.py::test_doctor_skipped_check_and_degraded_report_remain_visible"],
     },
     {
         "name": "publish checks authorization before reading the plan's policy or running git",
