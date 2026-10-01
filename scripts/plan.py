@@ -209,6 +209,31 @@ def selected_artifacts(profile: Dict[str, Any], requested_optional: List[str]) -
     return list(profile["required"]) + sorted(set(requested_optional))
 
 
+def validate_lean_review(review: Dict[str, Any], profile: Dict[str, Any],
+                         requested_optional: List[str]) -> List[str]:
+    """Phase D can trim requested technical options, never product scope or required work."""
+    invalid = sorted(Draft202012Validator(_schema("lean-review.schema.json")).iter_errors(review), key=str)
+    if invalid:
+        raise PlanError("LEAN_REVIEW_INVALID: " + "; ".join(e.message for e in invalid[:5]))
+    verdict = review["verdict"]
+    if verdict in ("CEO_DECISION_REQUIRED", "OWNER_DECISION_REQUIRED"):
+        raise PlanError(f"{verdict}: planning requires that decision before any external write")
+    removed = [row["item"] for row in review["removedItems"]]
+    if verdict == "LEAN_ACCEPT" and removed or verdict == "LEAN_REVISE" and not removed:
+        raise PlanError(f"LEAN_REVIEW_CONTRADICTION: {verdict} conflicts with removedItems")
+    if len(removed) != len(set(removed)):
+        raise PlanError("LEAN_REVIEW_INVALID: removedItems contains duplicates")
+    product_scope = {"seed", "ownerConstraints", "humanGateFacts", "visibility",
+                     "repositories", "bootstrapProfile"}
+    outside_options = sorted((set(removed) - set(profile["optional"])) | (set(removed) & product_scope))
+    if outside_options:
+        raise PlanError(f"LEAN_SCOPE_CHANGE: CTO cannot remove product scope or required artifacts: {outside_options}")
+    not_requested = sorted(set(removed) - set(requested_optional))
+    if not_requested:
+        raise PlanError(f"LEAN_ITEM_NOT_REQUESTED: {not_requested}")
+    return [item for item in requested_optional if item not in removed]
+
+
 def classify_human_gate(request: Dict[str, Any]) -> Dict[str, Any]:
     reasons = []
     if request.get("visibility") == "public":
@@ -302,6 +327,7 @@ def compile_plan(
     verification_commands: List[Dict[str, Any]],
     *,
     requested_optional: List[str] = None,
+    lean_review: Dict[str, Any] = None,
     operation_id: str,
     stack: str = None,
     ci_values: Dict[str, str] = None,
@@ -317,6 +343,8 @@ def compile_plan(
 
     validate_request(request)
     profile = load_profile(request["bootstrapProfile"])
+    if lean_review is not None:
+        requested_optional = validate_lean_review(lean_review, profile, requested_optional or [])
     artifacts = selected_artifacts(profile, requested_optional or [])
     gate = classify_human_gate(request)
 
@@ -465,6 +493,8 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--request", required=True, type=Path, help="BootstrapRequest JSON")
     parser.add_argument("--verification", required=True, type=Path, help="VerificationCommand list JSON")
     parser.add_argument("--optional", nargs="*", default=[], help="optional artifacts to include")
+    parser.add_argument("--lean-review", type=Path, default=None,
+                        help="Bootstrap CTO Phase D review JSON; applied before plan compilation")
     parser.add_argument("--operation-id", required=True,
                         help="the bootstrap operation id; a retry must reuse it (PRD §16.3)")
     parser.add_argument("--stack", default=None,
@@ -485,6 +515,7 @@ def main(argv: List[str] = None) -> int:
                          ensure_ascii=False), file=sys.stderr)
         return 2
     try:
+        lean_review = json.loads(args.lean_review.read_text(encoding="utf-8")) if args.lean_review else None
         environment = None
         if args.environment:
             environment = json.loads(args.environment.read_text(encoding="utf-8"))
@@ -493,12 +524,15 @@ def main(argv: List[str] = None) -> int:
             # 적힌다 — CLI 가 네트워크를 여는 것은 이 명령의 약속이 아니다.
             environment = observe_environment(request)
         compiled = compile_plan(request, commands, requested_optional=args.optional,
+                                lean_review=lean_review,
                                 operation_id=args.operation_id, stack=args.stack,
                                 ci_values=ci_values, environment=environment)
     except (PlanError, ValueError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
     output = {**compiled, "diffSummary": diff_summary(compiled)}
+    if lean_review is not None:
+        output["leanReview"] = {**lean_review, "digest": digest(lean_review)}
     if environment is not None:
         output["environmentObservation"] = environment
     print(json.dumps(output, ensure_ascii=False, indent=2))

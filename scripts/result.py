@@ -26,6 +26,7 @@ from typing import Any, Dict, List
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from apply import PUBLISH_OPERATION  # noqa: E402
 from canonical import digest  # noqa: E402
+from plan import load_profile  # noqa: E402
 
 __all__ = ["ResultError", "FORBIDDEN_CLAIMS", "RECEIPT_FIELDS", "build_result",
            "RESULT_SCHEMA_ID"]
@@ -69,10 +70,30 @@ def build_result(
     ci_evidence: List[Dict[str, Any]] = None,
     unresolved_gaps: List[str] = None,
 ) -> Dict[str, Any]:
+    if digest(plan) != plan_digest:
+        raise ResultError("PLAN_DIGEST_MISMATCH: the supplied digest does not cover this plan")
     if not receipts:
         raise ResultError("a result with no external write receipt describes no bootstrap")
     if not bootstrap_verification:
         raise ResultError("a result with no bootstrap verification asserts a repository nobody ran")
+
+    # 수신자의 result.v2 는 strict 이므로 이 사실은 genesis 영수증에만 남는다. 빠진
+    # 관측은 성공이 아니다. 프로파일의 onFailure 만 실패 판정의 권위다.
+    failure_outcome = load_profile(plan["bootstrapProfile"])["commitlore"]["onFailure"]
+    genesis_receipts = [r for r in receipts if r.get("resourceType") == "genesis-commit"]
+    if not genesis_receipts:
+        raise ResultError("COMMITLORE_MISSING: no genesis receipt carries a CommitLore observation")
+    for receipt in genesis_receipts:
+        observed = receipt.get("commitlore")
+        if not isinstance(observed, dict) or not observed.get("outcome"):
+            raise ResultError("COMMITLORE_MISSING: genesis receipt has no CommitLore outcome")
+        outcome = observed["outcome"]
+        if outcome in ("REVISE", "BLOCK"):
+            raise ResultError(f"COMMITLORE_{outcome}: result assembly refused; {observed.get('detail', '')}")
+        if outcome not in ("PASS", failure_outcome):
+            raise ResultError(f"COMMITLORE_OUTCOME_INVALID: {outcome!r} conflicts with profile policy")
+        if outcome == failure_outcome and not observed.get("detail"):
+            raise ResultError("COMMITLORE_OUTCOME_INVALID: failure detail is missing")
 
     # 계획된 Operation 전부에 영수증이 있어야 한다. 없으면 절반만 실행된 부트스트랩이 완료로
     # 보고된다 — 실제로 그랬다: `after-files` 를 안 돌린 체인이 ruleset 영수증 없이 Result 를

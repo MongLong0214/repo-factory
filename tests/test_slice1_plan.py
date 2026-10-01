@@ -14,7 +14,8 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from canonical import CanonicalError, digest, volatile_findings  # noqa: E402
-from plan import PlanError, compile_plan, diff_summary  # noqa: E402
+from plan import PlanError, compile_plan, diff_summary, load_profile, main as plan_main  # noqa: E402
+from materialize import ADR_PATH, SPEC_PATH  # noqa: E402
 
 VERIFICATION = [
     {"id": "typecheck", "argv": ["npm", "run", "typecheck"], "repositoryRole": "primary", "cwd": ".",
@@ -170,6 +171,122 @@ def test_simple_does_not_silently_gain_the_standard_specification():
     simple["bootstrapProfile"] = "SIMPLE"
 
     assert "compact-prd-or-equivalent-specification" not in compiled(simple)["artifacts"]
+
+
+# --- RF-S02: SIMPLE materializes no unrequested PRD, ADR or ticket ----------------------
+
+def test_simple_materializes_no_formal_documents_without_optional_requests():
+    simple = copy.deepcopy(REQUEST)
+    simple["bootstrapProfile"] = "SIMPLE"
+    made = compiled(simple, stack="node", ci_values=CI_VALUES)
+    formal = {"prd", "adr", "tickets", "compact-prd-or-equivalent-specification",
+              "architecture-adr"}
+    assert not formal.intersection(load_profile("SIMPLE")["required"])
+    assert not formal.intersection(made["artifacts"])
+    assert SPEC_PATH not in made["files"]
+    assert ADR_PATH not in made["files"]
+    assert not any("ticket" in path.lower() for path in made["files"])
+    assert not any(row["path"] in (SPEC_PATH, ADR_PATH) or "ticket" in row["path"].lower()
+                   for row in made["planCore"]["files"])
+
+
+# --- RF-S03: Bootstrap CTO lean review trims only requested technical options ----------
+
+def test_standard_lean_revision_preserves_product_scope_and_required_artifacts():
+    request = copy.deepcopy(REQUEST)
+    request["ownerConstraints"] = ["keep ledger data local"]
+    request["humanGateFacts"] = ["public exposure requires owner consent"]
+    original = copy.deepcopy(request)
+    requested = ["adr", "tickets", "research-dossier"]
+    review = {"verdict": "LEAN_REVISE", "removedItems": [
+        {"item": "research-dossier", "reason": "No research question at genesis"},
+        {"item": "adr", "reason": "No durable architecture decision yet"},
+    ]}
+    revised = compiled(request, requested_optional=requested, lean_review=review,
+                       stack="node", ci_values=CI_VALUES)
+    lean_baseline = compiled(copy.deepcopy(request), requested_optional=["tickets"],
+                             stack="node", ci_values=CI_VALUES)
+    assert revised["artifacts"] == lean_baseline["artifacts"]
+    assert revised["planCore"] == lean_baseline["planCore"]
+    assert revised["files"] == lean_baseline["files"]
+    assert set(load_profile("STANDARD")["required"]).issubset(revised["artifacts"])
+    assert {key: request[key] for key in ("seed", "ownerConstraints", "humanGateFacts", "visibility",
+                                           "repositories", "bootstrapProfile")} == {
+        key: original[key] for key in ("seed", "ownerConstraints", "humanGateFacts", "visibility",
+                                        "repositories", "bootstrapProfile")}
+
+
+def test_lean_accept_without_removals_preserves_the_plan():
+    accepted = compiled(requested_optional=["tickets"],
+                        lean_review={"verdict": "LEAN_ACCEPT", "removedItems": []})
+    plain = compiled(requested_optional=["tickets"])
+    assert accepted["planCore"] == plain["planCore"]
+    assert accepted["artifacts"] == plain["artifacts"]
+
+
+@pytest.mark.parametrize("item", ["seed", "ownerConstraints", "humanGateFacts", "visibility",
+                                   "repositories", "bootstrapProfile",
+                                   "compact-prd-or-equivalent-specification"])
+def test_lean_review_refuses_product_scope_and_required_artifact_removal(item):
+    with pytest.raises(PlanError, match="LEAN_SCOPE_CHANGE"):
+        compiled(requested_optional=["adr"], lean_review={"verdict": "LEAN_REVISE",
+                 "removedItems": [{"item": item, "reason": "too much"}]})
+
+
+@pytest.mark.parametrize("verdict", ["CEO_DECISION_REQUIRED", "OWNER_DECISION_REQUIRED"])
+def test_lean_decision_refuses_planning(verdict):
+    with pytest.raises(PlanError, match=verdict):
+        compiled(lean_review={"verdict": verdict, "removedItems": []})
+
+
+def test_lean_review_refuses_unrequested_optional_and_contradictory_verdicts():
+    with pytest.raises(PlanError, match="LEAN_ITEM_NOT_REQUESTED"):
+        compiled(lean_review={"verdict": "LEAN_REVISE", "removedItems": [
+            {"item": "adr", "reason": "not needed"}]})
+    for verdict, rows in (("LEAN_ACCEPT", [{"item": "adr", "reason": "not needed"}]),
+                          ("LEAN_REVISE", [])):
+        with pytest.raises(PlanError, match="LEAN_REVIEW_CONTRADICTION"):
+            compiled(requested_optional=["adr"], lean_review={"verdict": verdict,
+                     "removedItems": rows})
+
+
+def test_lean_review_schema_requires_a_reason():
+    with pytest.raises(PlanError, match="LEAN_REVIEW_INVALID"):
+        compiled(requested_optional=["adr"], lean_review={"verdict": "LEAN_REVISE",
+                 "removedItems": [{"item": "adr", "reason": "   "}]})
+
+
+def test_lean_review_refuses_duplicate_removal_items():
+    with pytest.raises(PlanError, match="LEAN_REVIEW_INVALID"):
+        compiled(requested_optional=["adr"], lean_review={"verdict": "LEAN_REVISE",
+                 "removedItems": [{"item": "adr", "reason": "No decision"},
+                                  {"item": "adr", "reason": "Still no decision"}]})
+
+
+def test_lean_review_cli_emits_applied_review_outside_strict_plan(tmp_path, capsys):
+    request_path = tmp_path / "request.json"
+    verification_path = tmp_path / "verification.json"
+    review_path = tmp_path / "review.json"
+    request_path.write_text(json.dumps(REQUEST))
+    verification_path.write_text(json.dumps(VERIFICATION))
+    review = {"verdict": "LEAN_REVISE", "removedItems": [
+        {"item": "adr", "reason": "No architecture decision yet"}]}
+    review_path.write_text(json.dumps(review))
+    common = ["--request", str(request_path), "--verification", str(verification_path),
+              "--operation-id", FIXED_OP, "--lean-review", str(review_path)]
+    assert plan_main([*common, "--optional", "adr"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["leanReview"] == {**review, "digest": digest(review)}
+    assert "leanReview" not in output["planCore"]
+    assert "adr" not in output["artifacts"]
+    review_path.write_text(json.dumps({"verdict": "CEO_DECISION_REQUIRED", "removedItems": []}))
+    assert plan_main(common) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "CEO_DECISION_REQUIRED" in captured.err
+    review_path.write_text("{bad json")
+    assert plan_main(common) == 1
+    assert capsys.readouterr().out == ""
 
 
 # --- summary --------------------------------------------------------------------------

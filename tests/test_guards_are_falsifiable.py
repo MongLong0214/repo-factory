@@ -34,6 +34,144 @@ COPIED = ("scripts", "tests", "schemas", "profiles", "governance", "templates",
 # name, file, (find, replace), tests that must fail once the guard is gone.
 GUARDS: List[Dict[str, object]] = [
     {
+        "name": "result checks the supplied digest before accepting a changed profile",
+        "file": "scripts/result.py",
+        "mutate": ('    if digest(plan) != plan_digest:', '    if False:'),
+        "killed_by": ["tests/test_slice4_result.py::test_a_profile_edit_cannot_make_a_standard_failure_an_accepted_warning"],
+    },
+    {
+        "name": "publish checks authorization before reading the plan's policy or running git",
+        "file": "scripts/publish.py",
+        "mutate": ('        _check_authorization(core, authorization)', '        pass'),
+        "killed_by": ["tests/test_publish.py::test_publish_refuses_a_receipt_for_another_digest_before_any_git_command"],
+    },
+    {
+        "name": "CommitLore doctor sees origin before the first push",
+        "file": "scripts/publish.py",
+        "mutate": ('    run_all([\n        ["git", "branch", default_branch],\n'
+                   '        ["git", "remote", "add", "origin", remote_url],\n'
+                   '    ])\n\n    commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)',
+                   '    commitlore = observe_commitlore(str(plan["bootstrapProfile"]), workdir, runner)\n'
+                   '    run_all([\n        ["git", "branch", default_branch],\n'
+                   '        ["git", "remote", "add", "origin", remote_url],\n    ])'),
+        "killed_by": ["tests/test_publish.py::test_doctor_sees_origin_before_first_push_and_keeps_its_warning"],
+    },
+    {
+        "name": "CommitLore timeout follows the selected profile policy",
+        "file": "scripts/publish.py",
+        "mutate": ('        except subprocess.TimeoutExpired as error:',
+                   '        except RuntimeError as error:'),
+        "killed_by": ["tests/test_publish.py::test_commitlore_timeout_uses_profile_policy"],
+    },
+    {
+        "name": "lean review cannot remove product scope or required artifacts",
+        "file": "scripts/plan.py",
+        "mutate": ("    if outside_options:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_product_scope_and_required_artifact_removal"],
+    },
+    {
+        "name": "the compiler applies the lean review before selecting artifacts",
+        "file": "scripts/plan.py",
+        "mutate": ('        requested_optional = validate_lean_review(lean_review, profile, requested_optional or [])',
+                   '        requested_optional = requested_optional or []'),
+        "killed_by": ["tests/test_slice1_plan.py::test_standard_lean_revision_preserves_product_scope_and_required_artifacts"],
+    },
+    {
+        "name": "lean review decision verdict stops planning",
+        "file": "scripts/plan.py",
+        "mutate": ('    if verdict in ("CEO_DECISION_REQUIRED", "OWNER_DECISION_REQUIRED"):',
+                   "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_decision_refuses_planning"],
+    },
+    {
+        "name": "lean review does not silently drop unrequested artifacts",
+        "file": "scripts/plan.py",
+        "mutate": ("    if not_requested:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_unrequested_optional_and_contradictory_verdicts"],
+    },
+    {
+        "name": "lean review rejects contradictory verdicts",
+        "file": "scripts/plan.py",
+        "mutate": ('    if verdict == "LEAN_ACCEPT" and removed or verdict == "LEAN_REVISE" and not removed:',
+                   "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_unrequested_optional_and_contradictory_verdicts"],
+    },
+    {
+        "name": "lean review validates removal reasons",
+        "file": "scripts/plan.py",
+        "mutate": ('    invalid = sorted(Draft202012Validator(_schema("lean-review.schema.json")).iter_errors(review), key=str)',
+                   '    invalid = []'),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_review_schema_requires_a_reason"],
+    },
+    {
+        "name": "lean review rejects duplicate removals",
+        "file": "scripts/plan.py",
+        "mutate": ("    if len(removed) != len(set(removed)):", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_duplicate_removal_items"],
+    },
+    {
+        "name": "publish refuses a required CommitLore failure before push",
+        "file": "scripts/publish.py",
+        "mutate": ('    if commitlore["outcome"] in ("REVISE", "BLOCK"):', "    if False:"),
+        "killed_by": ["tests/test_publish.py::test_standard_missing_commitlore_refuses_before_push_for_revision",
+                      "tests/test_publish.py::test_guarded_missing_commitlore_refuses_before_push_as_blocking"],
+    },
+    {
+        "name": "CommitLore cannot change the generated checkout before push",
+        "file": "scripts/publish.py",
+        "mutate": ("    if code != 0 or status.strip():", "    if False:"),
+        "killed_by": ["tests/test_publish.py::test_commitlore_file_effect_refuses_publication"],
+    },
+    {
+        "name": "absent CommitLore is a profile failure, never PASS",
+        "file": "scripts/publish.py",
+        "mutate": ('            return {"outcome": on_failure, "detail": f"{argv[0]} unavailable: {error}"}',
+                   '            return {"outcome": "PASS", "detail": f"{argv[0]} unavailable: {error}"}'),
+        "killed_by": ["tests/test_publish.py::test_simple_missing_commitlore_warns_and_continues_with_a_receipt"],
+    },
+    {
+        "name": "nonzero CommitLore init or doctor is a failure",
+        "file": "scripts/publish.py",
+        "mutate": ('        if code != 0:\n            detail = (err.strip() or out.strip() or "no diagnostic output")[:300]',
+                   '        if False:\n            detail = (err.strip() or out.strip() or "no diagnostic output")[:300]'),
+        "killed_by": ["tests/test_publish.py::test_simple_nonzero_commitlore_command_is_a_warning"],
+    },
+    {
+        "name": "result refuses required CommitLore revision and block",
+        "file": "scripts/result.py",
+        "mutate": ('        if outcome in ("REVISE", "BLOCK"):', "        if False:"),
+        "killed_by": ["tests/test_slice4_result.py::test_required_commitlore_failure_refuses_result_assembly"],
+    },
+    {
+        "name": "result refuses a missing CommitLore observation",
+        "file": "scripts/result.py",
+        "mutate": ('        if not isinstance(observed, dict) or not observed.get("outcome"):',
+                   "        if False:"),
+        "killed_by": ["tests/test_slice4_result.py::test_a_missing_commitlore_observation_cannot_be_assembled_as_success"],
+    },
+    {
+        "name": "result refuses a CommitLore outcome against profile policy",
+        "file": "scripts/result.py",
+        "mutate": ('        if outcome not in ("PASS", failure_outcome):', "        if False:"),
+        "killed_by": ["tests/test_slice4_result.py::test_profile_policy_mismatch_cannot_make_a_required_failure_a_warning"],
+    },
+    {
+        "name": "a CommitLore warning in a result has failure detail",
+        "file": "scripts/result.py",
+        "mutate": ('        if outcome == failure_outcome and not observed.get("detail"):',
+                   "        if False:"),
+        "killed_by": ["tests/test_slice4_result.py::test_simple_warning_requires_failure_detail"],
+    },
+    {
+        "name": "resume refuses a genesis receipt with no CommitLore observation",
+        "file": "scripts/publish.py",
+        "mutate": ('            if (not isinstance(observation, dict) or\n'
+                   '                    observation.get("outcome") not in ("PASS", policy) or\n'
+                   '                    (observation.get("outcome") != "PASS" and not observation.get("detail"))):',
+                   '            if False:'),
+        "killed_by": ["tests/test_pipeline_cli.py::test_a_prior_genesis_without_commitlore_outcome_cannot_resume"],
+    },
+    {
         "name": "the compiler validates its own output against the schema it ships",
         "file": "scripts/plan.py",
         "mutate": ("    invalid = sorted(Draft202012Validator(_plan_schema()).iter_errors(core), key=str)",

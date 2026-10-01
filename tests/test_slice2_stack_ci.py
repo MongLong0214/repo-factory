@@ -11,7 +11,7 @@ SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import render_ci  # noqa: E402
-from render_ci import CiRenderError, available_stacks, ci_findings, render, required_tokens  # noqa: E402
+from render_ci import CiRenderError, DEFAULT_VALUES, available_stacks, ci_findings, render, required_tokens  # noqa: E402
 
 VALUES = {
     "node": {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22",
@@ -38,6 +38,20 @@ def test_v1_1_ships_the_four_default_stacks():
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
 def test_each_default_stack_renders_clean(stack: str):
     assert ci_findings(rendered(stack)) == []
+
+
+# --- RF-S08: Node lower/latest install (live proof: evidence/dogfood-public-profiles-20260819.json, rf-dogfood-f-node) ---
+
+def test_node_workflow_installs_dependencies_on_both_declared_runtimes():
+    workflow = render("node", DEFAULT_VALUES["node"])
+    lower = DEFAULT_VALUES["node"]["RUNTIME_LOWER"]
+    latest = DEFAULT_VALUES["node"]["RUNTIME_LATEST"]
+    assert f'matrix:\n        runtime: ["{lower}", "{latest}"]' in workflow
+    assert "node-version: ${{ matrix.runtime }}" in workflow
+    install = workflow.index("- name: install dependencies\n        run: " + DEFAULT_VALUES["node"]["INSTALL_CMD"])
+    test = workflow.index("- name: test\n        run: " + DEFAULT_VALUES["node"]["TEST_CMD"])
+    build = workflow.index("- name: build\n        run: " + DEFAULT_VALUES["node"]["BUILD_CMD"])
+    assert workflow.index("actions/setup-node@") < install < test < build
 
 
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
