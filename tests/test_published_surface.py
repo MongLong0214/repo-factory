@@ -26,7 +26,7 @@ RETIRED_ENTRYPOINTS = [
     "install-governance.py", "run-canary.py", "autopilot.py", "merge-broker.py",
 ]
 
-PIPELINE = ["plan.py", "apply.py", "publish.py", "result.py"]
+PIPELINE = ["lean.py", "plan.py", "apply.py", "publish.py", "result.py"]
 
 COMMAND_BLOCK = re.compile(r"```(?:bash|sh|console)\n(.*?)```", re.DOTALL)
 SCRIPT_CALL = re.compile(r"scripts/([A-Za-z0-9_\-]+\.py)")

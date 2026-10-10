@@ -141,8 +141,58 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "lean review rejects duplicate removals",
         "file": "scripts/plan.py",
-        "mutate": ("    if len(removed) != len(set(removed)):", "    if False:"),
+        "mutate": ("    if len(named) != len(set(named)):", "    if False:"),
         "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_duplicate_removal_items"],
+    },
+    {
+        "name": "a lean verdict accounts for every requested optional artifact",
+        "file": "scripts/plan.py",
+        "mutate": ("    if unreviewed:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_a_verdict_that_does_not_account_for_every_requested_option_is_refused"],
+    },
+    {
+        "name": "a STANDARD or GUARDED plan command without a lean verdict is refused",
+        "file": "scripts/plan.py",
+        "mutate": ("    if lean_review is None and profile in LEAN_REVIEW_PROFILES:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_plan_command_refuses_a_request_that_skipped_the_lean_review"],
+    },
+    {
+        "name": "the plan command runs the lean verdict gate",
+        "file": "scripts/plan.py",
+        "mutate": ("        require_lean_review(request, lean_review)", "        pass"),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_plan_command_refuses_a_request_that_skipped_the_lean_review"],
+    },
+    {
+        "name": "the generator cuts a requested option nothing consumes",
+        "file": "scripts/lean.py",
+        "mutate": ("    cut = list(remove) + [(item, NO_CONSUMER) for item in sorted(set(requested_optional)) if item not in named]",
+                   "    cut = list(remove)"),
+        "killed_by": ["tests/test_lean_review.py::test_the_generated_revision_cuts_what_nothing_consumes_and_keeps_scope"],
+    },
+    {
+        "name": "the generator writes a cut into scope as a CEO decision",
+        "file": "scripts/lean.py",
+        "mutate": ('    if any(item in PRODUCT_SCOPE or item in profile["required"] for item, _ in remove):',
+                   "    if False:"),
+        "killed_by": ["tests/test_lean_review.py::test_a_cut_into_scope_is_generated_as_a_ceo_decision_and_stops_the_plan"],
+    },
+    {
+        "name": "the generator holds its verdict to the plan's own rules",
+        "file": "scripts/lean.py",
+        "mutate": ("    validate_lean_review(review, profile, list(requested_optional))", "    pass"),
+        "killed_by": ["tests/test_lean_review.py::test_the_generator_refuses_a_verdict_the_plan_would_refuse"],
+    },
+    {
+        "name": "the generator checks the shape of a decision verdict",
+        "file": "scripts/lean.py",
+        "mutate": ("        check_lean_review_shape(review)", "        pass"),
+        "killed_by": ["tests/test_lean_review.py::test_the_generator_refuses_a_verdict_the_plan_would_refuse"],
+    },
+    {
+        "name": "the generator refuses an option the profile does not offer",
+        "file": "scripts/lean.py",
+        "mutate": ("    selected_artifacts(profile, list(requested_optional))", "    pass"),
+        "killed_by": ["tests/test_lean_review.py::test_the_generator_refuses_a_verdict_the_plan_would_refuse"],
     },
     {
         "name": "publish refuses a required CommitLore failure before push",
@@ -828,7 +878,7 @@ def test_every_guarded_file_appears_in_the_table():
     # stops applying to anything.
     guarded = {"scripts/plan.py", "scripts/apply.py", "scripts/publish.py",
                "scripts/github_port.py", "scripts/render_ci.py", "scripts/result.py",
-               "scripts/authorize.py", "scripts/materialize.py"}
+               "scripts/authorize.py", "scripts/materialize.py", "scripts/lean.py"}
     covered = {str(g["file"]) for g in GUARDS}
 
     missing = sorted(guarded - covered)

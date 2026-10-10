@@ -20,6 +20,18 @@
           "reason": {"type": "string", "minLength": 1, "pattern": "\\S"}
         }
       }
+    },
+    "keptItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "reason"],
+        "properties": {
+          "item": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        }
+      }
     }
   }
 }

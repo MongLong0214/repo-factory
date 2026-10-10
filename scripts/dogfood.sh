@@ -63,8 +63,11 @@ if [ ! -f "$OUT/operation-id" ]; then uuidgen | tr 'A-Z' 'a-z' > "$OUT/operation
 OPERATION_ID="$(cat "$OUT/operation-id")"
 
 echo "── 1. compile"
+# Phase D before the plan. The request names no optional artifact, so the verdict is LEAN_ACCEPT;
+# STANDARD and GUARDED refuse to compile without one.
+python3 scripts/lean.py --request "$OUT/request.json" > "$OUT/lean-review.json"
 python3 scripts/plan.py --request "$OUT/request.json" --verification "$OUT/verification.json" \
-  --operation-id "$OPERATION_ID" --observe > "$OUT/compiled.json"
+  --lean-review "$OUT/lean-review.json" --operation-id "$OPERATION_ID" --observe > "$OUT/compiled.json"
 python3 -c "import json,sys; d=json.load(open('$OUT/compiled.json')); print('   digest', d['diffSummary']['planDigest']); print('   files ', len(d['files'])); sys.exit(1 if d['unresolvedGaps'] else 0)" \
   || { echo "   unresolved gaps — stopping"; python3 -c "import json;print(json.load(open('$OUT/compiled.json'))['unresolvedGaps'])"; exit 1; }
 
