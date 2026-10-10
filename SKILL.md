@@ -51,11 +51,11 @@ genesis 시점에는 원격에 notes 가 아직 없으므로 notes-fetch 경고�
 ## 파이프라인
 
 ```
-BootstrapRequest ──▶ plan.py ──▶ authorize.py
-                                  │
-                                  └── authorization.json ──▶ apply.py (both phases)
-                                                       ├──▶ publish.py
-                                                       └──▶ result.py
+BootstrapRequest ──▶ lean.py ──▶ plan.py ──▶ authorize.py
+                                              │
+                                              └── authorization.json ──▶ apply.py (both phases)
+                                                                   ├──▶ publish.py
+                                                                   └──▶ result.py
 
 실행 순서: apply before-files ──▶ publish ──▶ apply after-files ──▶ result
 ```
@@ -64,22 +64,36 @@ BootstrapRequest ──▶ plan.py ──▶ authorize.py
 커밋보다 먼저 존재하면, 저장소에 내용을 넣는 바로 그 푸시를 저장소가 거부한다.
 그래서 ruleset 은 `after-files` 다.
 
-### 1. 컴파일
+### 1. Lean 검토와 컴파일
 
 ```bash
+python3 scripts/lean.py --request request.json > lean-review.json
+
 python3 scripts/plan.py \
   --request request.json \
   --verification verification.json \
   --ci-values ci.json \
+  --lean-review lean-review.json \
   --operation-id "$(uuidgen)" \
   --observe > compiled.json
 ```
+
+`lean.py` 는 Bootstrap CTO 의 Phase D 판정을 쓴다. 요청한 선택 산출물마다
+`--keep ITEM=CONSUMER` 로 무엇이 그것을 소비하는지 적거나 `--remove ITEM=REASON` 으로 뺀다.
+소비자를 적지 않은 선택 산출물은 빠진다 — 선택 산출물은 소비하는 것이 있어서 만든다(PRD §6.1).
+제품 Scope 나 필수 산출물을 빼려 하면 판정은 `CEO_DECISION_REQUIRED` 가 되고, Hermes 가 정하기
+전까지 Plan 은 만들어지지 않는다. `--optional` 은 두 명령에 같은 목록을 준다.
+
+`STANDARD`·`GUARDED` 는 판정 없이 컴파일되지 않는다(`LEAN_REVIEW_MISSING`). 판정은 요청한
+선택 산출물을 하나도 빠짐없이 다뤄야 한다(`LEAN_REVIEW_INCOMPLETE`) — 아무것도 다루지 않는
+`LEAN_ACCEPT` 는 어떤 요청에도 맞아서, 과설계된 명세가 그 판정 아래 그대로 통과했다.
 
 `--operation-id` 는 호출자가 대야 한다. 매번 새로 만들면 같은 의도의 재시도가 **다른
 Operation** 이 되고, 원장이 그것을 재개로 못 알아본다.
 
 나오는 것: `planCore`(승인 대상) · `files`(올라갈 바이트) · `humanGate` · `unresolvedGaps`
-· `diffSummary` · `--observe` 를 줬으면 `environmentObservation`.
+· `diffSummary` · 판정을 줬으면 `leanReview`(적용된 판정과 digest) · `--observe` 를 줬으면
+`environmentObservation`.
 
 요청의 `ownerConstraints` 는 `no-public-exposure`, `no-paid-plan-change`,
 `no-destructive-replacement`, `no-irreversible-naming` 만 받는다. 컴파일러는 계획된
@@ -195,6 +209,7 @@ Result 를 조립하는 쪽이 원본을 다시 대야 하고 그것이 승인�
 
 ```
 scripts/
+  lean.py            Bootstrap CTO 의 Phase D 판정 — 소비자 없는 선택 산출물을 뺀다
   plan.py            요청 → Plan (자기 입력과 자기 출력을 둘 다 스키마로 검증)
   authorize.py       승인자가 만드는 영수증. Plan digest 에 묶인다
   apply.py           단계별 외부 쓰기, 영수증 원장, 재조회 대조

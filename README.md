@@ -12,10 +12,10 @@ genesis 커밋을 거쳐 제어평면이 받는 Result 까지 간다. 같은 요
 낸다 — 그것이 "승인이 무엇을 승인했는가" 를 말할 수 있게 하는 유일한 방법이다.
 
 ```
-BootstrapRequest ──▶ plan.py ──▶ authorize.py ──▶ apply.py --phase before-files ──▶ publish.py
-                        │                                              │
-                        │                                              ▼
-                        └────────────────▶ apply.py --phase after-files ──▶ result.py
+BootstrapRequest ──▶ lean.py ──▶ plan.py ──▶ authorize.py ──▶ apply.py --phase before-files ──▶ publish.py
+                                    │                                              │
+                                    │                                              ▼
+                                    └────────────────▶ apply.py --phase after-files ──▶ result.py
 ```
 
 ## 여기서 끝난다
@@ -67,6 +67,7 @@ Operation 과 대조해 위반을 거부한다. 집행할 수 없는 자유 형�
 ```
 SKILL.md              스킬 진입점 — 경계·프로파일·파이프라인·불변식
 scripts/
+  lean.py             Bootstrap CTO 의 Phase D 판정 — 소비자 없는 선택 산출물을 뺀다
   plan.py             요청 → Plan (자기 입력과 자기 출력을 둘 다 스키마로 검증)
   authorize.py        승인자가 만드는 영수증. Plan digest 에 묶인다
   apply.py            단계별 외부 쓰기, 영수증 원장, 재조회 대조
@@ -85,8 +86,10 @@ tests/                컴파일러·포트·계약 회귀 + 뮤테이션 하네�
 ## 실행
 
 ```bash
+python3 scripts/lean.py --request request.json > lean-review.json
+
 python3 scripts/plan.py \
-  --request request.json --verification verification.json \
+  --request request.json --verification verification.json --lean-review lean-review.json \
   --ci-values ci.json --operation-id "$(uuidgen)" --observe > compiled.json
 
 python3 scripts/authorize.py --plan compiled.json \

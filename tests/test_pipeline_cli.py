@@ -28,7 +28,7 @@ SKILL = Path(__file__).resolve().parent.parent
 SCRIPTS = SKILL / "scripts"
 OPERATION_ID = "11111111-2222-3333-4444-555555555555"
 
-STAGES = ["plan.py", "authorize.py", "apply.py", "publish.py", "result.py"]
+STAGES = ["lean.py", "plan.py", "authorize.py", "apply.py", "publish.py", "result.py"]
 REMOTE = "git@github.com:MongLong0214/demo.git"
 
 REQUEST = {
@@ -271,10 +271,15 @@ def _compile(tmp_path, operation_id=OPERATION_ID, name="compiled.json"):
     (tmp_path / "request.json").write_text(json.dumps(REQUEST), encoding="utf-8")
     (tmp_path / "verification.json").write_text(json.dumps(VERIFICATION), encoding="utf-8")
     (tmp_path / "ci.json").write_text(json.dumps(CI_VALUES), encoding="utf-8")
+    # A STANDARD plan passes through the Bootstrap CTO's lean review first (PRD §7 Phase D).
+    reviewed = run([str(SCRIPTS / "lean.py"), "--request", str(tmp_path / "request.json")])
+    assert reviewed.returncode == 0, reviewed.stderr[-600:]
+    (tmp_path / "lean-review.json").write_text(reviewed.stdout, encoding="utf-8")
     done = run([str(SCRIPTS / "plan.py"),
                 "--request", str(tmp_path / "request.json"),
                 "--verification", str(tmp_path / "verification.json"),
                 "--ci-values", str(tmp_path / "ci.json"),
+                "--lean-review", str(tmp_path / "lean-review.json"),
                 "--operation-id", operation_id])
     assert done.returncode == 0, done.stderr[-600:]
     (tmp_path / name).write_text(done.stdout, encoding="utf-8")
