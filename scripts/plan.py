@@ -214,6 +214,26 @@ def selected_artifacts(profile: Dict[str, Any], requested_optional: List[str]) -
 PRODUCT_SCOPE = frozenset({"seed", "ownerConstraints", "humanGateFacts", "visibility",
                            "repositories", "bootstrapProfile"})
 
+# Profiles whose plan command needs the Bootstrap CTO's verdict before a plan exists (PRD §7
+# Phase D, RF-003). SIMPLE is the reversible profile and is not held to it; a review handed to a
+# SIMPLE plan is still applied.
+LEAN_REVIEW_PROFILES = ("STANDARD", "GUARDED")
+
+
+def require_lean_review(request: Dict[str, Any], lean_review: Dict[str, Any]) -> None:
+    """The plan command's Phase D gate. The pipeline runs this command, so a missing verdict
+    stops here.
+
+    The gate is on the command rather than in `compile_plan`: seven test modules build
+    STANDARD and GUARDED plans through the library to check CI, files, the manifest contract,
+    publish and result behaviour that has nothing to do with Phase D. `compile_plan` still
+    applies a verdict it is given and refuses a malformed or incomplete one."""
+    profile = request.get("bootstrapProfile") if isinstance(request, dict) else None
+    if lean_review is None and profile in LEAN_REVIEW_PROFILES:
+        raise PlanError(
+            f"LEAN_REVIEW_MISSING: a {profile} plan needs the Bootstrap CTO's "
+            f"lean review (PRD §7 Phase D); write it with scripts/lean.py and pass --lean-review")
+
 
 def check_lean_review_shape(review: Dict[str, Any]) -> None:
     invalid = sorted(Draft202012Validator(_schema("lean-review.schema.json")).iter_errors(review), key=str)
@@ -541,7 +561,8 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--verification", required=True, type=Path, help="VerificationCommand list JSON")
     parser.add_argument("--optional", nargs="*", default=[], help="optional artifacts to include")
     parser.add_argument("--lean-review", type=Path, default=None,
-                        help="Bootstrap CTO Phase D review JSON; applied before plan compilation")
+                        help="the Bootstrap CTO's Phase D verdict from scripts/lean.py; required for "
+                             "STANDARD and GUARDED, applied before plan compilation")
     parser.add_argument("--operation-id", required=True,
                         help="the bootstrap operation id; a retry must reuse it (PRD §16.3)")
     parser.add_argument("--stack", default=None,
@@ -563,6 +584,7 @@ def main(argv: List[str] = None) -> int:
         return 2
     try:
         lean_review = json.loads(args.lean_review.read_text(encoding="utf-8")) if args.lean_review else None
+        require_lean_review(request, lean_review)
         environment = None
         if args.environment:
             environment = json.loads(args.environment.read_text(encoding="utf-8"))

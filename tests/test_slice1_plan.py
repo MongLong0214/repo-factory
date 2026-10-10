@@ -372,6 +372,49 @@ def test_a_verdict_that_does_not_account_for_every_requested_option_is_refused()
             "keptItems": [{"item": "adr", "reason": "a decision exists"}]})
 
 
+# RF-S03 on the required path. `compile_plan` is the library the other tests build plans with;
+# `plan.py` is the command the pipeline runs (SKILL.md, README.md, dogfood.sh), so that is where a
+# missing verdict has to stop the plan.
+
+def plan_command(tmp_path, request, review=None, optional=()):
+    (tmp_path / "request.json").write_text(json.dumps(request))
+    (tmp_path / "verification.json").write_text(json.dumps(VERIFICATION))
+    argv = ["--request", str(tmp_path / "request.json"),
+            "--verification", str(tmp_path / "verification.json"), "--operation-id", FIXED_OP]
+    if optional:
+        argv += ["--optional", *optional]
+    if review is not None:
+        (tmp_path / "review.json").write_text(json.dumps(review))
+        argv += ["--lean-review", str(tmp_path / "review.json")]
+    return plan_main(argv)
+
+
+@pytest.mark.parametrize("profile", ["STANDARD", "GUARDED"])
+def test_the_plan_command_refuses_a_request_that_skipped_the_lean_review(profile, tmp_path, capsys):
+    request = {**copy.deepcopy(REQUEST), "bootstrapProfile": profile}
+    assert plan_command(tmp_path, request, optional=["tickets"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "LEAN_REVIEW_MISSING" in captured.err
+
+
+def test_simple_reaches_the_plan_without_a_lean_review(tmp_path, capsys):
+    assert plan_command(tmp_path, {**copy.deepcopy(REQUEST), "bootstrapProfile": "SIMPLE"}) == 0
+    assert json.loads(capsys.readouterr().out)["planCore"]["bootstrapProfile"] == "SIMPLE"
+
+
+@pytest.mark.parametrize("review, refusal", [
+    ({"verdict": "OWNER_DECISION_REQUIRED", "removedItems": []}, "OWNER_DECISION_REQUIRED"),
+    ({"verdict": "CEO_DECISION_REQUIRED", "removedItems": []}, "CEO_DECISION_REQUIRED"),
+    ({"verdict": "BLOCK", "removedItems": []}, "LEAN_REVIEW_INVALID"),
+], ids=["owner-decision", "ceo-decision", "block"])
+def test_the_plan_command_refuses_a_verdict_that_blocks(review, refusal, tmp_path, capsys):
+    assert plan_command(tmp_path, copy.deepcopy(REQUEST), review) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert refusal in captured.err
+
+
 # --- summary --------------------------------------------------------------------------
 
 def test_the_diff_summary_names_the_owner_gates_it_would_cross():

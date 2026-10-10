@@ -151,6 +151,18 @@ GUARDS: List[Dict[str, object]] = [
         "killed_by": ["tests/test_slice1_plan.py::test_a_verdict_that_does_not_account_for_every_requested_option_is_refused"],
     },
     {
+        "name": "a STANDARD or GUARDED plan command without a lean verdict is refused",
+        "file": "scripts/plan.py",
+        "mutate": ("    if lean_review is None and profile in LEAN_REVIEW_PROFILES:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_plan_command_refuses_a_request_that_skipped_the_lean_review"],
+    },
+    {
+        "name": "the plan command runs the lean verdict gate",
+        "file": "scripts/plan.py",
+        "mutate": ("        require_lean_review(request, lean_review)", "        pass"),
+        "killed_by": ["tests/test_slice1_plan.py::test_the_plan_command_refuses_a_request_that_skipped_the_lean_review"],
+    },
+    {
         "name": "the generator cuts a requested option nothing consumes",
         "file": "scripts/lean.py",
         "mutate": ("    cut = list(remove) + [(item, NO_CONSUMER) for item in sorted(set(requested_optional)) if item not in named]",
