@@ -41,7 +41,11 @@ def test_each_default_stack_renders_clean(stack: str):
     assert ci_findings(rendered(stack)) == []
 
 
-# --- RF-S08: Node lower/latest install (live proof: evidence/dogfood-public-profiles-20260819.json, rf-dogfood-f-node) ---
+# --- RF-S08: Node lower/latest install ---------------------------------------------------
+# The 2026-08-19 run (rf-dogfood-f-node, Actions run 32256790243) survives only as residual JSON in
+# evidence/dogfood-public-profiles-20260819.json. Its repository and run are deleted (HTTP 404), so
+# it cannot be verified remotely. The install itself is witnessed by a local re-run of the rendered
+# steps in tests/test_node_install_witness.py, which is not a GitHub Actions PASS.
 
 def test_node_workflow_installs_dependencies_on_both_declared_runtimes():
     workflow = render("node", DEFAULT_VALUES["node"])
