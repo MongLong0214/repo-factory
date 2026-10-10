@@ -8,7 +8,8 @@ isolated HOME and npm cache with the network turned off. The dependency has to b
 the install step, and present at the pinned version and running after it.
 
 Runtimes: every directory in RF_S08_NODE_BIN_DIRS (os.pathsep-separated, each holding `node`
-and `npm`), or the `node` on PATH when it is unset.
+and `npm`), or the `node` on PATH when it is unset. A configured value with an unusable entry,
+including an empty one, stops collection; it never runs as fewer runtimes or as a skip.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -45,10 +47,25 @@ VERIFICATION = [{"id": "test", "argv": ["npm", "test"], "repositoryRole": "prima
                  "timeoutSeconds": 600, "envAllowlist": ["CI"], "network": "deny", "required": True}]
 
 
+def usable_runtime(entry: str) -> bool:
+    return bool(entry) and os.path.isabs(entry) and all(
+        (Path(entry) / tool).is_file() and os.access(Path(entry) / tool, os.X_OK) for tool in ("node", "npm"))
+
+
 def node_bin_dirs():
-    configured = os.environ.get("RF_S08_NODE_BIN_DIRS")
-    if configured:
-        return [Path(entry) for entry in configured.split(os.pathsep) if entry]
+    """A configured list is checked here, before parametrization. Parametrizing over an empty list
+    does not fail: pytest skips the test and exits 0, so `RF_S08_NODE_BIN_DIRS=:` reported success
+    with no install witnessed. An unusable entry is refused, not dropped — dropping one is how a
+    two-runtime witness quietly becomes a one-runtime witness."""
+    if "RF_S08_NODE_BIN_DIRS" in os.environ:
+        configured = os.environ["RF_S08_NODE_BIN_DIRS"]
+        entries = configured.split(os.pathsep)
+        unusable = [entry for entry in entries if not usable_runtime(entry)]
+        if unusable:
+            raise RuntimeError(
+                f"RF_S08_NODE_BIN_DIRS={configured!r} has unusable entries {unusable!r}: each "
+                f"entry must be an absolute directory holding executable node and npm")
+        return [Path(entry) for entry in entries]
     node = shutil.which("node")
     return [Path(node).parent] if node else [None]
 
@@ -166,3 +183,45 @@ def test_a_failed_install_is_not_followed_by_steps_that_count_as_success(bin_dir
     # And forcing the later steps does not manufacture a pass: the test step needs the dependency.
     forced = run_job(tree, env, steps[1:])
     assert forced[0][0] == "npm test" and forced[0][1] != 0
+
+
+# --- RF-S08: a configured runtime list cannot shrink the witness to nothing ----------------
+
+WITNESSES = ("test_the_rendered_steps_install_the_pinned_dependency_and_run_it",
+             "test_a_failed_install_is_not_followed_by_steps_that_count_as_success")
+
+
+def run_witnesses(tmp_path: Path, configured: str):
+    """The execution witnesses in a child pytest under one RF_S08_NODE_BIN_DIRS value, counted from
+    its JUnit report: what ran, not what was collected."""
+    report = tmp_path / "report.xml"
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "RF_S08_NODE_BIN_DIRS": configured}
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
+         *[f"tests/test_node_install_witness.py::{name}" for name in WITNESSES],
+         "--basetemp", str(tmp_path / "run"), "--junitxml", str(report)],
+        cwd=SKILL, env=env, capture_output=True, text=True, timeout=900)
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0}
+    for case in ElementTree.parse(report).getroot().iter("testcase"):
+        outcome = {child.tag for child in case} & {"failure", "error", "skipped"}
+        counts[{"failure": "failed", "error": "errors", "skipped": "skipped"}[outcome.pop()]
+               if outcome else "passed"] += 1
+    return done, counts
+
+
+@pytest.mark.parametrize("configured", [
+    os.pathsep, "", str(SKILL), "bin",
+    os.pathsep.join([str(next(iter(RUNTIMES), None) or SKILL), str(SKILL / "no-such-runtime")]),
+], ids=["separators-only", "empty", "no-node-here", "relative", "one-of-two-missing"])
+def test_a_configured_runtime_list_with_an_unusable_entry_fails_instead_of_skipping(configured, tmp_path):
+    done, counts = run_witnesses(tmp_path, configured)
+    assert done.returncode != 0, (counts, done.stdout[-1500:])
+    assert counts["passed"] == counts["skipped"] == 0, counts
+    assert "RF_S08_NODE_BIN_DIRS" in done.stdout + done.stderr
+
+
+def test_a_usable_runtime_list_runs_every_execution_witness_on_every_runtime(tmp_path):
+    assert None not in RUNTIMES, "RF-S08 needs a node runtime: put node on PATH or set RF_S08_NODE_BIN_DIRS"
+    done, counts = run_witnesses(tmp_path, os.pathsep.join(str(runtime) for runtime in RUNTIMES))
+    assert done.returncode == 0, done.stdout[-1500:]
+    assert counts == {"passed": len(WITNESSES) * len(RUNTIMES), "failed": 0, "errors": 0, "skipped": 0}
