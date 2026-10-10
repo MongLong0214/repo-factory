@@ -141,8 +141,14 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "lean review rejects duplicate removals",
         "file": "scripts/plan.py",
-        "mutate": ("    if len(removed) != len(set(removed)):", "    if False:"),
+        "mutate": ("    if len(named) != len(set(named)):", "    if False:"),
         "killed_by": ["tests/test_slice1_plan.py::test_lean_review_refuses_duplicate_removal_items"],
+    },
+    {
+        "name": "a lean verdict accounts for every requested optional artifact",
+        "file": "scripts/plan.py",
+        "mutate": ("    if unreviewed:", "    if False:"),
+        "killed_by": ["tests/test_slice1_plan.py::test_a_verdict_that_does_not_account_for_every_requested_option_is_refused"],
     },
     {
         "name": "publish refuses a required CommitLore failure before push",

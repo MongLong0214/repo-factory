@@ -268,7 +268,7 @@ def test_standard_lean_revision_preserves_product_scope_and_required_artifacts()
     review = {"verdict": "LEAN_REVISE", "removedItems": [
         {"item": "research-dossier", "reason": "No research question at genesis"},
         {"item": "adr", "reason": "No durable architecture decision yet"},
-    ]}
+    ], "keptItems": [{"item": "tickets", "reason": "The first wave is dispatched from them"}]}
     revised = compiled(request, requested_optional=requested, lean_review=review,
                        stack="node", ci_values=CI_VALUES)
     lean_baseline = compiled(copy.deepcopy(request), requested_optional=["tickets"],
@@ -285,7 +285,8 @@ def test_standard_lean_revision_preserves_product_scope_and_required_artifacts()
 
 def test_lean_accept_without_removals_preserves_the_plan():
     accepted = compiled(requested_optional=["tickets"],
-                        lean_review={"verdict": "LEAN_ACCEPT", "removedItems": []})
+                        lean_review={"verdict": "LEAN_ACCEPT", "removedItems": [], "keptItems": [
+                            {"item": "tickets", "reason": "The first wave is dispatched from them"}]})
     plain = compiled(requested_optional=["tickets"])
     assert accepted["planCore"] == plain["planCore"]
     assert accepted["artifacts"] == plain["artifacts"]
@@ -354,6 +355,21 @@ def test_lean_review_cli_emits_applied_review_outside_strict_plan(tmp_path, caps
     review_path.write_text("{bad json")
     assert plan_main(common) == 1
     assert capsys.readouterr().out == ""
+
+
+def test_a_verdict_that_does_not_account_for_every_requested_option_is_refused():
+    # A bare LEAN_ACCEPT names nothing, so it used to fit any request — including an
+    # over-designed one, which then compiled unchanged with a verdict that never looked at it.
+    with pytest.raises(PlanError, match="LEAN_REVIEW_INCOMPLETE"):
+        compiled(requested_optional=["adr", "research-dossier", "tickets"],
+                 lean_review={"verdict": "LEAN_ACCEPT", "removedItems": []})
+    with pytest.raises(PlanError, match="LEAN_ITEM_NOT_REQUESTED"):
+        compiled(lean_review={"verdict": "LEAN_ACCEPT", "removedItems": [],
+                              "keptItems": [{"item": "adr", "reason": "a decision exists"}]})
+    with pytest.raises(PlanError, match="LEAN_REVIEW_INVALID"):
+        compiled(requested_optional=["adr"], lean_review={
+            "verdict": "LEAN_REVISE", "removedItems": [{"item": "adr", "reason": "no decision"}],
+            "keptItems": [{"item": "adr", "reason": "a decision exists"}]})
 
 
 # --- summary --------------------------------------------------------------------------

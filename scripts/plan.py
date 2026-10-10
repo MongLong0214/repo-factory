@@ -209,28 +209,46 @@ def selected_artifacts(profile: Dict[str, Any], requested_optional: List[str]) -
     return list(profile["required"]) + sorted(set(requested_optional))
 
 
-def validate_lean_review(review: Dict[str, Any], profile: Dict[str, Any],
-                         requested_optional: List[str]) -> List[str]:
-    """Phase D can trim requested technical options, never product scope or required work."""
+# Request fields that are product scope. Phase D cuts technical over-design; changing one of
+# these is Hermes's decision (PRD §7 Phase D), not the Bootstrap CTO's.
+PRODUCT_SCOPE = frozenset({"seed", "ownerConstraints", "humanGateFacts", "visibility",
+                           "repositories", "bootstrapProfile"})
+
+
+def check_lean_review_shape(review: Dict[str, Any]) -> None:
     invalid = sorted(Draft202012Validator(_schema("lean-review.schema.json")).iter_errors(review), key=str)
     if invalid:
         raise PlanError("LEAN_REVIEW_INVALID: " + "; ".join(e.message for e in invalid[:5]))
+
+
+def validate_lean_review(review: Dict[str, Any], profile: Dict[str, Any],
+                         requested_optional: List[str]) -> List[str]:
+    """Phase D can trim requested technical options, never product scope or required work.
+
+    The verdict accounts for every requested optional artifact: kept with what consumes it, or
+    removed with a reason. A bare `LEAN_ACCEPT` names nothing, so it used to fit any request and
+    an over-designed one compiled unchanged under a verdict that never looked at it."""
+    check_lean_review_shape(review)
     verdict = review["verdict"]
     if verdict in ("CEO_DECISION_REQUIRED", "OWNER_DECISION_REQUIRED"):
         raise PlanError(f"{verdict}: planning requires that decision before any external write")
     removed = [row["item"] for row in review["removedItems"]]
+    kept = [row["item"] for row in review.get("keptItems", [])]
     if verdict == "LEAN_ACCEPT" and removed or verdict == "LEAN_REVISE" and not removed:
         raise PlanError(f"LEAN_REVIEW_CONTRADICTION: {verdict} conflicts with removedItems")
-    if len(removed) != len(set(removed)):
-        raise PlanError("LEAN_REVIEW_INVALID: removedItems contains duplicates")
-    product_scope = {"seed", "ownerConstraints", "humanGateFacts", "visibility",
-                     "repositories", "bootstrapProfile"}
-    outside_options = sorted((set(removed) - set(profile["optional"])) | (set(removed) & product_scope))
+    named = removed + kept
+    if len(named) != len(set(named)):
+        raise PlanError("LEAN_REVIEW_INVALID: an item appears more than once across removedItems and keptItems")
+    outside_options = sorted((set(removed) - set(profile["optional"])) | (set(removed) & PRODUCT_SCOPE))
     if outside_options:
         raise PlanError(f"LEAN_SCOPE_CHANGE: CTO cannot remove product scope or required artifacts: {outside_options}")
-    not_requested = sorted(set(removed) - set(requested_optional))
+    not_requested = sorted(set(named) - set(requested_optional))
     if not_requested:
         raise PlanError(f"LEAN_ITEM_NOT_REQUESTED: {not_requested}")
+    unreviewed = sorted(set(requested_optional) - set(named))
+    if unreviewed:
+        raise PlanError(f"LEAN_REVIEW_INCOMPLETE: the review does not account for requested optional "
+                        f"artifacts {unreviewed}; keep each with what consumes it or remove it with a reason")
     return [item for item in requested_optional if item not in removed]
 
 
