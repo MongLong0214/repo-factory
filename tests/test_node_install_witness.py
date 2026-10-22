@@ -156,8 +156,8 @@ def test_the_rendered_steps_install_the_pinned_dependency_and_run_it(bin_dir, tm
     assert installed["version"] == PINNED
     assert resolves(tree, env)
     # The dependency's own code ran under `npm test`: the skeleton's test and the fixture's.
-    assert re.search(r"^# pass 2$", ran[1][2], re.MULTILINE), ran[1][2][-2000:]
-    assert re.search(r"^# fail 0$", ran[1][2], re.MULTILINE)
+    assert re.search(r"^(?:#|ℹ) pass 2$", ran[1][2], re.MULTILINE), ran[1][2][-2000:]
+    assert re.search(r"^(?:#|ℹ) fail 0$", ran[1][2], re.MULTILINE)
     # Installed from the lock, not re-resolved; and npm wrote to the isolated cache, not the host's.
     assert json.loads((tree / "package-lock.json").read_text()) == json.loads(
         (FIXTURE / "package-lock.json").read_text())
@@ -189,6 +189,17 @@ def test_a_failed_install_is_not_followed_by_steps_that_count_as_success(bin_dir
 
 WITNESSES = ("test_the_rendered_steps_install_the_pinned_dependency_and_run_it",
              "test_a_failed_install_is_not_followed_by_steps_that_count_as_success")
+
+
+@pytest.mark.parametrize("prefix", ["#", "ℹ"])
+def test_install_witness_accepts_both_node_summary_formats(prefix, tmp_path, monkeypatch):
+    original = run_job
+    def with_summary_format(*args):
+        return [(cmd, code, re.sub(r"^(?:#|ℹ) (pass|fail) (\d+)$",
+                                  rf"{prefix} \1 \2", output, flags=re.MULTILINE))
+                for cmd, code, output in original(*args)]
+    monkeypatch.setitem(globals(), "run_job", with_summary_format)
+    test_the_rendered_steps_install_the_pinned_dependency_and_run_it(RUNTIMES[0], tmp_path)
 
 
 def run_witnesses(tmp_path: Path, configured: str):

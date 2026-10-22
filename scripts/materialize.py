@@ -15,6 +15,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from render_ci import available_stacks, effective_values, render
+from secret_screen import screen_text
 
 __all__ = ["materialize", "MANIFEST_PATH", "CI_PATH", "SKELETONS", "ARTIFACT_EVIDENCE",
            "SPEC_PATH", "ADR_PATH", "ACCEPTANCE_PATH", "ROLLBACK_PATH", "artifact_coverage"]
@@ -310,6 +311,7 @@ def materialize(
     remote_owner: str,
 ) -> Dict[str, str]:
     """path → content. 스택을 모르면 CI 를 만들지 않는다(§14.1) — 조용히 Node 로 대체하지 않는다."""
+    screen_text(seed, "project seed")
     project_id = manifest["projectId"]
     commands = manifest["verificationCommands"]
     files = {
@@ -343,4 +345,6 @@ def materialize(
         files[ACCEPTANCE_PATH] = _acceptance(project_id, commands)
     if "rollback-strategy" in wanted:
         files[ROLLBACK_PATH] = _rollback(project_id)
+    for text in files.values():
+        screen_text(text, "generated file")
     return files

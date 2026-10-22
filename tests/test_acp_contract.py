@@ -89,9 +89,9 @@ def test_the_pinned_commit_is_the_one_being_checked_against():
     head = subprocess.run(["git", "-C", str(ACP_SRC.parent), "rev-parse", "HEAD"],
                           capture_output=True, text=True).stdout.strip()
     if head != LOCK["commit"]:
-        pytest.skip(
+        pytest.fail(
             f"control-plane checkout is at {head[:12]}, lock pins {LOCK['commit'][:12]}. "
-            "CI clones the pinned commit; a local checkout may legitimately differ."
+            "Set ACP_SRC to the pinned checkout; compatibility against another revision must be explicit."
         )
 
 
@@ -247,13 +247,9 @@ def test_the_control_plane_still_refuses_a_result_that_claims_activation():
 
 # --- the fields a generated repository must carry for the control plane to use it -------
 
-def test_the_manifest_declares_its_ci_workflow_as_a_first_activation():
-    # Without ciWorkflows the control plane cannot attribute the repository's project-ci: the
-    # check reads as `unapproved` and post-merge verification never passes. The digest cannot be
-    # filled here — approval belongs to activation — so the pair states "not approved yet"
-    # explicitly. `approvedDigest: null` on its own does not parse, deliberately: it used to mean
-    # both "not approved yet" and "anything is fine", and a manifest could activate cleanly while
-    # being unable to ever merge.
+def test_the_manifest_pins_the_workflow_bytes_approved_with_the_final_bundle():
+    # The owner approves the complete bundle. Activation verifies the workflow bytes against
+    # that approval; null would leave the first work without trusted CI evidence.
     compiled = compile_plan(request_for("SIMPLE"), VER, stack="node", ci_values=CI_VALUES,
                             operation_id="11111111-2222-3333-4444-555555555555")
     workflows = compiled["projectManifest"]["ciWorkflows"]
@@ -262,8 +258,9 @@ def test_the_manifest_declares_its_ci_workflow_as_a_first_activation():
         "path": ".github/workflows/project-ci.yml",
         "checkName": "project-ci",
         "repositoryRole": "primary",
-        "approvedDigest": None,
-        "unapprovedFirstActivation": True,
+        "approvedDigest": "sha256:" + __import__("hashlib").sha256(
+            compiled["files"][".github/workflows/project-ci.yml"].encode()).hexdigest(),
+        "unapprovedFirstActivation": False,
     }]
     assert run_check("acp-manifest-check.mts", compiled["projectManifest"])["allowed"] is True
 

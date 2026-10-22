@@ -26,7 +26,7 @@ RETIRED_ENTRYPOINTS = [
     "install-governance.py", "run-canary.py", "autopilot.py", "merge-broker.py",
 ]
 
-PIPELINE = ["lean.py", "plan.py", "apply.py", "publish.py", "result.py"]
+PIPELINE = ["bootstrap.py", "stage_skill.py"]
 
 COMMAND_BLOCK = re.compile(r"```(?:bash|sh|console)\n(.*?)```", re.DOTALL)
 SCRIPT_CALL = re.compile(r"scripts/([A-Za-z0-9_\-]+\.py)")
@@ -86,7 +86,7 @@ def test_the_skill_description_does_not_promise_the_retired_runtime():
 # --- the boundary the documents claim ---------------------------------------------------
 
 PIPELINE_MODULES = ["plan", "apply", "publish", "result", "materialize", "render_ci",
-                    "canonical", "github_port"]
+                    "canonical", "github_port", "bootstrap", "secret_screen"]
 RETIRED_MODULES = {"phase_gate", "phase-gate", "create_issues", "create-issues",
                    "verify_citations", "verify-citations", "install_governance",
                    "install-governance", "run_canary", "run-canary", "autopilot",

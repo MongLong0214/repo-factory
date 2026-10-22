@@ -215,6 +215,9 @@ def publish_files(
             f"publish target is not empty: {workdir}. The genesis commit must contain the planned "
             "set and nothing else, and `git add -A` cannot tell the difference."
         )
+    from secret_screen import screen_text
+    for content in files.values():
+        screen_text(content, "publish file")
     workdir.mkdir(parents=True, exist_ok=True)
     for path, content in sorted(files.items()):
         target = workdir / path
@@ -237,11 +240,10 @@ def publish_files(
         ["git", "init", "-q", "-b", release_branch],
         ["git", "config", "user.name", author_name],
         ["git", "config", "user.email", author_email],
-        # 서명·트레일러 훅이 이 커밋에 끼어들지 않게 한다. 생성 저장소의 첫 커밋은
-        # 공장이 만든 정확한 바이트여야 하고, 훅이 덧붙인 것이어서는 안 된다.
+        # Hooks remain enabled; read committed bytes back before any push.
         ["git", "config", "commit.gpgsign", "false"],
         ["git", "add", "-A"],
-        ["git", "commit", "-q", "--no-verify", "-m", message],
+        ["git", "commit", "-q", "-m", message],
     ])
 
     # 푸시 **전에** 확인한다. 뒤에 두면 이미 올라간 것을 두고 "달랐다" 고 말하게 되고,
