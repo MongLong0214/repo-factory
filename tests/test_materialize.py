@@ -130,6 +130,20 @@ def test_readme_and_agents_both_list_the_verification_commands():
         assert "npm test" in result["files"][path]
 
 
+@pytest.mark.parametrize("field", ["dependencies", "devDependencies"])
+def test_node_install_is_retained_when_the_generated_package_has_dependencies(field, monkeypatch):
+    original = SKELETONS["node"]
+    def with_dependency(*args):
+        files = original(*args)
+        package = json.loads(files["package.json"])
+        package[field] = {"example": "1.0.0"}
+        files["package.json"] = json.dumps(package)
+        return files
+    monkeypatch.setitem(SKELETONS, "node", with_dependency)
+    result = compiled(stack="node")
+    assert "run: npm install" in result["files"][CI_PATH]
+
+
 def test_the_file_set_is_stable_across_two_compilations():
     first, second = compiled(stack="node", ci_values=CI_VALUES), compiled(stack="node", ci_values=CI_VALUES)
 

@@ -62,11 +62,18 @@ def _readme(repository_name: str, seed: str, commands: List[Dict[str, Any]]) -> 
     lines = [
         f"# {repository_name}",
         "",
+        "Status: scaffold — features below are planned and are not implemented yet.",
+        "",
+        "## Target features",
+        "",
         seed.strip(),
+        "",
+        "Target features become usable only after the corresponding slice is implemented and",
+        "verified against its seeded issue and milestone acceptance criteria.",
         "",
         "## Verification",
         "",
-        "These are the commands CI runs and the control plane admits a candidate against.",
+        "These commands verify the bootstrap scaffold only; they do not verify the planned features.",
         "They are declared in `.agent-control-plane/project.json`; this list is a copy for",
         "readers, and the manifest is the contract.",
         "",
@@ -77,8 +84,7 @@ def _readme(repository_name: str, seed: str, commands: List[Dict[str, Any]]) -> 
         "## Branches",
         "",
         "`main` carries release history. `dev` is the integration branch and the default.",
-        "Work lands through `feature/*`, `task/*`, `fix/*`, `release/*` and `hotfix/*` with the",
-        "bases and targets the manifest declares.",
+        "Use `feature/*`, `task/*`, `fix/*`, `release/*` and `hotfix/*` for topic branches.",
         "",
     ]
     return "\n".join(lines)
@@ -89,9 +95,7 @@ def _agents(repository_name: str, commands: List[Dict[str, Any]], commitlore_mod
     lines = [
         f"# {repository_name} — working rules",
         "",
-        "Project-local only. Session identity, provider routing, review assignment and merge",
-        "authority are not recorded here; they belong to the control plane and would rot in two",
-        "places if copied.",
+        "Project-local development and verification rules.",
         "",
         "## Layout",
         "",
@@ -107,18 +111,17 @@ def _agents(repository_name: str, commands: List[Dict[str, Any]], commitlore_mod
         "",
         "## CommitLore",
         "",
-        f"CommitLore is `{commitlore_mode}` for this repository. After cloning, run",
+        f"CommitLore is `{commitlore_mode}` for this repository. When initialization is needed, run",
         "`commitlore init --mcp-scope none`, then `commitlore doctor` in this clone.",
         "Decision records live in",
         "commit trailers; Git does not carry active hooks into a fresh clone.",
         "",
         "## Rules",
         "",
-        "- Do not weaken a verification command, a workflow, or the manifest in the same change",
-        "  that those artifacts are judging. The control plane pins the previously approved",
-        "  contract, so a self-weakening change is judged by the contract it tried to replace.",
-        "- Branch from the base the manifest declares for that branch pattern, not from wherever",
-        "  the tree happens to sit.",
+        "- Do not weaken verification commands, workflow or manifest to make the same change pass.",
+        "- Verify legitimate contract changes under the existing approved contract. After separate approval,",
+        "  the new contract applies from the next run.",
+        "- Use `dev` for integration and `main` for releases.",
         "",
     ]
     return "\n".join(lines)
@@ -157,12 +160,6 @@ def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]
 
 
 def _spec(repository_name: str, seed: str, commands, *, acceptance_oracle: bool = False) -> str:
-    acceptance = (
-        "head being judged, and the acceptance oracle in `docs/ACCEPTANCE.md` holds."
-        if acceptance_oracle else
-        "head being judged, and the seeded issues' acceptance criteria in their issue bodies "
-        "and milestone descriptions are satisfied."
-    )
     return "\n".join([
         f"# {repository_name} — specification", "",
         "## Goal", "", seed.strip(), "",
@@ -170,9 +167,14 @@ def _spec(repository_name: str, seed: str, commands, *, acceptance_oracle: bool 
         "- Anything the goal above does not name. A non-goal added later is a scope change and",
         "  belongs in a decision record, not here.", "",
         "## Acceptance", "",
-        "The project is acceptable when every verification command below passes at the exact",
-        acceptance, "",
-    ] + [f"- `{c['id']}` — `{' '.join(c['argv'])}`" for c in commands] + [""])
+        "### Bootstrap scaffold", "",
+        "Every verification command below must pass at the exact head being judged.",
+        "A passing scaffold test only verifies the scaffold; it does not verify the planned product features.", "",
+    ] + [f"- `{c['id']}` — `{' '.join(c['argv'])}`" for c in commands] + [
+        "", "### Product completion", "",
+        "Product completion requires the seeded issues' acceptance criteria in their issue bodies",
+        "and milestone descriptions to be satisfied.",
+    ] + (["The acceptance oracle in `docs/ACCEPTANCE.md` must also hold."] if acceptance_oracle else []) + [""])
 
 
 def _adr(repository_name: str, stack: Optional[str]) -> str:
@@ -334,13 +336,15 @@ def materialize(
             )
         # 골격과 CI 가 **같은 값 하나**를 읽는다. 따로 읽으면 생성물이 자기 CI 와 모순된다.
         values = effective_values(stack, ci_values)
-        files[CI_PATH] = render(stack, values)
         skeleton = SKELETONS.get(stack)
         if skeleton is not None:
             # 소유자는 모든 스켈레톤에 넘어간다. 한때 go 만 받았고 호출부가 `stack == "go"`
             # 로 갈랐는데, 그러면 두 번째 스택이 소유자를 필요로 할 때 고칠 자리가 테이블이
             # 아니라 이 조건문이 된다 — 테이블에 등록하는 것만으로는 부족해지는 형태다.
             files.update(skeleton(repository_name, values, remote_owner))
+        package = json.loads(files["package.json"]) if stack == "node" else None
+        install_dependencies = package is None or bool(package.get("dependencies") or package.get("devDependencies"))
+        files[CI_PATH] = render(stack, values, install_dependencies=install_dependencies)
 
     # 프로파일이 요구한 것만 만든다. §6.1 이 금지하는 것은 형식 충족용 문서 생성이므로,
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.

@@ -59,6 +59,13 @@ def test_node_workflow_installs_dependencies_on_both_declared_runtimes():
     assert workflow.index("actions/setup-node@") < install < test < build
 
 
+def test_install_is_optional_only_for_a_dependency_free_package():
+    workflow = render("node", {}, install_dependencies=False)
+    assert "npm install" not in workflow
+    assert ci_findings(workflow, install_dependencies=False) == []
+    assert "MISSING_INSTALL" in [code for code, _ in ci_findings(workflow)]
+
+
 @pytest.mark.parametrize("stack", ["node", "python", "go", "rust"])
 def test_every_action_is_pinned_to_a_full_sha(stack: str):
     for action, ref in re.findall(r"uses:\s*(\S+)@(\S+)", rendered(stack)):

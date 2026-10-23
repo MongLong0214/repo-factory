@@ -71,6 +71,7 @@ _PRIVATE_VALUE = re.compile("|".join((
     r"\b(?:session|run|actor|room)[_-](?:id[\s:=_-]*)?[\w-]+|\buser[_-]id[\s:=_-]*[\w-]+",
     r"\b(?:actor|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?\s*[:=]\s*[\w/~][^\s,]*",
     r"\b(?:gpt-\d[\w.-]*|claude-(?:sonnet|opus|haiku)[\w.-]*)\b",
+    r"\b(?:ACP|Hermes|Claude Code)\b",
 )), re.IGNORECASE)
 
 
@@ -99,12 +100,18 @@ def _public_product_text(request):
     _screen_public(references, request["seed"])
     requirements = []
     for instruction in intent.get("ownerInstructions", []):
-        _screen_public(instruction, request["seed"])
         # Dated attribution and bootstrap directions belong to the private handoff.
         instruction = re.sub(r"\s*\(owner \d{4}-\d{2}-\d{2}\)", "", instruction, flags=re.IGNORECASE)
         for sentence in re.split(r"(?<=[.!?])\s+", instruction):
             if not re.search(r"\b(?:create|bootstrap|provision|dispatch)\b.*\b(?:ACP|Repo Factory|CTO|Hermes|Buzz|session|room|identity)\b|^Motivation:",
                              sentence, re.IGNORECASE):
+                # Repository creation conditions are not capabilities or restrictions of the product.
+                if re.search(r"^(?:Name|(?:Repository|Repo) name|Visibility)\s*:|"
+                             r"^(?:Public|Private)\s+(?:GitHub\s+)?(?:repository|repo)\b|"
+                             r"^(?:The\s+)?(?:repository|repo)\s+(?:must|should)\s+be\s+(?:public|private)\b|"
+                             r"^(?:Create|Name|Rename)\b.*\b(?:repository|repo)\b", sentence, re.IGNORECASE):
+                    continue
+                _screen_public(sentence, request["seed"])
                 requirements.append(sentence)
     sections = [summary]
     if references:
@@ -176,7 +183,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     values = effective_values("node", ci_values)
     if (values["INSTALL_CMD"] != "npm install" or values["TEST_CMD"] != "npm test"
             or values["BUILD_CMD"] != "node --check index.js"):
-        raise ValueError("UNSUPPORTED_VERIFICATION: CI commands must run the seeded install, tests and syntax check")
+        raise ValueError("UNSUPPORTED_VERIFICATION: CI commands must match the seeded tests and syntax check")
     files[MANIFEST_PATH] = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     # Regenerate local guidance from the same normalized commands and CommitLore policy.
     from materialize import _agents, _readme
@@ -213,7 +220,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         screen_text(text, "genesis file")
         _screen_public(path)
         _screen_public(text)
-    _screen_public({k: v for k, v in bundle.items() if k not in ("files", "productIntent")})
+    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")})
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
     normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle}, acp_src)
     identity = manifest["repositories"][0]["remote"]
