@@ -6,6 +6,8 @@ import importlib
 import json
 import os
 from pathlib import Path
+import posixpath
+import re
 import subprocess
 import sys
 
@@ -45,6 +47,115 @@ def require_acp():
         pytest.fail("ACP_SRC is required for genesis contract tests; set it to the pinned ACP src directory")
     if not (ACP / "bootstrap/genesis-bundle.ts").is_file() or not (ACP.parent / "node_modules/.bin/tsx").is_file():
         pytest.fail("ACP_SRC must contain the pinned genesis-bundle.ts and installed tsx")
+
+
+def public_texts(plan):
+    bundle = plan["genesis"]
+    return {
+        **{entry["path"]: base64.b64decode(entry["contentBase64"]).decode("utf-8")
+           for entry in bundle["files"]},
+        **{key: json.dumps(bundle[key], ensure_ascii=False)
+           for key in ("commitMessage", "labels", "issues", "milestones")},
+    }
+
+
+@pytest.mark.parametrize("profile", ["SIMPLE", "STANDARD", "GUARDED"])
+def test_emitted_text_references_only_files_present_in_the_bundle(profile):
+    request = {**copy.deepcopy(REQUEST), "bootstrapProfile": profile}
+    plan = compile_bundle(request)
+    files = {entry["path"] for entry in plan["genesis"]["files"]}
+    # Include prose, manifest/CI paths, command arguments and source imports. Branch
+    # globs and remote action identifiers are not repository file references.
+    path_pattern = r"(?<![\w./:-])(?:\.{1,2}/)?(?:\.?[\w-]+/)*[\w.-]+\.(?:md|json|ya?ml|[cm]?js|py|toml|go|rs)\b"
+    for source, text in public_texts(plan).items():
+        for match in re.finditer(path_pattern, text):
+            target = match.group()
+            if target.startswith(("./", "../")):
+                target = posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+            assert target in files, f"{source} references absent {target}"
+    if profile == "STANDARD":
+        prd = public_texts(plan)["docs/PRD.md"]
+        assert "docs/ACCEPTANCE.md" not in prd
+        assert "issue bodies" in prd and "milestone descriptions" in prd
+        assert "npm test" in prd
+    elif profile == "GUARDED":
+        assert "`docs/ACCEPTANCE.md`" in public_texts(plan)["docs/PRD.md"]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_verbatim_conversation_is_private_but_reaches_the_resident_handoff(structured):
+    request = copy.deepcopy(REQUEST)
+    request["bootstrapProfile"] = "STANDARD"
+    request["seed"] = "PRIVATE-CONVERSATION-눈사람-雪: 내 말 그대로. https://example.org/product"
+    if structured:
+        request["productIntent"] = {
+            "summary": "A README verification tool.", "references": ["https://example.org/product"],
+            "ownerInstructions": ["Check the whole README (owner 2026-10-10).",
+                                  "Report user-visible mismatches without leaking the parent environment.",
+                                  "Create through ACP and Repo Factory; no manual room, identity or CTO."]}
+    original = copy.deepcopy(request)
+    plan = compile_bundle(request)
+    for location, text in public_texts(plan).items():
+        assert request["seed"] not in text, location
+        assert "PRIVATE-CONVERSATION" not in text and "눈사람" not in text, location
+        assert "owner 2026-10-10" not in text and "no manual room" not in text, location
+    if structured:
+        for location in ("README.md", "docs/PRD.md", "issues", "milestones"):
+            assert "A README verification tool." in public_texts(plan)[location]
+            assert "Check the whole README" in public_texts(plan)[location]
+            assert "user-visible mismatches" in public_texts(plan)[location]
+    assert request == original
+    assert request["seed"] in plan["summary"]
+    assert request["seed"] in plan["genesis"]["productIntent"]["summary"]
+    checked = acp_check(plan)
+    handoff = checked["outputs"]["value"]["handoff"]
+    decision = json.loads(handoff["recentDecisions"][0])
+    assert request["seed"] in decision["productIntent"]["summary"]
+    assert "https://example.org/product" in decision["productIntent"]["references"]
+    if structured:
+        assert decision["productIntent"]["ownerInstructions"] == request["productIntent"]["ownerInstructions"]
+
+
+PRIVATE_MARKERS = [
+    "/Users/private-owner/project", "/home/private-owner/project", "/tmp/private-runtime/project",
+    "C:\\Users\\private-owner\\project", "~/private-project",
+    "run_284fdfe39d4a405b9b763b10", "session-abcdef012345", "actor_id: private-owner",
+    "11111111-2222-3333-4444-555555555555", "1718881034", "model: gpt-6",
+    "runtime: private-provider", "environment: private-machine",
+]
+
+
+@pytest.mark.parametrize("marker", PRIVATE_MARKERS)
+def test_private_values_in_seed_never_reach_public_text(marker):
+    request = {**copy.deepcopy(REQUEST), "seed": "Owner conversation: " + marker}
+    plan = compile_bundle(request)
+    assert marker in plan["genesis"]["productIntent"]["summary"]
+    assert all(marker not in text for text in public_texts(plan).values())
+
+
+@pytest.mark.parametrize("surface", ["summary", "reference", "instruction", "commit", "issue", "milestone", "label"])
+@pytest.mark.parametrize("marker", PRIVATE_MARKERS)
+def test_explicit_public_text_refuses_private_values_without_echoing_them(surface, marker):
+    request = copy.deepcopy(REQUEST)
+    request["productIntent"] = {"summary": "A README tool.", "references": [], "ownerInstructions": []}
+    if surface == "summary":
+        request["productIntent"]["summary"] = marker
+    elif surface == "reference":
+        request["productIntent"]["references"] = [marker]
+    elif surface == "instruction":
+        request["productIntent"]["ownerInstructions"] = ["Keep the product simple. " + marker]
+    else:
+        request["genesis"] = {
+            "commitMessage": marker if surface == "commit" else "chore: initialize",
+            "labels": [{"name": "enhancement", "color": "a2eeef",
+                        "description": marker if surface == "label" else "Product development"}],
+            "milestones": [{"key": "m", "title": "First increment",
+                            "description": marker if surface == "milestone" else "Implement the product."}],
+            "issues": [{"key": "i", "title": "Implement the product", "labels": ["enhancement"],
+                        "milestoneKey": "m", "body": marker if surface == "issue" else "Implement the product."}]}
+    with pytest.raises(ValueError, match="PUBLIC_TEXT") as caught:
+        compile_bundle(request)
+    assert marker not in str(caught.value)
 
 
 def test_bundle_is_inline_and_byte_digests_match_acp_normalization():

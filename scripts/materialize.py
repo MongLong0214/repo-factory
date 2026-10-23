@@ -156,7 +156,13 @@ def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]
     return satisfied, missing
 
 
-def _spec(repository_name: str, seed: str, commands) -> str:
+def _spec(repository_name: str, seed: str, commands, *, acceptance_oracle: bool = False) -> str:
+    acceptance = (
+        "head being judged, and the acceptance oracle in `docs/ACCEPTANCE.md` holds."
+        if acceptance_oracle else
+        "head being judged, and the seeded issues' acceptance criteria in their issue bodies "
+        "and milestone descriptions are satisfied."
+    )
     return "\n".join([
         f"# {repository_name} — specification", "",
         "## Goal", "", seed.strip(), "",
@@ -165,7 +171,7 @@ def _spec(repository_name: str, seed: str, commands) -> str:
         "  belongs in a decision record, not here.", "",
         "## Acceptance", "",
         "The project is acceptable when every verification command below passes at the exact",
-        "head being judged, and the acceptance oracle in `docs/ACCEPTANCE.md` holds.", "",
+        acceptance, "",
     ] + [f"- `{c['id']}` — `{' '.join(c['argv'])}`" for c in commands] + [""])
 
 
@@ -340,7 +346,8 @@ def materialize(
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.
     wanted = set(artifacts or [])
     if "compact-prd-or-equivalent-specification" in wanted:
-        files[SPEC_PATH] = _spec(repository_name, seed, commands)
+        files[SPEC_PATH] = _spec(repository_name, seed, commands,
+                                 acceptance_oracle="acceptance-oracle" in wanted)
     if "architecture-adr" in wanted:
         files[ADR_PATH] = _adr(repository_name, stack)
     if "acceptance-oracle" in wanted:

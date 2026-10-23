@@ -93,6 +93,11 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
 
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
+Public files, backlog text and the commit message carry neutral structured product requirements,
+never the conversation seed or private identities, local paths or runtime details. With no
+structured product intent, use a neutral backlog requirement. The verbatim seed, references
+and original instructions stay in the PLAN summary and non-repository `genesis.productIntent`;
+they must reach the resident CTO handoff and must not be copied into committed files.
 CommitLore is preferred unless the bundle actually includes its required setup.
 ACP refusals report fixed safe field categories such as `ACP_SCHEMA: manifest.projectId`
 (also `manifest.verificationCommands`, `manifest.ciWorkflows`, `manifest.branchProfile`,
