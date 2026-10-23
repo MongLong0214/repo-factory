@@ -124,7 +124,7 @@ echo "── 7. CI on the pushed head"
 # 생성 저장소가 자기 CI 를 통과하는지까지가 증거다. 여기 없으면 Result 는 "파일을 올렸다"
 # 까지만 말하고, 그 파일들이 도는지는 아무도 확인하지 않은 채로 남는다.
 python3 - "$OUT" "$OWNER/$NAME" "$HEAD_SHA" "github:$OWNER/$NAME" <<'CIPY'
-import json, subprocess, sys, time
+import hashlib, json, subprocess, sys, time
 out, slug, head, identity = sys.argv[1:5]
 deadline = time.monotonic() + 900
 run = None
@@ -145,11 +145,10 @@ if run is None:
 print(f"   project-ci {run['conclusion']} {run['url']}")
 if run["conclusion"] != "success":
     sys.exit(1)
-workflow = subprocess.run(["git", "-C", f"{out}/verify", "hash-object",
-                           ".github/workflows/project-ci.yml"],
-                          capture_output=True, text=True, check=True).stdout.strip()
+with open(f"{out}/verify/.github/workflows/project-ci.yml", "rb") as handle:
+    workflow = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
 json.dump([{"repositoryIdentity": identity, "checkName": "project-ci", "head": head,
-            "conclusion": "PASS", "workflowDigest": f"git-blob:{workflow}",
+            "conclusion": "PASS", "workflowDigest": workflow,
             "runUrl": run["url"]}],
           open(f"{out}/ci-evidence.json", "w"), ensure_ascii=False, indent=2)
 CIPY

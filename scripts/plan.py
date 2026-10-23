@@ -361,11 +361,8 @@ def project_manifest(
         # 워크플로를 선언하지 않으면 제어평면이 그 저장소의 project-ci 를 귀속시키지 못하고,
         # 체크는 `unapproved` 로 읽혀 post-merge 검증이 통과하지 않는다.
         #
-        # digest 는 여기서 채울 수 없다 — 승인은 활성화 시점의 제어평면 몫이다. 그래서
-        # `approvedDigest: null` 에 `unapprovedFirstActivation: true` 를 함께 낸다. 스키마가
-        # 이 둘을 한 상태씩만 표현하게 강제하므로 null 단독은 파싱되지도 않는다: 예전에는
-        # null 하나가 "아직 승인 안 됨" 과 "아무거나 좋다" 를 동시에 뜻해서, 활성화는
-        # 통과하는데 머지는 영영 못 하는 manifest 가 나왔다.
+        # Filled from the rendered workflow bytes below, before files/core are returned.
+        # The final plan bundle approves those bytes; activation must verify that digest.
         "ciWorkflows": (
             [
                 {
@@ -425,13 +422,17 @@ def compile_plan(
     owner = remote_owner(request)
     manifest = project_manifest(request, verification_commands, stack=stack,
                                 commitlore_mode=profile["commitlore"]["default"])
-    manifest_digest = digest(manifest)
     verification_digest = digest(verification_commands)
 
     # 렌더링은 Plan 시점이다. Apply 가 렌더하면 Plan 의 contentDigest 는 아직 존재하지
     # 않는 바이트를 가리키고, 승인은 무엇을 승인했는지 말할 수 없게 된다.
     files = materialize(manifest, seed=request["seed"], stack=stack,
                         ci_values=ci_values, artifacts=artifacts, remote_owner=owner)
+    if CI_PATH in files:
+        manifest["ciWorkflows"][0].update(approvedDigest=content_digest(files[CI_PATH]),
+                                          unapprovedFirstActivation=False)
+        files[MANIFEST_PATH] = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    manifest_digest = digest(manifest)
     gaps: List[str] = []
 
     # 프로파일이 요구한 산출물이 실제로 만들어졌는지 본다. 이 검사가 없으면 `required`

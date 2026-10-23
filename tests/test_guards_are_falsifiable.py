@@ -417,7 +417,7 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "no command block tells a reader to run the retired product",
         "file": "SKILL.md",
-        "mutate": ("python3 scripts/result.py --input result-input.json",
+        "mutate": ("python3 scripts/bootstrap.py --request request.json",
                    "python3 scripts/phase-gate.py 4 --tier L"),
         "killed_by": ["tests/test_published_surface.py"],
     },
@@ -732,7 +732,7 @@ GUARDS: List[Dict[str, object]] = [
     {
         "name": "unknown owner constraint text is refused by the request schema",
         "file": "schemas/bootstrap-request.schema.json",
-        "mutate": ('"items": { "enum": ["no-public-exposure", "no-paid-plan-change", "no-destructive-replacement", "no-irreversible-naming"] }',
+        "mutate": ('"items": {\n        "enum": [\n          "no-public-exposure",\n          "no-paid-plan-change",\n          "no-destructive-replacement",\n          "no-irreversible-naming"\n        ]\n      }',
                    '"items": { "type": "string", "minLength": 1 }'),
         "killed_by": ["tests/test_slice1_plan.py::test_unknown_owner_constraint_is_refused_with_the_supported_list"],
     },

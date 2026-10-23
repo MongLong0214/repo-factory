@@ -5,26 +5,57 @@
   "description": "What the control plane hands Repo Factory when a PROJECT_BOOTSTRAP run reaches Phase A (PRD §13.1). It carries intent; it does not carry runtime state, because Repo Factory owns no session, provider or scheduling fact.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "runId", "seed", "bootstrapProfile", "priority", "repositories", "visibility", "origin"],
+  "required": [
+    "schema",
+    "runId",
+    "seed",
+    "bootstrapProfile",
+    "priority",
+    "repositories",
+    "visibility",
+    "origin"
+  ],
   "properties": {
-    "schema": { "const": "repo-factory.bootstrap-request.v1" },
-    "runId": { "type": "string", "minLength": 1 },
+    "schema": {
+      "const": "repo-factory.bootstrap-request.v1"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
     "seed": {
       "description": "The natural-language project seed, as the owner or Hermes stated it.",
       "type": "string",
       "minLength": 1
     },
-    "bootstrapProfile": { "enum": ["SIMPLE", "STANDARD", "GUARDED"] },
-    "priority": { "enum": ["CRITICAL", "NORMAL", "LOW"] },
+    "bootstrapProfile": {
+      "enum": [
+        "SIMPLE",
+        "STANDARD",
+        "GUARDED"
+      ]
+    },
+    "priority": {
+      "enum": [
+        "CRITICAL",
+        "NORMAL",
+        "LOW"
+      ]
+    },
     "repositories": {
       "description": "Repository intents. One bootstrap operation may cover more than one repository (PRD §16.4), and each carries its own receipts and partial state.",
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/repositoryIntent" }
+      "items": {
+        "$ref": "#/$defs/repositoryIntent"
+      }
     },
     "visibility": {
-      "description": "Intent only, and this factory finishes only `public`. Public exposure is an owner gate regardless of what this says (PRD \u00a77 Phase F). `private` stays in the enum so the compiler can refuse it with a reason rather than a schema error: every profile plans a branch ruleset, and rulesets on private repositories require GitHub Pro.",
-      "enum": ["private", "public"]
+      "description": "PUBLIC only. Private remains in the input vocabulary so it receives an explicit unsupported refusal; never silently change visibility.",
+      "enum": [
+        "private",
+        "public"
+      ]
     },
     "remoteOwner": {
       "description": "The GitHub account the repositories are created under. Absent means the deployment default. It lives in the request rather than in deployment configuration because the Plan digest has to determine the effect: two identical requests must not compile to the same Plan and then create repositories under different accounts.",
@@ -35,25 +66,175 @@
     "ownerConstraints": {
       "description": "Enforceable owner prohibitions. Free-form text is refused because the factory cannot enforce it.",
       "type": "array",
-      "items": { "enum": ["no-public-exposure", "no-paid-plan-change", "no-destructive-replacement", "no-irreversible-naming"] },
+      "items": {
+        "enum": [
+          "no-public-exposure",
+          "no-paid-plan-change",
+          "no-destructive-replacement",
+          "no-irreversible-naming"
+        ]
+      },
       "default": []
     },
     "humanGateFacts": {
       "description": "Exact owner gate keys already known to require an owner decision: public-exposure, paid-plan-change, destructive-replacement, irreversible-naming (Phase F).",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "default": []
     },
     "origin": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["channel"],
+      "required": [
+        "channel"
+      ],
       "properties": {
         "channel": {
           "description": "Which ingress admitted the request. Channel name only — never the actor value, which is an identity the receipt already binds.",
-          "enum": ["cli", "telegram", "buzz", "mcp"]
+          "enum": [
+            "cli",
+            "telegram",
+            "buzz",
+            "mcp"
+          ]
         },
-        "requestedAt": { "type": "string", "format": "date-time" }
+        "requestedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "productIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "references",
+        "ownerInstructions"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ownerInstructions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "genesis": {
+      "description": "Owner-approved genesis text and backlog; file bytes and branches are compiler-owned.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commitMessage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "color",
+              "description"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{6}$"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "title",
+              "description"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "title",
+              "body",
+              "labels",
+              "milestoneKey"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "body": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "milestoneKey": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -61,9 +242,17 @@
     "repositoryIntent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "name"],
+      "required": [
+        "role",
+        "name"
+      ],
       "properties": {
-        "role": { "enum": ["primary", "secondary"] },
+        "role": {
+          "enum": [
+            "primary",
+            "secondary"
+          ]
+        },
         "name": {
           "description": "Repository name only. A remote is resolved during planning; a name that already exists with different provenance is a RESOURCE_COLLISION rather than a resume (PRD §16.3).",
           "type": "string",

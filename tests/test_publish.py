@@ -95,6 +95,32 @@ def test_it_publishes_exactly_the_planned_paths(tmp_path):
     assert result["branches"] == ["main", "dev"]
 
 
+def test_secret_bytes_are_refused_before_disk_or_git(tmp_path):
+    files = {"README.md": "password=synthetic-secret-123456789"}
+    workdir = tmp_path / "tree"
+    def must_not_run(argv, cwd):
+        pytest.fail("git ran before credential-bearing bytes were refused")
+    with pytest.raises(ValueError, match="SECRET_SCREEN"):
+        publish(workdir, files, [], plan=plan_for(files), runner=must_not_run)
+    assert not workdir.exists()
+
+
+def test_genesis_commit_runs_hooks_and_a_rejecting_hook_stops_the_push(tmp_path):
+    calls = []
+    base = local_runner(calls)
+    def with_rejecting_hook(argv, cwd):
+        if argv[:3] == ["git", "add", "-A"]:
+            hook = cwd / ".git/hooks/pre-commit"
+            hook.write_text("#!/bin/sh\nexit 1\n")
+            hook.chmod(0o755)
+        if argv[:2] == ["git", "commit"]:
+            assert "--no-verify" not in argv
+        return base(argv, cwd)
+    with pytest.raises(PublishError, match="git commit"):
+        publish(tmp_path / "tree", FILES, calls, runner=with_rejecting_hook)
+    assert not calls
+
+
 def test_a_non_empty_target_is_refused_before_anything_is_written(tmp_path):
     # `git add -A` takes whatever is there. One left-over file in the genesis commit and the
     # plan's contentDigest set no longer names the bytes that landed.
