@@ -51,7 +51,7 @@ otherwise RF seeds an implementation issue tied to the owner's idea and first mi
 `verification.json` is a list such as `[{"id":"test","argv":["npm","test"]}]`.
 Optional `--ci-values ci.json` overrides reviewed template values; `--optional` selects
 profile-supported artifacts. Missing artifacts or unsupported verification stop compilation.
-The current ACP adapter admits Node test commands and optional `node --check <seeded-file>`;
+The current ACP adapter admits seeded Node test commands;
 other toolchains need ACP support before this bootstrap path can accept them.
 
 The output **is the PLAN**, not a filename-only handoff. It carries:
@@ -65,8 +65,9 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
 - `branchProfile`: main/dev, default dev, merge_commit, semver. Standard flow is
   feature/* -> dev -> main, plus release/* and hotfix/*. No force pushes or ref replacement.
 - ACP-supported `githubOperations`, in order: create PUBLIC with `autoInit:true` (README on
-  main), protect main, push the genesis commit to branch `genesis`, then ACP opens, verifies
-  and merges the genesis PR into main inside the bootstrap; dev from the merged main, protect
+  main), protect main, push the genesis commit (parent = autoInit head) to branch `genesis`,
+  then ACP opens its PR into main, runs local verification and required CI with Actions provenance,
+  and merges it inside the bootstrap; dev from the merged main, protect
   dev, default dev. The default branch is never pushed directly (owner 2026-10-22: "초기 파일도
   PR로"). No repo-local governance kernel.
 
@@ -98,7 +99,7 @@ before writes; preserve the bundle for retry after ACP support is deployed.
 **Do not say done on PLAN acceptance, a repository URL, parser PASS or Buzz connection.**
 Require ACP's canonical activation result and readbacks establishing all of:
 
-- Repository identity, genesis head and matching main/dev heads; default dev; actual labels,
+- Repository identity, genesis PR head, ACP merge commit and main/dev heads at that merge; default dev; actual labels,
   milestones and issues; exact-head tests and CI under the approved workflow digest.
 - Active manifest digest equal to the submitted normalized manifest, local binding and
   ACP doctor/activation success. Verification and merge authority remain in ACP.

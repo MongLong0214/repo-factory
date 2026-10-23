@@ -36,7 +36,7 @@ from publish import publish_receipt  # noqa: E402
 from result import build_result  # noqa: E402
 
 LOCK = json.loads((SKILL / "governance" / "acp-contract.lock.json").read_text(encoding="utf-8"))
-ACP_SRC = Path(os.environ.get("ACP_SRC", Path.home() / "projects/agent-control-plane/src"))
+ACP_SRC = Path(os.environ["ACP_SRC"]) if os.environ.get("ACP_SRC") else None
 FIXTURES = SKILL / "tests" / "fixtures"
 
 # Skipping a contract check is how a suite goes green having verified nothing about the other
@@ -50,6 +50,8 @@ CI_VALUES = {"RUNTIME_LOWER": "20", "RUNTIME_LATEST": "22", "INSTALL_CMD": "npm 
 
 
 def require_control_plane() -> None:
+    if ACP_SRC is None:
+        pytest.fail("ACP_SRC is required for contract tests; set it to the pinned ACP src directory")
     if ACP_SRC.is_dir() and shutil.which("npx"):
         return
     if ALLOW_SKIP:
@@ -97,11 +99,14 @@ def test_the_pinned_commit_is_the_one_being_checked_against():
 
 def test_the_schema_ids_the_lock_names_are_the_ones_the_control_plane_emits():
     require_control_plane()
-    manifest_source = (ACP_SRC / "contracts" / "manifest.ts").read_text(encoding="utf-8")
-    result_source = (ACP_SRC / "bootstrap" / "repo-factory-result.ts").read_text(encoding="utf-8")
-
-    assert LOCK["schemaIds"]["projectManifest"] in manifest_source
-    assert LOCK["schemaIds"]["repoFactoryResult"] in result_source
+    for key, path in {
+        "projectManifest": "contracts/manifest.ts",
+        "repoFactoryResult": "bootstrap/repo-factory-result.ts",
+        "candidateSnapshot": "snapshot/candidate-snapshot.ts",
+        "bootstrapActivation": "bootstrap/activation.ts",
+        "genesisBundle": "bootstrap/genesis-bundle.ts",
+    }.items():
+        assert LOCK["schemaIds"][key] in (ACP_SRC / path).read_text(encoding="utf-8"), key
 
 
 # --- the manifest, which is what a generated repository actually carries ----------------

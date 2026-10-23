@@ -174,7 +174,8 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     return {
         "summary": request["seed"] + "\n\n" + body,
         "dependencies": [], "repositoryIntent": [identity],
-        "verificationIntent": ["Run declared tests and trusted CI at the genesis head before activation"],
+        "verificationIntent": ["Run declared local tests and required CI with Actions provenance at the genesis PR head "
+                               "before ACP merges into main; verify merged main before activation"],
         "knownConflicts": [], "risks": [], "removedOverengineering": ["repo-local runtime and extra approval receipts"],
         "bootstrapOperationId": operation_id,
         "requestDigest": digest(request, volatile="strip"),

@@ -4,7 +4,8 @@ Owner decisions (2026-10-22, amended 23:5xZ): genesis goes through a PR — NEVE
 (the CEO's standing rule "default branch direct push ... 절대 금지" stands; owner chose "초기 파일도 PR로").
 The repository is created with autoInit=true (README on main); the genesis commit is pushed to branch `genesis`
 (parent = the autoInit head), a PR genesis -> main is opened, verified (the manifest's local commands + CI at the
-PR head) and merged by ACP inside the bootstrap (merge commit); then `dev` is created from the merged main and becomes
+PR head, including required checks with Actions provenance) and merged by ACP inside the bootstrap (merge commit);
+then `dev` is created from the merged main and becomes
 the GitHub default branch;
 branches main + dev, standard git flow (feature/* -> dev -> main; release/*, hotfix/*); PUBLIC repositories only;
 no repo-local governance kernel (ACP is the sole merge/verification authority); issues + milestones + labels are created
@@ -23,7 +24,11 @@ PLAN.genesis = {
   "productIntent": { "summary": str, "references": [str], "ownerInstructions": [str] }   # carried into handoff
 }
 genesisDigest = "sha256:" + sha256(canonical JSON of PLAN.genesis with keys sorted, no whitespace) — computed by ACP's
-schema-normalized parser; Repo Factory must produce the identical normalized form (test digest equality, not just parsing).
+parseGenesis parser; Repo Factory must produce the identical normalized form (test digest equality, not just parsing).
+
+RF emits six operations: create repository, protect main, push genesis, create dev, protect dev, set default dev.
+ACP's planForSubmission inserts PR open/verify/merge after push genesis and backlog creation after set default dev.
+preflightGitHubOperations accepts that expanded execution plan; the unexpanded six operations are submission input.
 
 The project manifest in the same PLAN must:
 - branchProfile: longLived ["main","dev"], defaultBranch "dev", mergeStrategy "merge_commit", releaseTagPolicy "semver".
@@ -31,3 +36,4 @@ The project manifest in the same PLAN must:
   approvedDigest = the bundle file's sha256 for that workflow path (ACP SHA-256 over bytes; never git-blob ids).
 - commitlore: { "mode": "required" } only if the genesis includes what CommitLore needs; otherwise "preferred".
 Secret screen: ACP refuses a bundle whose file bytes or issue/milestone text contain credential-shaped content.
+RF additionally requires labels, milestones and issues to each be non-empty.

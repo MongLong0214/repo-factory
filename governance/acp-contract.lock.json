@@ -1,19 +1,32 @@
 {
   "$comment": "The control-plane commit this repository's contract tests run against. Pinned, because a contract check whose other side moves is not a check \u2014 it is a report about whatever happened to be checked out. CI clones this exact commit; a mismatch is a failure, not a skip.",
   "repository": "https://github.com/MongLong0214/agent-control-plane",
-  "commit": "a4c402c1859f1040139efb9292c9517f9ef8368a",
-  "pinnedAt": "2026-10-23",
+  "commit": "f59a31b2c8f1da4b2d82ac4b72cadf7e9b9935d1",
+  "pinnedAt": "2026-10-23T08:29:47Z",
   "schemaIds": {
     "projectManifest": "agent-control-plane.project.v2",
     "repoFactoryResult": "repo-factory.result.v2",
     "candidateSnapshot": "agent-control-plane.candidate-snapshot.v1",
-    "bootstrapActivation": "agent-control-plane.bootstrap-activation.v1"
+    "bootstrapActivation": "agent-control-plane.bootstrap-activation.v1",
+    "genesisBundle": "acp.genesis-bundle.v1"
   },
   "entryPoints": {
     "parseRepoFactoryResult": "src/bootstrap/repo-factory-result.ts",
     "assertPortableManifest": "src/contracts/manifest.ts",
     "manifestDigest": "src/contracts/manifest.ts",
     "planForSubmission": "src/bootstrap/bootstrap-plan.ts",
-    "githubOperationSchema": "src/bootstrap/repo-factory-github.ts"
+    "projectManifestSchema": "src/contracts/manifest.ts",
+    "githubOperationSchema": "src/bootstrap/repo-factory-github.ts",
+    "genesisRepositoryOperations": "src/bootstrap/repo-factory-github.ts",
+    "preflightGitHubOperations": "src/bootstrap/repo-factory-github.ts",
+    "parseGenesis": "src/bootstrap/genesis-bundle.ts",
+    "genesisDigest": "src/bootstrap/genesis-bundle.ts",
+    "plannedBootstrapOutputs": "src/bootstrap/bootstrap-plan.ts",
+    "executablePlanOf": "src/bootstrap/bootstrap-plan.ts",
+    "repoFactoryPlanFixtureSchema": "src/bootstrap/repo-factory-producer.ts",
+    "parseGitHubIdentity": "src/bootstrap/github-write-port.ts",
+    "digestOf": "src/core/digest.ts",
+    "candidateSnapshotSchema": "src/snapshot/candidate-snapshot.ts",
+    "BootstrapActivation": "src/bootstrap/activation.ts"
   }
 }

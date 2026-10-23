@@ -27,14 +27,15 @@ The output includes the full normalized manifest plus `PLAN.genesis` with base64
 SHA-256 digests, labels, milestones and issues. It follows the exact
 [genesis bundle v1 contract](contracts/genesis-bundle-v1.md). Workflow approvedDigest is
 SHA-256 over file bytes, never a git-blob ID. The genesis is one commit on branch `genesis`,
-merged into main by a PR that ACP opens, verifies and merges inside the bootstrap (the public
-repository is created with autoInit=true; the default branch is never pushed directly); dev is
+with the autoInit main head as its parent. ACP opens its PR into main, runs local verification
+and required CI with Actions provenance, and merges it with a merge commit inside the bootstrap
+(the public repository is created with autoInit=true; the default branch is never pushed directly); dev is
 then created from the merged main and becomes the default branch.
 CommitLore is preferred because RF does not seed its hooks/configuration.
 
 Input and outgoing bytes are secret-screened before writing. Git hooks remain enabled.
 Unsupported verification stops compilation before repository creation. Currently this
-ACP adapter admits the seeded Node tests and optional syntax checks; Python/Go/Rust CI
+ACP adapter admits the seeded Node tests; Python/Go/Rust CI
 renderers remain available as library functionality, outside this supported bootstrap path.
 
 ## ACP entry (#19)
@@ -58,8 +59,11 @@ ACP_SRC=/path/to/agent-control-plane/src python3 -m pytest -q
 python3 scripts/stage_skill.py
 ```
 
-Contract tests invoke ACP's own manifestDigest and planForSubmission through tsx. Bundle
-tests compare normalized digests, decode and hash each file, and run the generated tests.
+Contract tests invoke the ACP commit in `governance/acp-contract.lock.json` through tsx.
+ACP's parseGenesis checks normalized digests; planForSubmission expands RF's six operations
+with PR open/verify/merge and backlog steps before producer preflightGitHubOperations.
+Bundle tests also decode and hash each file, run the generated tests, and check ACP refuses
+a direct push to main, a missing PR step and private-key-shaped content. ACP_SRC is required.
 The Node install witness accepts both `# pass N` and `ℹ pass N` summary formats (#57).
 These are local compatibility tests; they do not claim a live activation or first merge.
 

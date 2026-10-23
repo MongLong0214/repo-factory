@@ -12,8 +12,8 @@ SCRIPTS = ("bootstrap.py", "acp_bridge.mts", "plan.py", "canonical.py", "materia
            "render_ci.py", "secret_screen.py", "stage_skill.py")
 
 
-def stage_skill():
-    destination = ROOT / ".installed-skill-staging"
+def stage_skill(destination=None):
+    destination = Path(destination) if destination is not None else ROOT / ".installed-skill-staging"
     if destination.is_symlink():
         raise ValueError("staging destination must not be a symlink")
     if destination.exists():
