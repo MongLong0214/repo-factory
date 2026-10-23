@@ -26,8 +26,10 @@ For a Node repository, a real verification list is `[{"id":"test","argv":["npm",
 The output includes the full normalized manifest plus `PLAN.genesis` with base64 file bytes,
 SHA-256 digests, labels, milestones and issues. It follows the exact
 [genesis bundle v1 contract](contracts/genesis-bundle-v1.md). Workflow approvedDigest is
-SHA-256 over file bytes, never a git-blob ID. The genesis is one commit/direct push into an
-empty public repository created with autoInit=false, main/dev at the same head and default dev.
+SHA-256 over file bytes, never a git-blob ID. The genesis is one commit on branch `genesis`,
+merged into main by a PR that ACP opens, verifies and merges inside the bootstrap (the public
+repository is created with autoInit=true; the default branch is never pushed directly); dev is
+then created from the merged main and becomes the default branch.
 CommitLore is preferred because RF does not seed its hooks/configuration.
 
 Input and outgoing bytes are secret-screened before writing. Git hooks remain enabled.

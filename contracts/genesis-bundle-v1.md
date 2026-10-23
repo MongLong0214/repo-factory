@@ -1,6 +1,11 @@
 # Shared contract: genesis bundle v1 (Repo Factory -> ACP PROJECT_BOOTSTRAP)
 
-Owner decisions (2026-10-22): genesis = ONE direct push into the EMPTY new repository (created with autoInit=false);
+Owner decisions (2026-10-22, amended 23:5xZ): genesis goes through a PR — NEVER a direct push to the default branch
+(the CEO's standing rule "default branch direct push ... 절대 금지" stands; owner chose "초기 파일도 PR로").
+The repository is created with autoInit=true (README on main); the genesis commit is pushed to branch `genesis`
+(parent = the autoInit head), a PR genesis -> main is opened, verified (the manifest's local commands + CI at the
+PR head) and merged by ACP inside the bootstrap (merge commit); then `dev` is created from the merged main and becomes
+the GitHub default branch;
 branches main + dev, standard git flow (feature/* -> dev -> main; release/*, hotfix/*); PUBLIC repositories only;
 no repo-local governance kernel (ACP is the sole merge/verification authority); issues + milestones + labels are created
 so development can start immediately; changing an approved CI workflow later = independent review + CEO CONFIRM.
@@ -8,10 +13,10 @@ so development can start immediately; changing an approved CI workflow later = i
 The bootstrap PLAN carries the bundle INLINE (bytes, not file paths: the receiving CTO has only ACP tools):
 PLAN.genesis = {
   "schema": "acp.genesis-bundle.v1",
-  "commitMessage": str,                       # the single genesis commit on main
+  "commitMessage": str,                       # the single genesis commit on branch `genesis`, merged by PR
   "files": [ { "path": str (repo-relative, no "..", no leading "/"), "mode": "100644"|"100755",
                "contentBase64": str, "sha256": "sha256:<hex of decoded bytes>" } ],
-  "branches": { "main": "main", "integration": "dev" },   # dev is created from the genesis commit
+  "branches": { "main": "main", "integration": "dev", "genesis": "genesis" },  # dev from merged main; default = dev
   "labels": [ { "name": str, "color": "rrggbb", "description": str } ],
   "milestones": [ { "key": str, "title": str, "description": str } ],
   "issues": [ { "key": str, "title": str, "body": str, "labels": [str], "milestoneKey": str|null } ],

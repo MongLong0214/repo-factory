@@ -64,9 +64,11 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
   of the final bundle. Later workflow changes require independent review and CEO CONFIRM.
 - `branchProfile`: main/dev, default dev, merge_commit, semver. Standard flow is
   feature/* -> dev -> main, plus release/* and hotfix/*. No force pushes or ref replacement.
-- ACP-supported `githubOperations`: create PUBLIC with `autoInit:false`, one direct genesis
-  push into the empty repository on main, dev from the same commit, default dev and native
-  protection. No setup PR, additional genesis commit or repo-local governance kernel.
+- ACP-supported `githubOperations`, in order: create PUBLIC with `autoInit:true` (README on
+  main), protect main, push the genesis commit to branch `genesis`, then ACP opens, verifies
+  and merges the genesis PR into main inside the bootstrap; dev from the merged main, protect
+  dev, default dev. The default branch is never pushed directly (owner 2026-10-22: "초기 파일도
+  PR로"). No repo-local governance kernel.
 
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
@@ -87,7 +89,7 @@ The bound BOOTSTRAP_CTO reads `contract_get`, compiles/retrieves the final bundl
 title, category, dependsOn and spec; include the owner's product intent in its spec.
 Use ACP's authenticated mutation envelope and idempotency keys, never fabricated sessions.
 
-ACP performs independent review, CEO CONFIRM, the one genesis push, branch creation,
+ACP performs independent review, CEO CONFIRM, the genesis branch push and genesis PR merge, branch creation,
 backlog projection, verification and activation using its own write ledger, exact target
 checks and readbacks. RF must not call manual git/gh publishing as a fallback. If the
 receiver strips `genesis` or refuses the bundle/CI, report the incompatibility and stop

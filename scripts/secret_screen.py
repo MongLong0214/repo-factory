@@ -12,7 +12,9 @@ PATTERNS = (
     r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
     r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b",
     r"\bxox[baprs]-[A-Za-z0-9-]{12,}\b",
-    r"\b(?:password|passwd|api[_-]?key|access[_-]?token|secret|client[_-]?secret)\b"
+    # Nostr/Buzz private keys (NIP-19 bech32 nsec, checksum not required to refuse).
+    r"\bnsec1[02-9ac-hj-np-z]{20,}\b",
+    r"\b(?:password|passwd|api[_-]?key|access[_-]?token|secret|client[_-]?secret|private[_-]?key)\b"
     r"[\"']?\s*[:=]\s*[\"']?[^\s\"',;}]{8,}",
     r"\b(?:Authorization\s*:\s*)?Bearer\s+[A-Za-z0-9._~+/-]{16,}=*",
     r"https?://[^\s/:]+:[^\s/@]{8,}@",

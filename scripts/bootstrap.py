@@ -127,7 +127,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         "files": [{"path": path, "mode": "100644",
                    "contentBase64": base64.b64encode(text.encode("utf-8")).decode("ascii"),
                    "sha256": content_digest(text)} for path, text in sorted(files.items())],
-        "branches": {"main": "main", "integration": "dev"},
+        "branches": {"main": "main", "integration": "dev", "genesis": "genesis"},
         "labels": backlog.get("labels", [{"name": "enhancement", "color": "a2eeef", "description": "Product development"}]),
         "milestones": backlog.get("milestones", [{"key": "first-product", "title": "First product increment", "description": request["seed"]}]),
         "issues": backlog.get("issues", [{"key": "implement-product", "title": "Implement the owner's product intent",
@@ -135,6 +135,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         "productIntent": intent,
     }
     for rows, key in ((bundle["labels"], "name"), (bundle["milestones"], "key"), (bundle["issues"], "key")):
+        # The project must be developable immediately: an explicitly empty collection erases it.
+        if not rows:
+            raise ValueError("GENESIS_BACKLOG: labels, milestones and issues must each be nonempty")
         if len({row[key] for row in rows}) != len(rows):
             raise ValueError("GENESIS_BACKLOG: duplicate resource key")
     labels = {row["name"] for row in bundle["labels"]}
@@ -147,21 +150,27 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
     normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle}, acp_src)
     identity = manifest["repositories"][0]["remote"]
-    # Strict ACP shapes only. One genesis push to main; ACP creates dev from that head
-    # from genesis.branches, then applies the default setting and native protection.
+    # Strict ACP shapes only, in execution order. Genesis never pushes the default branch (owner
+    # 2026-10-22 "초기 파일도 PR로"; the standing no-default-branch-push rule stands): GitHub's own
+    # initialization puts a README on main, main is protected, the genesis commit goes to its own
+    # branch, and ACP opens, verifies and merges the genesis PR inside the bootstrap. dev is then
+    # created from the merged main, protected, and made the default branch for git flow.
+    def protect(branch):
+        return {"operationId": f"protect-{branch}", "resourceType": "branch-protection",
+                "resourceIdentity": identity + "#" + branch,
+                "desiredState": {"requiredStatusChecks": {"strict": True, "contexts": ["project-ci"]},
+                                 "enforceAdmins": True, "requiredApprovingReviewCount": None,
+                                 "allowForcePushes": False, "allowDeletions": False}}
     operations = [
         {"operationId": "create-repository", "resourceType": "repository", "resourceIdentity": identity,
-         "desiredState": {"visibility": "public", "autoInit": False}},
-        {"operationId": "push-genesis", "resourceType": "branch", "resourceIdentity": identity + "#main"},
+         "desiredState": {"visibility": "public", "autoInit": True}},
+        protect("main"),
+        {"operationId": "push-genesis-branch", "resourceType": "branch", "resourceIdentity": identity + "#genesis"},
+        {"operationId": "create-dev", "resourceType": "branch", "resourceIdentity": identity + "#dev"},
+        protect("dev"),
         {"operationId": "set-default-branch", "resourceType": "setting", "resourceIdentity": identity + "#default-branch",
          "desiredState": {"defaultBranch": "dev"}},
     ]
-    for branch in ("main", "dev"):
-        operations.append({"operationId": f"protect-{branch}", "resourceType": "branch-protection",
-                           "resourceIdentity": identity + "#" + branch,
-                           "desiredState": {"requiredStatusChecks": {"strict": True, "contexts": ["project-ci"]},
-                                            "enforceAdmins": True, "requiredApprovingReviewCount": None,
-                                            "allowForcePushes": False, "allowDeletions": False}})
     return {
         "summary": request["seed"] + "\n\n" + body,
         "dependencies": [], "repositoryIntent": [identity],

@@ -43,7 +43,7 @@ def test_bundle_is_inline_and_byte_digests_match_acp_normalization():
     bundle = plan["genesis"]
     assert set(bundle) == {"schema", "commitMessage", "files", "branches", "labels", "milestones", "issues", "productIntent"}
     assert bundle["schema"] == "acp.genesis-bundle.v1"
-    assert bundle["branches"] == {"main": "main", "integration": "dev"}
+    assert bundle["branches"] == {"main": "main", "integration": "dev", "genesis": "genesis"}
     files = {f["path"]: base64.b64decode(f["contentBase64"], validate=True) for f in bundle["files"]}
     for entry in bundle["files"]:
         assert entry["sha256"] == "sha256:" + hashlib.sha256(files[entry["path"]]).hexdigest()
@@ -177,3 +177,53 @@ def test_invalid_backlog_links_are_refused(backlog):
     request["genesis"] = backlog
     with pytest.raises(ValueError, match="GENESIS_BACKLOG"):
         compile_bundle(request)
+
+
+# PR #58 review r1 (RF58-R1-01): Buzz/Nostr private keys must never reach public genesis content.
+SYNTHETIC_NSEC = "nsec1" + "qpzry9x8gf2tvdw0s3jn54khce6mua7l" * 2
+
+
+@pytest.mark.parametrize("field", ["seed", "issue", "milestone", "owner_instruction"])
+def test_buzz_private_keys_are_refused_everywhere_genesis_text_goes(field):
+    request = copy.deepcopy(REQUEST)
+    marker = f"key {SYNTHETIC_NSEC[:63]} end"
+    if field == "seed":
+        request["seed"] = "An editor. " + marker
+    elif field == "owner_instruction":
+        request["productIntent"] = {"summary": "s", "references": [], "ownerInstructions": [marker]}
+    else:
+        request["genesis"] = {
+            "labels": [{"name": "enhancement", "color": "a2eeef", "description": "d"}],
+            "milestones": [{"key": "m", "title": "m", "description": marker if field == "milestone" else "d"}],
+            "issues": [{"key": "i", "title": "i", "body": marker if field == "issue" else "b",
+                        "labels": ["enhancement"], "milestoneKey": "m"}]}
+    with pytest.raises(ValueError, match="SECRET_SCREEN") as error:
+        compile_bundle(request)
+    assert SYNTHETIC_NSEC[:20] not in str(error.value)
+
+
+# RF58-R1-02: explicitly empty required collections must not erase the developable backlog.
+@pytest.mark.parametrize("backlog", [
+    {"labels": [], "milestones": [], "issues": []}, {"issues": []},
+    {"labels": [{"name": "x", "color": "aabbcc", "description": "d"}], "milestones": [], "issues": [
+        {"key": "i", "title": "i", "body": "b", "labels": ["x"], "milestoneKey": None}]},
+    {"labels": [], "milestones": [{"key": "m", "title": "m", "description": "d"}], "issues": [
+        {"key": "i", "title": "i", "body": "b", "labels": [], "milestoneKey": "m"}]},
+])
+def test_empty_required_backlog_collections_are_refused(backlog):
+    request = copy.deepcopy(REQUEST)
+    request["genesis"] = backlog
+    with pytest.raises(ValueError, match="GENESIS_BACKLOG"):
+        compile_bundle(request)
+
+
+def test_genesis_goes_through_a_pr_and_never_pushes_the_default_branch():
+    """Owner 2026-10-22: "초기 파일도 PR로"; the standing no-default-branch-push rule stands."""
+    plan = compile_bundle()
+    ops = plan["githubOperations"]
+    ids = [op["operationId"] for op in ops]
+    assert ops[0]["desiredState"] == {"visibility": "public", "autoInit": True}
+    assert not [op for op in ops if op["resourceType"] == "branch" and op["resourceIdentity"].endswith("#main")]
+    assert ids.index("protect-main") < ids.index("push-genesis-branch") < ids.index("create-dev")
+    assert ids.index("create-dev") < ids.index("protect-dev") < ids.index("set-default-branch")
+    assert plan["genesis"]["branches"] == {"main": "main", "integration": "dev", "genesis": "genesis"}
