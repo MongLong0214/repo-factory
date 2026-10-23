@@ -33,6 +33,15 @@ def acp_normalize(payload, acp_src):
                           input=json.dumps(payload, ensure_ascii=False), text=True, capture_output=True,
                           env={**os.environ, "ACP_SRC": str(src)}, timeout=60)
     if done.returncode:
+        # Treat bridge output as untrusted: forward only an exact fixed category.
+        try:
+            reason = json.loads(done.stdout).get("reason")
+        except (ValueError, AttributeError):
+            reason = None
+        if reason in ("manifest", "manifest.projectId", "manifest.verificationCommands",
+                      "manifest.ciWorkflows", "manifest.branchProfile", "genesis"):
+            raise ValueError(f"ACP_SCHEMA: {reason} refused by ACP's authoritative schema "
+                             "(VERIFICATION may be unsupported)")
         raise ValueError("ACP_SCHEMA: VERIFICATION or manifest/genesis is unsupported by this ACP checkout")
     return json.loads(done.stdout)
 
@@ -116,8 +125,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     files[MANIFEST_PATH] = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     # Regenerate local guidance from the same normalized commands and CommitLore policy.
     from materialize import _agents, _readme
-    files["AGENTS.md"] = _agents(manifest["projectId"], manifest["verificationCommands"], "preferred")
-    files["README.md"] = _readme(manifest["projectId"], request["seed"], manifest["verificationCommands"])
+    repository_name = request["repositories"][0]["name"]
+    files["AGENTS.md"] = _agents(repository_name, manifest["verificationCommands"], "preferred")
+    files["README.md"] = _readme(repository_name, request["seed"], manifest["verificationCommands"])
     intent = _product_intent(request)
     body = "\n\n".join([request["seed"], intent["summary"], *intent["references"], *intent["ownerInstructions"]])
     backlog = request.get("genesis", {})

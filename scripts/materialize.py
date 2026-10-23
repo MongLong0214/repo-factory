@@ -58,9 +58,9 @@ ARTIFACT_EVIDENCE = {
 }
 
 
-def _readme(project_id: str, seed: str, commands: List[Dict[str, Any]]) -> str:
+def _readme(repository_name: str, seed: str, commands: List[Dict[str, Any]]) -> str:
     lines = [
-        f"# {project_id}",
+        f"# {repository_name}",
         "",
         seed.strip(),
         "",
@@ -84,10 +84,10 @@ def _readme(project_id: str, seed: str, commands: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _agents(project_id: str, commands: List[Dict[str, Any]], commitlore_mode: str) -> str:
+def _agents(repository_name: str, commands: List[Dict[str, Any]], commitlore_mode: str) -> str:
     """프로젝트 로컬 정보만. 운영 정보는 제어평면이 갖는다."""
     lines = [
-        f"# {project_id} — working rules",
+        f"# {repository_name} — working rules",
         "",
         "Project-local only. Session identity, provider routing, review assignment and merge",
         "authority are not recorded here; they belong to the control plane and would rot in two",
@@ -156,9 +156,9 @@ def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]
     return satisfied, missing
 
 
-def _spec(project_id: str, seed: str, commands) -> str:
+def _spec(repository_name: str, seed: str, commands) -> str:
     return "\n".join([
-        f"# {project_id} — specification", "",
+        f"# {repository_name} — specification", "",
         "## Goal", "", seed.strip(), "",
         "## Non-goals", "",
         "- Anything the goal above does not name. A non-goal added later is a scope change and",
@@ -169,9 +169,9 @@ def _spec(project_id: str, seed: str, commands) -> str:
     ] + [f"- `{c['id']}` — `{' '.join(c['argv'])}`" for c in commands] + [""])
 
 
-def _adr(project_id: str, stack: Optional[str]) -> str:
+def _adr(repository_name: str, stack: Optional[str]) -> str:
     return "\n".join([
-        f"# ADR-0001 — {project_id} architecture", "",
+        f"# ADR-0001 — {repository_name} architecture", "",
         "- **Status:** Accepted", "",
         "## Context", "",
         "A genesis decision record exists so the first structural choice is written where it can",
@@ -185,9 +185,9 @@ def _adr(project_id: str, stack: Optional[str]) -> str:
     ])
 
 
-def _acceptance(project_id: str, commands) -> str:
+def _acceptance(repository_name: str, commands) -> str:
     return "\n".join([
-        f"# {project_id} — acceptance oracle", "",
+        f"# {repository_name} — acceptance oracle", "",
         "An oracle states what would have to be observed for the project to be wrong. Listing",
         "what should pass is not an oracle; anything passes when nothing is checked.", "",
         "## Must stay red", "",
@@ -198,9 +198,9 @@ def _acceptance(project_id: str, commands) -> str:
     ] + [f"- `{c['id']}` at the exact candidate head" for c in commands] + [""])
 
 
-def _rollback(project_id: str) -> str:
+def _rollback(repository_name: str) -> str:
     return "\n".join([
-        f"# {project_id} — rollback", "",
+        f"# {repository_name} — rollback", "",
         "## What can be undone", "",
         "- A merge to `dev` is reverted by a revert commit through the same gate that admitted it.",
         "- A release on `main` is withdrawn by cutting a new release; the tag is never moved,",
@@ -211,12 +211,12 @@ def _rollback(project_id: str) -> str:
     ])
 
 
-def _python_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
-    module = project_id.replace("-", "_")
+def _python_skeleton(repository_name: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
+    module = repository_name.replace("-", "_")
     return {
         "pyproject.toml": (
             '[project]\n'
-            f'name = "{project_id}"\n'
+            f'name = "{repository_name}"\n'
             'version = "0.1.0"\n'
             # CI 매트릭스 하한과 같은 값에서 나온다. 두 곳에서 따로 정하면 어긋나고,
             # 어긋난 채로 생성 저장소의 첫 CI 가 빨간색이 된다 — 실측된 그 실패다.
@@ -240,9 +240,9 @@ def _python_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dic
     }
 
 
-def _go_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
+def _go_skeleton(repository_name: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     return {
-        "go.mod": (f"module github.com/{owner}/{project_id}\n\n"
+        "go.mod": (f"module github.com/{owner}/{repository_name}\n\n"
                    f"go {values['RUNTIME_LOWER']}\n"),
         "greet.go": ('package main\n\nimport "fmt"\n\n'
                      'func Greet(who string) string { return fmt.Sprintf("hello, %s", who) }\n\n'
@@ -254,9 +254,9 @@ def _go_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[st
     }
 
 
-def _rust_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
+def _rust_skeleton(repository_name: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     return {
-        "Cargo.toml": (f'[package]\nname = "{project_id.replace("-", "_")}"\n'
+        "Cargo.toml": (f'[package]\nname = "{repository_name.replace("-", "_")}"\n'
                        'version = "0.1.0"\nedition = "2021"\n'
                        f'rust-version = "{values["RUNTIME_LOWER"]}"\n'),
         "src/lib.rs": ('pub fn greet(who: &str) -> String { format!("hello, {who}") }\n\n'
@@ -266,13 +266,13 @@ def _rust_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[
     }
 
 
-def _node_skeleton(project_id: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
+def _node_skeleton(repository_name: str, values: Dict[str, str], owner: str) -> Dict[str, str]:
     """`npm install` 과 `npm test` 가 실제로 무언가를 하는 최소 골격.
 
     골격 없이 CI 를 만들면 워크플로는 렌더되는데 첫 실행이 빨간색이고, 그 빨간색은
     프로젝트의 문제가 아니라 공장이 저장소를 반만 만들었다는 뜻이다."""
     package = {
-        "name": project_id,
+        "name": repository_name,
         "version": "0.1.0",
         "private": True,
         "type": "module",
@@ -312,12 +312,14 @@ def materialize(
 ) -> Dict[str, str]:
     """path → content. 스택을 모르면 CI 를 만들지 않는다(§14.1) — 조용히 Node 로 대체하지 않는다."""
     screen_text(seed, "project seed")
-    project_id = manifest["projectId"]
+    # Display/package/module identity comes from the primary remote, never the ACP key.
+    primary = next(repo for repo in manifest["repositories"] if repo["role"] == "primary")
+    repository_name = primary["remote"].split("/", 1)[1]
     commands = manifest["verificationCommands"]
     files = {
         MANIFEST_PATH: json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        "README.md": _readme(project_id, seed, commands),
-        "AGENTS.md": _agents(project_id, commands, manifest["commitlore"]["mode"]),
+        "README.md": _readme(repository_name, seed, commands),
+        "AGENTS.md": _agents(repository_name, commands, manifest["commitlore"]["mode"]),
     }
     if stack is not None:
         if stack not in available_stacks():
@@ -332,19 +334,19 @@ def materialize(
             # 소유자는 모든 스켈레톤에 넘어간다. 한때 go 만 받았고 호출부가 `stack == "go"`
             # 로 갈랐는데, 그러면 두 번째 스택이 소유자를 필요로 할 때 고칠 자리가 테이블이
             # 아니라 이 조건문이 된다 — 테이블에 등록하는 것만으로는 부족해지는 형태다.
-            files.update(skeleton(project_id, values, remote_owner))
+            files.update(skeleton(repository_name, values, remote_owner))
 
     # 프로파일이 요구한 것만 만든다. §6.1 이 금지하는 것은 형식 충족용 문서 생성이므로,
     # SIMPLE 에 ADR 을 끼워 넣지 않는다.
     wanted = set(artifacts or [])
     if "compact-prd-or-equivalent-specification" in wanted:
-        files[SPEC_PATH] = _spec(project_id, seed, commands)
+        files[SPEC_PATH] = _spec(repository_name, seed, commands)
     if "architecture-adr" in wanted:
-        files[ADR_PATH] = _adr(project_id, stack)
+        files[ADR_PATH] = _adr(repository_name, stack)
     if "acceptance-oracle" in wanted:
-        files[ACCEPTANCE_PATH] = _acceptance(project_id, commands)
+        files[ACCEPTANCE_PATH] = _acceptance(repository_name, commands)
     if "rollback-strategy" in wanted:
-        files[ROLLBACK_PATH] = _rollback(project_id)
+        files[ROLLBACK_PATH] = _rollback(repository_name)
     for text in files.values():
         screen_text(text, "generated file")
     return files

@@ -167,4 +167,4 @@ def test_every_skeleton_takes_the_owner_so_the_table_stays_uniform():
 
     for stack, skeleton in SKELETONS.items():
         parameters = list(inspect.signature(skeleton).parameters)
-        assert parameters == ["project_id", "values", "owner"], f"{stack} 의 시그니처가 다르다"
+        assert parameters == ["repository_name", "values", "owner"], f"{stack} 의 시그니처가 다르다"

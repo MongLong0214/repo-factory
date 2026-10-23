@@ -48,6 +48,26 @@ verbatim `seed`, profile, priority, one primary repository (with `stack: "node"`
 `visibility: "public"`, `remoteOwner`, origin, and optional structured `productIntent`.
 Optional `genesis` request fields supply approved commitMessage/labels/milestones/issues;
 otherwise RF seeds an implementation issue tied to the owner's idea and first milestone.
+Optional `projectId` is the permanent ACP key and must match
+`^[a-z0-9][a-z0-9._-]{0,80}$` (1–81 characters). An explicit id is validated verbatim:
+never lowercase, slug or trim it; refuse it if invalid. When omitted, RF uses only
+`repositories[0].name`: lowercase, replace characters outside `[a-z0-9._-]` with `-`,
+trim leading/trailing `.`, `_`, `-`, then truncate to 81 characters. If still invalid,
+compilation refuses with `PROJECT_ID_INVALID: manifest.projectId`; supply an explicit id.
+The GitHub name, remote `github:<owner>/<Name>`, document titles and repository intent
+retain the owner's exact case, including in the resident handoff. Normalization applies only
+when deriving an omitted ACP key.
+ACP ids are permanent primary keys, including after retirement. Re-bootstrap of a retired
+project's repository must supply a **new** `projectId` (for example `freshreadme-2`);
+ACP links the old project through `supersedes_project_id` by repository identity.
+RF cannot see ACP registry state at compile time and never invents a suffix. An invalid
+derived slug is refused during compilation. A valid derived or explicit id is passed unchanged
+even if already occupied; ACP refuses that collision when it registers the project, including
+when the existing project is retired. Normalization/truncation can also produce collisions.
+For a confirmed collision, the CEO/CTO choose and supply a new explicit `projectId`
+(e.g. `freshreadme-2`) within existing delegated scope; the owner is never asked for input.
+If registration's outcome is unclear, they first reconcile durable ACP state and never
+resubmit under a new id or new key. Never auto-suffix.
 `verification.json` is a list such as `[{"id":"test","argv":["npm","test"]}]`.
 Optional `--ci-values ci.json` overrides reviewed template values; `--optional` selects
 profile-supported artifacts. Missing artifacts or unsupported verification stop compilation.
@@ -74,6 +94,10 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
 CommitLore is preferred unless the bundle actually includes its required setup.
+ACP refusals report fixed safe field categories such as `ACP_SCHEMA: manifest.projectId`
+(also `manifest.verificationCommands`, `manifest.ciWorkflows`, `manifest.branchProfile`,
+or the broader `manifest`/`genesis`). These name the failing field without echoing
+rejected values, credential-shaped content or raw ACP error details.
 
 The exact wire contract is [genesis-bundle-v1](contracts/genesis-bundle-v1.md).
 The bound CTO must receive the JSON body, including base64 bytes, through ACP-readable

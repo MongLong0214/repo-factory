@@ -31,9 +31,35 @@ ACP's planForSubmission inserts PR open/verify/merge after push genesis and back
 preflightGitHubOperations accepts that expanded execution plan; the unexpanded six operations are submission input.
 
 The project manifest in the same PLAN must:
+- use a resident-safe `projectId` matching `^[a-z0-9][a-z0-9._-]{0,80}$` (1–81 characters).
+  The optional request `projectId` is honoured verbatim or refused; it is never normalized.
+  Without it, derive only from `repositories[0].name`: lowercase, replace characters outside
+  `[a-z0-9._-]` with `-`, trim leading/trailing `.`, `_`, `-`, truncate to 81 characters,
+  and refuse if still invalid. The request schema pattern is checked against pinned ACP's
+  `parseGenesis` resident rule. The GitHub name and remote `github:<owner>/<Name>` retain
+  exact case, independently of this key; repository titles, CI, issues, product intent and
+  the resident handoff must continue to refer to that repository and the owner's intent.
 - branchProfile: longLived ["main","dev"], defaultBranch "dev", mergeStrategy "merge_commit", releaseTagPolicy "semver".
 - declare real verification commands that exist in the genesis files (e.g. the test command) and ciWorkflows whose
   approvedDigest = the bundle file's sha256 for that workflow path (ACP SHA-256 over bytes; never git-blob ids).
 - commitlore: { "mode": "required" } only if the genesis includes what CommitLore needs; otherwise "preferred".
 Secret screen: ACP refuses a bundle whose file bytes or issue/milestone text contain credential-shaped content.
 RF additionally requires labels, milestones and issues to each be non-empty.
+
+ACP project ids are permanent primary keys; retirement does not free an id. Re-bootstrap
+of the same repository after retirement requires a new explicit request `projectId`, e.g.
+`freshreadme-2`. ACP links the retired project via `supersedes_project_id` using repository
+identity. RF cannot see registry state at compile time and performs no automatic suffixing.
+An invalid derived slug is a compile-time refusal. A valid derived or explicit id is passed
+unchanged to ACP; if an existing project (active or retired) already owns it, ACP refuses the
+collision when it registers the project. Normalization/truncation can also produce collisions.
+For a confirmed collision, the CEO/CTO choose and supply a new explicit `projectId`
+(e.g. `freshreadme-2`) within existing delegated scope; the owner is never asked for input.
+If registration's outcome is unclear, they first reconcile durable ACP state and never
+resubmit under a new id or new key. Never auto-suffix.
+
+RF reports local id refusal as `PROJECT_ID_INVALID: manifest.projectId`. The ACP bridge
+reports only fixed safe categories: `ACP_SCHEMA: manifest.projectId`,
+`manifest.verificationCommands`, `manifest.ciWorkflows`, `manifest.branchProfile`, or the
+broader `manifest`/`genesis`. No rejected values, credentials, dynamic paths or raw ACP
+messages are forwarded. Unrecognized bridge failures retain the generic ACP_SCHEMA error.
