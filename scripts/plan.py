@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -132,6 +133,9 @@ def validate_request(request: Dict[str, Any]) -> None:
     프로덕션 경로가 요청을 검증하지 않아서 아무도 몰랐다."""
     invalid = sorted(Draft202012Validator(_schema("bootstrap-request.schema.json")).iter_errors(request), key=str)
     if invalid:
+        if any(list(e.path) == ["projectId"] for e in invalid):
+            # jsonschema's message includes the rejected value; never expose it.
+            raise PlanError("PROJECT_ID_INVALID: manifest.projectId must satisfy the resident-safe project id rule")
         raise PlanError(
             "the request does not satisfy schemas/bootstrap-request.schema.json: "
             + "; ".join(f"{'.'.join(str(x) for x in e.path) or '<root>'}: {e.message}" for e in invalid[:5])
@@ -327,6 +331,22 @@ def remote_owner(request: Dict[str, Any]) -> str:
     return str(owner) if owner else DEFAULT_REMOTE_OWNER
 
 
+def resolve_project_id(request: Dict[str, Any]) -> str:
+    """Use the request schema's ACP-verified rule, with no fallback to other intent."""
+    rule = _schema("bootstrap-request.schema.json")["properties"]["projectId"]
+    if "projectId" in request:
+        project_id = request["projectId"]
+    else:
+        project_id = re.sub(r"[^a-z0-9._-]", "-", request["repositories"][0]["name"].lower())
+        project_id = project_id.strip("._-")[:rule["maxLength"]]
+    if not isinstance(project_id, str) or re.fullmatch(rule["pattern"], project_id) is None:
+        if "projectId" in request:
+            raise PlanError("PROJECT_ID_INVALID: manifest.projectId must satisfy the resident-safe project id rule")
+        raise PlanError("PROJECT_ID_INVALID: manifest.projectId cannot be resolved from repositories[0].name; "
+                        "supply an explicit resident-safe projectId")
+    return project_id
+
+
 def project_manifest(
     request: Dict[str, Any],
     verification_commands: List[Dict[str, Any]],
@@ -337,7 +357,7 @@ def project_manifest(
     """§10.3 의 모양. 절대경로·세션·채널·비밀이 들어갈 자리가 없다 (§10.2)."""
     return {
         "schema": "agent-control-plane.project.v2",
-        "projectId": request["repositories"][0]["name"],
+        "projectId": resolve_project_id(request),
         "repositories": [
             {"role": repo["role"], "remote": f"github:{remote_owner(request)}/{repo['name']}",
              "manifestRoot": "."}
