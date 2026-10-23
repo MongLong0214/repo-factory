@@ -52,9 +52,11 @@ of the same repository after retirement requires a new explicit request `project
 identity. RF cannot see registry state at compile time and performs no automatic suffixing.
 An invalid derived slug is a compile-time refusal. A valid derived or explicit id is passed
 unchanged to ACP; if an existing project (active or retired) already owns it, ACP refuses the
-collision when it registers the project. The operator must then supply a new explicit
-`projectId`, for example `freshreadme-2`. Derived ids can also collide after normalization
-or truncation; RF never silently chooses a different id.
+collision when it registers the project. Normalization/truncation can also produce collisions.
+For a confirmed collision, the CEO/CTO choose and supply a new explicit `projectId`
+(e.g. `freshreadme-2`) within existing delegated scope; the owner is never asked for input.
+If registration's outcome is unclear, they first reconcile durable ACP state and never
+resubmit under a new id or new key. Never auto-suffix.
 
 RF reports local id refusal as `PROJECT_ID_INVALID: manifest.projectId`. The ACP bridge
 reports only fixed safe categories: `ACP_SCHEMA: manifest.projectId`,

@@ -63,8 +63,11 @@ ACP links the old project through `supersedes_project_id` by repository identity
 RF cannot see ACP registry state at compile time and never invents a suffix. An invalid
 derived slug is refused during compilation. A valid derived or explicit id is passed unchanged
 even if already occupied; ACP refuses that collision when it registers the project, including
-when the existing project is retired. The operator must then supply a new explicit
-`projectId`, such as `freshreadme-2`. Normalization/truncation can also produce collisions.
+when the existing project is retired. Normalization/truncation can also produce collisions.
+For a confirmed collision, the CEO/CTO choose and supply a new explicit `projectId`
+(e.g. `freshreadme-2`) within existing delegated scope; the owner is never asked for input.
+If registration's outcome is unclear, they first reconcile durable ACP state and never
+resubmit under a new id or new key. Never auto-suffix.
 `verification.json` is a list such as `[{"id":"test","argv":["npm","test"]}]`.
 Optional `--ci-values ci.json` overrides reviewed template values; `--optional` selects
 profile-supported artifacts. Missing artifacts or unsupported verification stop compilation.
