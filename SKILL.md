@@ -108,11 +108,14 @@ completes the product. Supply verified facts; RF copies the strings without atte
 Both fields are private data_only, granting no approval or authority. RF copies evidence
 entries, then the stage statement, verbatim into `PLAN.verificationIntent` after the genesis
 verification line. ACP preserves this field and shows it in the blind review intent projection.
-RF then adds one private responsibility line per seeded issue, binding its body acceptance
+Only when `stagePlan` is present, RF adds one private responsibility line per seeded issue, binding its body acceptance
 to a follow-on run the resident CTO creates after activation and receives through handoff.
 The issue remains incomplete until that run's verification passes. This does not change queuedWork.
-ACP's review bounds apply to the entire verificationIntent list (32 items, 1,000 characters
-per item); evidence is never truncated. Keep internal paths, session IDs and decision IDs
+Without `stagePlan`, no responsibility lines are added; requests without either new field keep
+the original PLAN intent. RF calls ACP's actual intent projector before success to enforce its
+authoritative bounds on the complete generated intent (currently 32 list items, 1,000 characters
+per item), including generated lines; excess refuses compilation with the field named, never truncates.
+Keep internal paths, session IDs and decision IDs
 in private context, never public summary, references, requirements, files or backlog text.
 
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
@@ -129,9 +132,17 @@ session/run/decision/model/runtime identifiers, using fixed `PUBLIC_TEXT` reason
 consecutive words from a private seed/instruction sentence, matched as case-folded Unicode
 words ignoring whitespace and sentence punctuation. Common four-word phrases can be refused;
 shorter fragments, paraphrases and identities outside the recognized patterns are not a privacy
-guarantee. Review evidence and stage text are also screened against every public sink: their
-complete strings (including strings shorter than four words) and any four consecutive words
-are refused. RF does not detect arbitrary private natural-language content or classify product
+guarantee. Public generation receives neither reviewEvidence nor stagePlan; this separation is
+the primary privacy boundary. The overlap screen is auxiliary. Additional public-sink screening
+considers only tokens extracted from private review data. Explicit public request inputs take
+precedence for public URLs, commit SHAs and product prose repeated in review data. Explicitly
+internal decision/session/run identities and internal paths remain private even if copied into
+a public field. Other known private-only identifier tokens are refused without prefixes: hex
+IDs, UUIDs, session/run/message/project/assignment tokens, assigned values, absolute paths, and
+mixed letter/digit tokens with a hyphen or underscore. Plain prose, standalone numbers and
+ordinary hyphenated English are not identifier tokens. Complete evidence and stage strings
+(including strings shorter than four words) and four-word overlaps are refused unless already
+supplied in the explicit public request inputs. RF does not detect arbitrary private natural-language content or classify product
 meaning. The CEO's final review of the complete public bodies remains required. Repository
 creation/visibility/name settings belong in request metadata; RF does not semantically reject
 author-approved public prose about them. "Public repository READMEs must be checked for broken

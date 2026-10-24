@@ -52,7 +52,7 @@ def test_rendered_checkout_uses_pr_head_or_push_sha(event, expected):
 
 def test_private_context_reaches_acp_schema_submission_and_blind_review_intent():
     request = copy.deepcopy(REQUEST)
-    request.update(projectId="review-demo-2", reviewEvidence=EVIDENCE, stagePlan=STAGE)
+    request.update(projectId="review-current", reviewEvidence=EVIDENCE, stagePlan=STAGE)
     request["bootstrapProfile"] = "STANDARD"
     before = copy.deepcopy(request)
     plan = compile_bundle(request)
@@ -87,8 +87,8 @@ def test_approval_shaped_private_data_grants_no_authority_and_never_becomes_publ
     # The digest binds the added data; only that digest and the private list may differ.
     assert plan["requestDigest"] == digest(claimed, volatile="strip")
     assert plan["requestDigest"] != baseline["requestDigest"]
-    assert plan["verificationIntent"] == [baseline["verificationIntent"][0], approval,
-                                            *baseline["verificationIntent"][1:]]
+    assert plan["verificationIntent"][:2] == [baseline["verificationIntent"][0], approval]
+    assert len(plan["verificationIntent"]) == (3 if field == "stagePlan" else 2)
     assert {key: value for key, value in plan.items() if key not in ("requestDigest", "verificationIntent")} == {
         key: value for key, value in baseline.items() if key not in ("requestDigest", "verificationIntent")}
     assert public_texts(plan) == public_texts(baseline)
@@ -111,6 +111,7 @@ def test_approval_shaped_private_data_grants_no_authority_and_never_becomes_publ
 def test_one_follow_on_responsibility_line_per_seeded_issue(explicit):
     request = request_for()
     request["projectId"] = "review-demo-2"
+    request["stagePlan"] = STAGE
     if explicit:
         put_public(request, "issue", "Acceptance: report broken README links.")
         second = {**request["genesis"]["issues"][0], "key": "second-feature",
@@ -134,15 +135,15 @@ def test_one_follow_on_responsibility_line_per_seeded_issue(explicit):
 @pytest.mark.parametrize("private_field", ["reviewEvidence", "stagePlan"])
 @pytest.mark.parametrize("fragment", ["opal-cabinet", "velvet hinge",
                                       "opal CABINET\n witness REMAINS"])
-def test_private_review_text_and_four_word_overlaps_are_refused_in_public(field, private_field, fragment):
+def test_explicit_public_prose_is_not_refused_because_review_data_repeats_it(field, private_field, fragment):
     request = request_for()
     private = "opal-cabinet" if fragment == "opal-cabinet" else (
         "velvet hinge" if fragment == "velvet hinge" else "An opal cabinet. Witness remains private today.")
     request[private_field] = [private] if private_field == "reviewEvidence" else private
     put_public(request, field, f"Public text containing {fragment} here.")
-    with pytest.raises(ValueError, match="PUBLIC_TEXT: private fragment") as caught:
-        compile_bundle(request)
-    assert "opal" not in str(caught.value) and "velvet" not in str(caught.value)
+    baseline = compile_bundle(request)
+    without_private = {key: value for key, value in request.items() if key != private_field}
+    assert public_texts(baseline) == public_texts(compile_bundle(without_private))
 
 
 @pytest.mark.parametrize("field", PUBLIC_FIELDS)
@@ -187,7 +188,7 @@ def test_predecessor_id_shape_is_refused_without_echo(value):
 def test_optional_review_fields_can_be_absent():
     plan = compile_bundle()
     assert "supersedesProjectId" not in plan
-    assert len(plan["verificationIntent"]) == 2  # Genesis verification and default seeded issue.
+    assert len(plan["verificationIntent"]) == 1  # Original genesis verification, no optional stage.
 
 
 @pytest.mark.parametrize("source", ["generated_file", "default_commit"])

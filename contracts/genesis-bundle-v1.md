@@ -32,15 +32,19 @@ preflightGitHubOperations accepts that expanded execution plan; the unexpanded s
 
 Private review context lives outside genesis in `PLAN.verificationIntent`: the genesis
 verification line, optional request `reviewEvidence` entries and `stagePlan` copied verbatim,
-then one line per seeded issue. These strings are data_only, with no approval or authority.
+then one line per seeded issue only when stagePlan is present. These strings are data_only,
+with no approval or authority. Without stagePlan, responsibility lines are absent; requests
+without either optional field retain the original PLAN intent.
 ACP's submitted PLAN schema preserves this list; `bootstrapPlanIntent` projects it to blind review.
 The stage statement separates bootstrap (genesis, activation, resident CTO, dedicated Buzz,
 handoff verification) from product acceptance. Each issue line binds its body acceptance to
 a follow-on STANDARD_WORK run of the same project, created by the resident CTO after activation,
 with delivery through the activation handoff and completion only after that run's verification.
 Issue creation alone never completes the product. queuedWork is unchanged.
-The review projection accepts at most 32 list items of 1,000 characters each; it refuses excess,
-never truncates evidence.
+RF invokes ACP's actual intent projector before returning success; it owns the bounds and
+character-count semantics (currently 32 list items of 1,000 characters each). The complete
+generated intent is checked, including evidence, stage text and responsibility lines. Excess
+refuses compilation naming the field; evidence is never truncated.
 
 Optional request `supersedesProjectId` is emitted as `PLAN.supersedesProjectId`, outside
 genesis and projectManifest. RF preserves this nonempty string without control characters;
@@ -85,9 +89,19 @@ detect arbitrary private natural-language content or classify product meaning. C
 visibility and naming settings belong in request metadata, but RF does not semantically reject
 approved public prose. "Create a repository comparison report after each scan." and "Public
 repository READMEs must be checked for broken links." are accepted and published verbatim.
-Complete reviewEvidence/stagePlan strings and four-word overlaps with them are also refused
+Private-only reviewEvidence/stagePlan strings and four-word overlaps with them are also refused
 in every public sink, including generated file bytes, commit message and backlog text. Internal
 paths, session IDs and decision IDs belong only in private context.
+Public generators receive neither private review field: separation is the primary guarantee,
+and four-word overlap is auxiliary. Known private identifiers are also refused without their
+prefixes, including hex IDs, UUIDs, prefixed IDs, assigned values, paths and mixed letter/digit
+tokens with hyphens or underscores. Plain words, numbers and ordinary hyphenated prose are
+not inferred to be identifiers.
+Explicit public request inputs take precedence for public URLs, commit SHAs and product prose
+repeated in review data; the private copy cannot remove or rewrite public output. Explicit
+internal decision/session/run IDs and internal paths remain private even when copied into a
+public field. The public output bytes are invariant under changes to the private fields;
+only private intent and its request-binding digest change.
 
 The pinned ACP bundle shape above does not gain `publicRequirements`. RF renders that input
 array into the inline files/default backlog. The wire `genesis.productIntent` is private
