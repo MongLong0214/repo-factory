@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import json
 import os
 from pathlib import Path
@@ -46,20 +45,80 @@ def acp_normalize(payload, acp_src):
     return json.loads(done.stdout)
 
 
+DEFAULT_PUBLIC_SUMMARY = "Implement the product requirements described in the project backlog."
+
+
 def _product_intent(request):
-    intent = request.get("productIntent")
-    if intent is not None:
-        # Explicit structured intent supplements the verbatim seed; never replace the owner's idea.
-        intent = copy.deepcopy(intent)
-        if request["seed"] not in intent["summary"]:
-            intent["summary"] = request["seed"] + "\n\n" + intent["summary"]
-        for reference in re.findall(r"https?://[^\s<>]+", request["seed"]):
-            if reference not in intent["references"]:
-                intent["references"].append(reference)
-        return intent
-    return {"summary": request["seed"],
-            "references": re.findall(r"https?://[^\s<>]+", request["seed"]),
-            "ownerInstructions": []}
+    """Pinned ACP shape: public summary/references, with provenance only in private instructions."""
+    intent = request.get("productIntent", {})
+    return {"summary": intent.get("summary", DEFAULT_PUBLIC_SUMMARY),
+            "references": list(intent.get("references", [])),
+            "ownerInstructions": [request["seed"], *intent.get("ownerInstructions", [])]}
+
+
+_PRIVATE_VALUE = re.compile("|".join((
+    r"(?<![\w:/])/(?:Users|home|tmp|private|var|etc|opt|mnt|root|usr|Volumes|workspace|srv)/",
+    r"~/|\b[A-Za-z]:[\\/]",
+    r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b",
+    r"\b\d{9,}\b",
+    r"\b(?:session|run|actor|room)[_-](?:id[\s:=_-]*)?[\w-]+|\buser[_-]id[\s:=_-]*[\w-]+",
+    r"\b(?:actor|identity|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?[\"']?\s*[:=]\s*[\"']?[\w/~][^\s,]*",
+    r"\brun[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
+    r"\b(?:gpt-\d[\w.-]*|claude-(?:sonnet|opus|haiku)[\w.-]*)\b",
+    r"\b(?:ACP|Hermes|Claude Code)\b",
+    r"\b(?:actor|identity)(?:[_ -]?id)?\s+is\s+[\w]+(?:[-_][\w]+)+\b",
+    r"file://",
+)), re.IGNORECASE)
+
+
+# Compare words, not inferred intent. Four-word windows also catch partial sentences.
+PRIVATE_FRAGMENT_WORDS = 4
+
+
+def _words(text):
+    return re.findall(r"\w+(?:[-'’]\w+)*", text.casefold())
+
+
+def _private_fragments(request):
+    fragments = set()
+    for text in [request["seed"], *request.get("productIntent", {}).get("ownerInstructions", [])]:
+        for sentence in re.split(r"[.!?。！？;]+", text):
+            words = _words(sentence)
+            fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
+                             for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1))
+    return fragments
+
+
+def _screen_public(value, private_fragments=()):
+    """Reject unsafe public input unchanged; never classify or rewrite private instructions."""
+    if isinstance(value, dict):
+        for item in value.values():
+            _screen_public(item, private_fragments)
+    elif isinstance(value, list):
+        for item in value:
+            _screen_public(item, private_fragments)
+    elif isinstance(value, str):
+        words = _words(value)
+        if any(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) in private_fragments
+               for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)):
+            raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
+        if _PRIVATE_VALUE.search(value):
+            raise ValueError("PUBLIC_TEXT: private identity or runtime value")
+
+
+def _public_product_text(request, private_fragments):
+    """Only the request author's explicit public fields can supply public product prose."""
+    intent = request.get("productIntent", {})
+    summary = intent.get("summary", DEFAULT_PUBLIC_SUMMARY)
+    references = intent.get("references", [])
+    requirements = intent.get("publicRequirements", [])
+    _screen_public([summary, *references, *requirements], private_fragments)
+    sections = [summary]
+    if references:
+        sections.append("References:\n" + "\n".join(f"- {ref}" for ref in references))
+    if requirements:
+        sections.append("Requirements:\n" + "\n".join(f"- {item}" for item in requirements))
+    return "\n\n".join(sections)
 
 
 def _verification_in_files(commands, files):
@@ -104,7 +163,11 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         raise ValueError("UNSUPPORTED_VERIFICATION: at least one real project test command is required")
     if len(request["repositories"]) != 1 or request["repositories"][0]["role"] != "primary":
         raise ValueError("ACP genesis currently supports exactly one primary repository")
+    private_fragments = _private_fragments(request)
+    public_requirement = _public_product_text(request, private_fragments)
+    _screen_public(request.get("genesis", {}), private_fragments)
     legacy_request = {k: v for k, v in request.items() if k not in ("productIntent", "genesis")}
+    legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
                             requested_optional=requested_optional, ci_values=ci_values)
     if compiled["unresolvedGaps"]:
@@ -121,15 +184,14 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     values = effective_values("node", ci_values)
     if (values["INSTALL_CMD"] != "npm install" or values["TEST_CMD"] != "npm test"
             or values["BUILD_CMD"] != "node --check index.js"):
-        raise ValueError("UNSUPPORTED_VERIFICATION: CI commands must run the seeded install, tests and syntax check")
+        raise ValueError("UNSUPPORTED_VERIFICATION: CI commands must match the seeded tests and syntax check")
     files[MANIFEST_PATH] = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     # Regenerate local guidance from the same normalized commands and CommitLore policy.
     from materialize import _agents, _readme
     repository_name = request["repositories"][0]["name"]
     files["AGENTS.md"] = _agents(repository_name, manifest["verificationCommands"], "preferred")
-    files["README.md"] = _readme(repository_name, request["seed"], manifest["verificationCommands"])
+    files["README.md"] = _readme(repository_name, public_requirement, manifest["verificationCommands"])
     intent = _product_intent(request)
-    body = "\n\n".join([request["seed"], intent["summary"], *intent["references"], *intent["ownerInstructions"]])
     backlog = request.get("genesis", {})
     bundle = {
         "schema": "acp.genesis-bundle.v1",
@@ -139,9 +201,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
                    "sha256": content_digest(text)} for path, text in sorted(files.items())],
         "branches": {"main": "main", "integration": "dev", "genesis": "genesis"},
         "labels": backlog.get("labels", [{"name": "enhancement", "color": "a2eeef", "description": "Product development"}]),
-        "milestones": backlog.get("milestones", [{"key": "first-product", "title": "First product increment", "description": request["seed"]}]),
+        "milestones": backlog.get("milestones", [{"key": "first-product", "title": "First product increment", "description": public_requirement}]),
         "issues": backlog.get("issues", [{"key": "implement-product", "title": "Implement the owner's product intent",
-                                         "body": body, "labels": ["enhancement"], "milestoneKey": "first-product"}]),
+                                         "body": public_requirement, "labels": ["enhancement"], "milestoneKey": "first-product"}]),
         "productIntent": intent,
     }
     for rows, key in ((bundle["labels"], "name"), (bundle["milestones"], "key"), (bundle["issues"], "key")):
@@ -157,6 +219,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
             raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or milestone")
     for path, text in files.items():
         screen_text(text, "genesis file")
+        _screen_public(path)
+        _screen_public(text)
+    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")})
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
     normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle}, acp_src)
     identity = manifest["repositories"][0]["remote"]
@@ -182,7 +247,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
          "desiredState": {"defaultBranch": "dev"}},
     ]
     return {
-        "summary": request["seed"] + "\n\n" + body,
+        "summary": public_requirement,
         "dependencies": [], "repositoryIntent": [identity],
         "verificationIntent": ["Run declared local tests and required CI with Actions provenance at the genesis PR head "
                                "before ACP merges into main; verify merged main before activation"],

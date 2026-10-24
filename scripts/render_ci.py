@@ -93,7 +93,7 @@ def effective_values(stack: str, values: Dict[str, str] = None) -> Dict[str, str
     return {**DEFAULT_VALUES.get(stack, {}), **(values or {})}
 
 
-def render(stack: str, values: Dict[str, str]) -> str:
+def render(stack: str, values: Dict[str, str], *, install_dependencies: bool = True) -> str:
     """토큰을 값으로 바꾸고, 모자란 값은 빈 문자열이 아니라 실패로 만든다."""
     values = effective_values(stack, values)
     text = _template(stack)
@@ -122,10 +122,12 @@ def render(stack: str, values: Dict[str, str]) -> str:
             values[name] = shlex.join(tokens)
         elif name.startswith("RUNTIME_") and not _RUNTIME_VERSION.fullmatch(value):
             raise CiRenderError(f"{stack}: unsafe CI value for {name}")
+    if stack == "node" and not install_dependencies:
+        text = text.replace("      - name: install dependencies\n        run: {{INSTALL_CMD}}\n", "")
     return _TOKEN.sub(lambda m: str(values[m.group(1)]), text)
 
 
-def ci_findings(rendered: str) -> List[Tuple[str, str]]:
+def ci_findings(rendered: str, *, install_dependencies: bool = True) -> List[Tuple[str, str]]:
     """§14.1 의 다섯 조건. 빈 목록이면 이 워크플로는 저장소에 남아도 된다."""
     findings: List[Tuple[str, str]] = []
 
@@ -135,7 +137,7 @@ def ci_findings(rendered: str) -> List[Tuple[str, str]]:
     if not _SETUP_ACTION.search(rendered):
         findings.append(("IMPLICIT_RUNTIME", "no setup action; the job would use whatever the runner ships"))
 
-    if "install dependencies" not in rendered:
+    if install_dependencies and "install dependencies" not in rendered:
         findings.append(("MISSING_INSTALL", "no dependency install step"))
 
     for action, ref in _USES.findall(rendered):

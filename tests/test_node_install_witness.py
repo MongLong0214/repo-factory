@@ -25,13 +25,14 @@ import sys
 import tarfile
 from pathlib import Path
 from xml.etree import ElementTree
+from unittest.mock import patch
 
 import pytest
 
 SKILL = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from materialize import CI_PATH  # noqa: E402
+from materialize import CI_PATH, SKELETONS  # noqa: E402
 from plan import compile_plan  # noqa: E402
 
 FIXTURE = SKILL / "tests" / "fixtures" / "node-install-witness"
@@ -76,24 +77,31 @@ RUNTIMES = node_bin_dirs()
 def generated_tree(root: Path, lock: dict = None):
     """The product's files for a SIMPLE node request, plus the fixture. The skeleton is not edited
     beyond declaring the one dependency the fixture brings."""
-    compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION,
-                            operation_id="11111111-2222-3333-4444-555555555555")
+    original = SKELETONS["node"]
+    def with_dependency(*args):
+        emitted = original(*args)
+        package = json.loads(emitted["package.json"])
+        assert "dependencies" not in package, "the skeleton now declares dependencies; revisit this fixture"
+        package["dependencies"] = {DEPENDENCY: f"file:vendor/{TARBALL}"}
+        emitted["package.json"] = json.dumps(package, indent=2, sort_keys=True) + "\n"
+        return emitted
+    # Declare the dependency before materialization so the generator chooses the install step.
+    with patch.dict(SKELETONS, {"node": with_dependency}):
+        compiled = compile_plan(copy.deepcopy(REQUEST), VERIFICATION,
+                                operation_id="11111111-2222-3333-4444-555555555555")
     assert compiled["unresolvedGaps"] == []
     tree = root / "tree"
     for path, text in compiled["files"].items():
         (tree / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / path).write_text(text, encoding="utf-8")
-    package = json.loads((tree / "package.json").read_text(encoding="utf-8"))
-    assert "dependencies" not in package, "the skeleton now declares dependencies; revisit this fixture"
-    package["dependencies"] = {DEPENDENCY: f"file:vendor/{TARBALL}"}
-    (tree / "package.json").write_text(json.dumps(package, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (tree / "vendor").mkdir()
     shutil.copy2(FIXTURE / TARBALL, tree / "vendor" / TARBALL)
     lock = lock or json.loads((FIXTURE / "package-lock.json").read_text(encoding="utf-8"))
     (tree / "package-lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     shutil.copy2(FIXTURE / "dependency.test.js", tree / "test" / "dependency.test.js")
     workflow = (tree / CI_PATH).read_text(encoding="utf-8")
-    return tree, workflow, re.findall(r"^\s+run: (.+)$", workflow, re.MULTILINE)
+    matrix_job = workflow.split("\n  project-ci-gate:", 1)[0]
+    return tree, workflow, re.findall(r"^\s+run: (.+)$", matrix_job, re.MULTILINE)
 
 
 def isolated(root: Path, bin_dir: Path) -> dict:
@@ -179,7 +187,7 @@ def test_a_failed_install_is_not_followed_by_steps_that_count_as_success(bin_dir
     assert not (tree / "node_modules" / DEPENDENCY).exists()
     # On Actions the job stops the same way: no step may run after a failure or ignore one.
     assert "continue-on-error" not in workflow
-    assert not re.search(r"^\s+if:", workflow, re.MULTILINE)
+    assert not re.search(r"^\s+if:", workflow.split("\n  project-ci-gate:", 1)[0], re.MULTILINE)
     # And forcing the later steps does not manufacture a pass: the test step needs the dependency.
     forced = run_job(tree, env, steps[1:])
     assert forced[0][0] == "npm test" and forced[0][1] != 0

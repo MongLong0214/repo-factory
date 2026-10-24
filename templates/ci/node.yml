@@ -1,8 +1,6 @@
 # project-ci — the check the control plane consumes by exact head.
 #
-# Two runtimes, because a test set that silently shrinks on one of them is a zero-test lane
-# wearing a green tick. The lower bound is the version the project claims to support; latest
-# is what a contributor will actually have installed.
+# Check both supported versions, Node 20 and 22, so tests must pass on each.
 name: project-ci
 on:
   pull_request:
@@ -16,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 jobs:
   test:
-    name: project-ci
+    name: test (node ${{ matrix.runtime }})
     strategy:
       fail-fast: false
       matrix:
@@ -38,3 +36,13 @@ jobs:
         run: {{TEST_CMD}}
       - name: build
         run: {{BUILD_CMD}}
+  project-ci-gate:
+    name: project-ci
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: require the full test matrix to succeed
+        env:
+          MATRIX_RESULT: ${{ needs.test.result }}
+        run: test "$MATRIX_RESULT" = success

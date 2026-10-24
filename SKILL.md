@@ -14,8 +14,10 @@ ACP alone executes GitHub writes, verification, review, merge and runtime provis
 
 1. **Phase 0 questions.** Establish the product idea/reference, intended behavior, name,
    public GitHub owner/repository, constraints and risk profile (SIMPLE/STANDARD/GUARDED).
-   Preserve the owner's words in `seed`. Preserve references and free-form instructions
-   in `productIntent: {summary, references, ownerInstructions}`. Refuse PRIVATE explicitly;
+   Preserve the owner's words in private `seed` and `productIntent.ownerInstructions`.
+   The CEO/CTO request author supplies an approved public `productIntent.summary`, public
+   `references` and optional `publicRequirements` array. Never derive public text from private
+   instructions. Refuse PRIVATE explicitly;
    do not silently change visibility, upgrade a paid plan or substitute another product.
 2. **Dossier.** Present the evidence, product interpretation and practical stack choice.
    Scale the dossier to the idea; research only what resolves real uncertainty. Confirm
@@ -93,6 +95,31 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
 
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
+Public text comes only from explicit public-by-contract fields: request `productIntent.summary`,
+`references`, `publicRequirements`, and `genesis` commit/issue/milestone/label text. Requirements
+are rendered verbatim in README/PRD and the default backlog; none are classified, rewritten or
+dropped. `ownerInstructions` is always private, including instructions that sound like features.
+To publish one, move its approved product requirement into `publicRequirements`; do not copy
+private wording into both fields. Without structured intent, use a neutral backlog statement.
+
+Compilation refuses only concrete private-fragment overlap and recognized identity, local-path,
+session/run/model/runtime identifiers, using fixed `PUBLIC_TEXT` reasons. Overlap means any four
+consecutive words from a private seed/instruction sentence, matched as case-folded Unicode
+words ignoring whitespace and sentence punctuation. Common four-word phrases can be refused;
+shorter fragments, paraphrases and identities outside the recognized patterns are not a privacy
+guarantee. RF does not detect arbitrary private natural-language content or classify product
+meaning. The CEO's final review of the complete public bodies remains required. Repository
+creation/visibility/name settings belong in request metadata; RF does not semantically reject
+author-approved public prose about them. "Public repository READMEs must be checked for broken
+links." is accepted and published verbatim, as is "Create a repository comparison report after
+each scan." No public field falls back to private text or extracts references from it.
+
+All output summaries and reference arrays use only public input (or the fixed neutral scaffold
+statement when intent is absent). The pinned ACP wire keeps its three-field productIntent shape:
+`summary` and `references` are public; `ownerInstructions` is private, with the verbatim seed
+as its first entry followed by the untouched original instructions. Original references in the
+seed therefore still reach the resident CTO handoff without public extraction. RF's input-only
+`publicRequirements` travels through the inline public files/backlog, not as an extra ACP field.
 CommitLore is preferred unless the bundle actually includes its required setup.
 ACP refusals report fixed safe field categories such as `ACP_SCHEMA: manifest.projectId`
 (also `manifest.verificationCommands`, `manifest.ciWorkflows`, `manifest.branchProfile`,
