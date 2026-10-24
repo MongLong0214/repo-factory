@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 from canonical import digest
 from materialize import CI_PATH, MANIFEST_PATH
@@ -89,21 +90,14 @@ def _words(text):
     return re.findall(r"\w+(?:[-'’]\w+)*", text.casefold())
 
 
-def _private_fragments(request, public_values=()):
+def _private_fragments(request):
+    """Legacy seed/owner-instruction protection; review data has identifier rules only."""
     fragments = set()
     for text in [request["seed"], *request.get("productIntent", {}).get("ownerInstructions", [])]:
         for sentence in re.split(r"[.!?。！？;]+", text):
             words = _words(sentence)
             fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
                              for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1))
-    public_windows = {" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
-                      for value in public_values for words in [_words(value)]
-                      for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)}
-    for text in _private_review_text(request):
-        words = _words(text)
-        fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
-                         for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)
-                         if " ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) not in public_windows)
     return fragments
 
 
@@ -112,90 +106,89 @@ def _private_review_text(request):
             *([request["stagePlan"]] if "stagePlan" in request else [])]
 
 
-def _strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
-
-
-def _public_input_values(request):
-    intent = request.get("productIntent", {})
-    return list(_strings([
-        [intent.get(key, []) for key in ("summary", "references", "publicRequirements")],
-        request.get("genesis", {}), request["repositories"],
-        request.get("projectId", ""), request.get("remoteOwner", ""),
-    ]))
-
-
-def _internal_review_identifiers(texts):
-    """Explicit internal identities/paths stay private even when duplicated into a public field."""
-    identifiers = set()
-    for text in texts:
-        # ID-like repository names/query values inside URLs are public provenance, not
-        # standalone internal identity declarations. Generic tokens are screened separately.
-        text = re.sub(r"https?://[^\s]+", "", text, flags=re.IGNORECASE)
-        identifiers.update(re.findall(r"(?<![\w:/])(?:/|[a-z]:[\\/])[^\s\"'<>\[\]{},;]+", text, re.IGNORECASE))
-        identifiers.update(re.findall(r"\b(?:decision|session|run)(?:[_ -]?id)?[\"']?\s*[:=]\s*[\"']?([\w.-]+)", text, re.IGNORECASE))
-        for token in re.findall(r"\b(?:decision|session|run)\s+([\w.-]+)", text, re.IGNORECASE):
-            if re.search(r"[0-9_-]", token) or re.fullmatch(r"[a-f]{7,}", token, re.IGNORECASE):
-                identifiers.add(token)
-    return {token.rstrip(".!?。！？").casefold() for token in identifiers}
-
-
-def _contains_token(value, token):
-    return re.search(r"(?<![\w-])" + re.escape(token) + r"(?![\w-])", value.casefold()) is not None
-
-
 def _private_identifiers(texts):
-    """Known private tokens, including bare values whose identifying prefix is absent publicly."""
+    """Rule A: identifier shapes or explicit ID keys, never bare declarations/prose overlap."""
     identifiers = set()
     for text in texts:
-        # Standalone numbers remain product prose; explicit assignments still identify numeric IDs.
-        identifiers.update(re.findall(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b", text, re.IGNORECASE))
+        identifiers.update(re.findall(r"\b[0-9a-f]{7,}\b", text, re.IGNORECASE))
         identifiers.update(re.findall(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", text, re.IGNORECASE))
-        identifiers.update(re.findall(r"\b(?:ses|run|msg|prj|asg)_[\w-]+", text, re.IGNORECASE))
-        identifiers.update(re.findall(r"(?<![\w:/])(?:/|[a-z]:[\\/])[^\s\"'<>\[\]{},;]+", text, re.IGNORECASE))
-        identifiers.update(re.findall(r"[=:]\s*[\"']?([^\s\"'<>\[\]{},;]+)", text))
-        for token in re.findall(r"\w+(?:[-_]\w+)+", text):
-            if len(token) >= 6 and any(c.isalpha() for c in token) and any(c.isdigit() for c in token):
-                identifiers.add(token)
-    return {token.rstrip(".!?。！？").casefold() for token in identifiers if token.rstrip(".!?。！？")}
+        identifiers.update(re.findall(r"\b(?:ses|run|msg|prj|asg|art|task|operation)_[\w-]+", text))
+        identifiers.update(re.findall(r"(?<![\w:/~])(?:~/|/|[a-z]:[\\/])[^\s\"'<>\[\]{},;]+", text, re.IGNORECASE))
+        identifiers.update(re.findall(
+            r"(?<![\w-])(?:session|run|decision|message|project|operation|actor|binding|escalation)[_ -]?id"
+            r"[\"']?(?:\s*[:=]\s*|\s+)[\"']?(\S+)", text, re.IGNORECASE))
+    return {token.rstrip(".,;:!?。！？\"'()[]{}<>") for token in identifiers
+            if token.rstrip(".,;:!?。！？\"'()[]{}<>")}
 
 
-def _screen_public(value, private_fragments=(), private_values=(), public_values=()):
+_COMMIT_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.IGNORECASE)
+
+
+def _public_references(request):
+    """Rule B: only full SHA-1/SHA-256 references or absolute URLs."""
+    references = []
+    for reference in request.get("productIntent", {}).get("references", []):
+        if _COMMIT_SHA.fullmatch(reference):
+            references.append(reference)
+        elif not any(c.isspace() for c in reference):
+            try:
+                url = urlsplit(reference)
+            except ValueError:
+                continue
+            if url.scheme and url.netloc:
+                references.append(reference)
+    return references
+
+
+def _without_exact_references(value, references):
+    """Exempt whole listed tokens, never their substrings or surrounding prose.
+
+    SHA tokens may have sentence delimiters. URLs must match exactly, optionally inside
+    paired enclosures; URL path/query punctuation is never stripped from the value.
+    This is a validation copy only; generators always receive the original public text.
+    """
+    def keep_unlisted(match):
+        token = match.group()
+        if token in references:
+            return ""
+        sha = token.strip(".,;:!?。！？\"'()[]{}<>")
+        if sha in references and _COMMIT_SHA.fullmatch(sha):
+            return ""
+        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}"), ("<", ">"), ('"', '"'), ("'", "'")):
+            if token.startswith(opening):
+                enclosed = token[1:].rstrip(".,;:!?。！？")
+                if enclosed.endswith(closing) and enclosed[:-1] in references:
+                    return ""
+        return token
+    return re.sub(r"\S+", keep_unlisted, value)
+
+
+def _screen_public(value, private_fragments=(), private_values=(), public_references=(), *, sink="public"):
     """Reject unsafe public input unchanged; never classify or rewrite private instructions."""
     if isinstance(value, dict):
-        for item in value.values():
-            _screen_public(item, private_fragments, private_values, public_values)
+        for key, item in value.items():
+            _screen_public(item, private_fragments, private_values, public_references, sink=f"{sink}.{key}")
     elif isinstance(value, list):
-        for item in value:
-            _screen_public(item, private_fragments, private_values, public_values)
+        for index, item in enumerate(value):
+            _screen_public(item, private_fragments, private_values, public_references, sink=f"{sink}[{index}]")
     elif isinstance(value, str):
-        public = [text.casefold() for text in public_values]
-        if any(text.casefold() in value.casefold() and not any(text.casefold() in approved for approved in public)
-               for text in private_values):
-            raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
-        identifiers = _internal_review_identifiers(private_values) | {
-            token for token in _private_identifiers(private_values)
-            if not any(_contains_token(approved, token) for approved in public)
-        }
-        if any(_contains_token(value, token) for token in identifiers):
-            raise ValueError("PUBLIC_TEXT: private identifier overlaps public text")
+        identifiers = _private_identifiers(private_values)
+        # Rule B protects only exact reference occurrences. It grants no global exemption
+        # to an identifier contained inside a reference; copies elsewhere are still refused.
+        review_screened = _without_exact_references(value, public_references)
+        if any(token in review_screened for token in identifiers):
+            raise ValueError(f"PUBLIC_TEXT: private identifier at {sink}")
         words = _words(value)
         if any(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) in private_fragments
                for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)):
             raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
-        # Explicit public URLs/commit SHAs are provenance, including numeric hashes or URLs
-        # containing product names that happen to match a coarse runtime vocabulary pattern.
+        # Preserve the legacy guard's public URL/SHA handling. It cannot exempt an extracted
+        # private identifier: Rule C has already refused those above unless Rule B applies.
+        # This validation copy never supplies rendered bytes.
         screened = value
-        for approved in public_values:
-            for token in re.findall(r"https?://[^\s]+|\b[0-9a-f]{40}\b", approved, re.IGNORECASE):
-                screened = re.sub(re.escape(token.rstrip(".,;!?")), "", screened, flags=re.IGNORECASE)
+        provenance = re.findall(r"https?://[^\s]+|\b[0-9a-f]{40}\b", value, re.IGNORECASE)
+        for token in [*provenance, *public_references]:
+            screened = screened.replace(token, "")
         if _PRIVATE_VALUE.search(screened):
             raise ValueError("PUBLIC_TEXT: private identity or runtime value")
 
@@ -257,14 +250,17 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     if len(request["repositories"]) != 1 or request["repositories"][0]["role"] != "primary":
         raise ValueError("ACP genesis currently supports exactly one primary repository")
     private_values = _private_review_text(request)
-    # Primary boundary: public generation never receives private review data. The token and
-    # overlap screens additionally refuse private data duplicated into explicit public input.
+    # Primary boundary: public generation never receives private review data. The auxiliary
+    # identifier screen additionally refuses private identifiers copied into public input.
     public_request = {k: v for k, v in request.items() if k not in ("reviewEvidence", "stagePlan")}
-    public_values = _public_input_values(public_request)
-    private_fragments = _private_fragments(request, public_values)
+    public_references = _public_references(public_request)
+    private_fragments = _private_fragments(public_request)
+    for key in ("summary", "references", "publicRequirements"):
+        _screen_public(public_request.get("productIntent", {}).get(key),
+                       private_fragments, private_values, public_references, sink=f"productIntent.{key}")
     public_requirement = _public_product_text(public_request)
-    _screen_public(public_requirement, private_fragments, private_values, public_values)
-    _screen_public(public_request.get("genesis", {}), private_fragments, private_values, public_values)
+    _screen_public(public_requirement, private_fragments, private_values, public_references, sink="PLAN.summary")
+    _screen_public(public_request.get("genesis", {}), private_fragments, private_values, public_references, sink="genesis")
     legacy_request = {k: v for k, v in public_request.items() if k not in ("productIntent", "genesis")}
     legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
@@ -316,12 +312,12 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     for issue in bundle["issues"]:
         if set(issue["labels"]) - labels or (issue["milestoneKey"] is not None and issue["milestoneKey"] not in milestones):
             raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or milestone")
-    for path, text in files.items():
+    for index, (path, text) in enumerate(files.items()):
         screen_text(text, "genesis file")
-        _screen_public(path, private_fragments, private_values, public_values)
-        _screen_public(text, private_fragments, private_values, public_values)
+        _screen_public(path, private_fragments, private_values, public_references, sink=f"genesis.files[{index}].path")
+        _screen_public(text, private_fragments, private_values, public_references, sink=f"genesis.files[{index}].content")
     _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")},
-                   private_fragments, private_values, public_values)
+                   private_fragments, private_values, public_references, sink="genesis")
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
     identity = manifest["repositories"][0]["remote"]
     # Strict ACP shapes only, in execution order. Genesis never pushes the default branch (owner

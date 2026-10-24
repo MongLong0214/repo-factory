@@ -191,13 +191,18 @@ def test_optional_review_fields_can_be_absent():
     assert len(plan["verificationIntent"]) == 1  # Original genesis verification, no optional stage.
 
 
-@pytest.mark.parametrize("source", ["generated_file", "default_commit"])
-def test_public_output_screen_also_refuses_compiler_generated_overlaps(source, monkeypatch):
+def test_public_output_screen_also_refuses_compiler_generated_private_identifiers(monkeypatch):
     request = copy.deepcopy(REQUEST)
-    marker = "compiler-opal-marker" if source == "generated_file" else "chore: initialize project"
+    marker = "task_privateproof"
     request["reviewEvidence"] = [marker]
-    if source == "generated_file":
-        import materialize
-        monkeypatch.setattr(materialize, "_readme", lambda *args: marker)
-    with pytest.raises(ValueError, match="PUBLIC_TEXT: private fragment"):
+    import materialize
+    monkeypatch.setattr(materialize, "_readme", lambda *args: marker)
+    with pytest.raises(ValueError, match=r"PUBLIC_TEXT: private identifier at genesis.files\[\d+\].content") as caught:
         compile_bundle(request)
+    assert marker not in str(caught.value)
+
+
+def test_default_commit_prose_repeated_in_review_data_is_not_an_identifier():
+    request = copy.deepcopy(REQUEST)
+    request["reviewEvidence"] = ["chore: initialize project"]
+    assert compile_bundle(request)["genesis"]["commitMessage"] == "chore: initialize project"

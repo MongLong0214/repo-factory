@@ -25,10 +25,13 @@ The request schema is [bootstrap-request.schema.json](schemas/bootstrap-request.
 Optional `reviewEvidence` entries and `stagePlan` stay verbatim in private, review-visible
 `PLAN.verificationIntent`; a supplied `stagePlan` also adds one responsibility line per seeded issue.
 Without either field, the original PLAN intent is unchanged. These strings are data_only and
-grant no authority. Public generation never receives these fields; validation additionally
-screens private-only identifiers and overlap; explicitly public URLs, commit hashes and product
-prose remain public when repeated in review data. Internal decision/session/run IDs and paths
-remain private. ACP's actual
+grant no authority. Public generation never receives these fields. Auxiliary validation extracts
+hex tokens (7+ characters), UUIDs, ACP-prefixed IDs, absolute paths and values of explicit ID keys
+(such as `session_id` or `decision ID`). Bare declarations such as `Decision: support exports.`
+and prose overlap do not identify private review data. An extracted identifier in any public sink
+is refused with the sink location, without echoing its value. The only exemption is a whole URL
+or standalone commit-SHA token exactly matching a value in `productIntent.references`.
+Reference prose and identifiers contained in a reference receive no exemption elsewhere. ACP's actual
 intent projector validates the complete generated intent before compile success, without truncation.
 Bootstrap ends at genesis, activation, resident CTO, dedicated Buzz and handoff verification;
 product acceptance remains required in follow-on `STANDARD_WORK` runs after activation.

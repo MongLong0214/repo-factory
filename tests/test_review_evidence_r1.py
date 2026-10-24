@@ -32,8 +32,8 @@ def test_bare_private_identifiers_are_refused_across_public_surfaces(private_fie
     ("Private session_id=hidden-record.", "hidden-record"),
     ('Private session_id: "hidden-record".', "hidden-record"),
     ("Verified file /nonstandard/private/witness.txt privately.", "/nonstandard/private/witness.txt"),
-    ("Verified private decision abc-123.", "abc-123"),
-    ("Verified private decision abc_123.", "abc_123"),
+    ("Verified private decision ID abc-123.", "abc-123"),
+    ("Verified private decision ID abc_123.", "abc_123"),
 ])
 @pytest.mark.parametrize("private_field", ["reviewEvidence", "stagePlan"])
 def test_private_identifier_shapes_are_screened_without_their_context(private, token, private_field):
@@ -69,7 +69,7 @@ def test_public_generation_receives_no_private_review_fields(monkeypatch):
     assert seen == ["_public_product_text", "compile_plan", "_product_intent"]
 
 
-@pytest.mark.parametrize("word", ["reports", "42", "20261024", "user-facing", "read-only", "end-to-end"])
+@pytest.mark.parametrize("word", ["reports", "42", "2026", "user-facing", "read-only", "end-to-end"])
 def test_plain_product_words_numbers_and_hyphenated_english_are_not_private_ids(word):
     request = request_for()
     request["reviewEvidence"] = [f"Private discussion mentioned {word} during prerequisite checking."]
