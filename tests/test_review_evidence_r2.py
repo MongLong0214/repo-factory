@@ -149,7 +149,6 @@ def test_exact_reference_url_or_standalone_sha_is_allowed(private_field, referen
     ("ab12cd34" * 5, "https://example.com/commit/" + "ab12cd34" * 5),
     ("https://example.com/guide", "https://example.com/guide?decision=public"),
     ("https://example.com/guide", "https://example.com/guide?"),
-    ("https://example.com/guide", "https://example.com/guide."),
     ("https://example.com/guide", "(https://example.com/guide?)."),
 ])
 def test_reference_value_embedded_in_another_token_is_not_exempt(private_field, reference, embedded):

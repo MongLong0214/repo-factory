@@ -141,26 +141,102 @@ def _public_references(request):
 
 
 def _without_exact_references(value, references):
-    """Exempt whole listed tokens, never their substrings or surrounding prose.
+    """Exempt full reference values, preserving URL punctuation and wrapper contents.
 
-    SHA tokens may have sentence delimiters. URLs must match exactly, optionally inside
-    paired enclosures; URL path/query punctuation is never stripped from the value.
-    This is a validation copy only; generators always receive the original public text.
+    Markdown destinations, angle brackets and code spans are opaque values. Other prose
+    enclosures are scanned inside their matched delimiters, never by stripping URL bytes.
+    Only a bare URL may lose one sentence '.', ',' or ';', after exact comparison.
+    This validation copy never supplies rendered bytes.
     """
-    def keep_unlisted(match):
-        token = match.group()
-        if token in references:
-            return ""
-        sha = token.strip(".,;:!?。！？\"'()[]{}<>")
-        if sha in references and _COMMIT_SHA.fullmatch(sha):
-            return ""
-        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}"), ("<", ">"), ('"', '"'), ("'", "'")):
-            if token.startswith(opening):
-                enclosed = token[1:].rstrip(".,;:!?。！？")
-                if enclosed.endswith(closing) and enclosed[:-1] in references:
-                    return ""
-        return token
-    return re.sub(r"\S+", keep_unlisted, value)
+    if not references:
+        return value
+    references = set(references)
+    url_token = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+    hex_token = re.compile(r"[0-9a-f]+", re.IGNORECASE)
+    delimiters = "()[]<>`\"',;{}"
+
+    def closing(start, limit):
+        opening = value[start]
+        end_char = {"(": ")", "[": "]", "{": "}", '"': '"', "'": "'"}[opening]
+        depth, pos = 1, start + 1
+        while pos < limit:
+            if value[pos] == "\\":
+                pos += 2
+                continue
+            if value[pos] == end_char:
+                depth -= 1
+                if depth == 0:
+                    return pos
+            elif opening != end_char and value[pos] == opening:
+                depth += 1
+            pos += 1
+        return None
+
+    def exact(start, end):
+        if value[start:end] in references:
+            spans.append((start, end))
+            return True
+        return False
+
+    spans, pending = [], [(0, len(value))]
+    while pending:
+        start, limit = pending.pop()
+        pos = start
+        while pos < limit:
+            char = value[pos]
+            if char == "`":
+                opening = re.match(r"`+", value[pos:limit]).group()
+                end = next((m for m in re.finditer(r"`+", value[pos + len(opening):limit])
+                            if len(m.group()) == len(opening)), None)
+                if end is None:
+                    break
+                end_start = pos + len(opening) + end.start()
+                exact(pos + len(opening), end_start)
+                pos = end_start + len(opening)
+                continue
+            if char == "<":
+                end = value.find(">", pos + 1, limit)
+                if end != -1:
+                    exact(pos + 1, end)
+                    pos = end + 1
+                    continue
+            if char in "([{\"'":
+                end = closing(pos, limit)
+                if end is not None:
+                    if char == "[" and end + 1 < limit and value[end + 1] == "(":
+                        target_end = closing(end + 1, limit)
+                        if target_end is not None:
+                            pending.append((pos + 1, end))  # Labels are still public prose.
+                            exact(end + 2, target_end)  # The full destination is one value.
+                            pos = target_end + 1
+                            continue
+                    if not exact(pos + 1, end):
+                        pending.append((pos + 1, end))
+                    pos = end + 1
+                    continue
+            if pos == start or value[pos - 1].isspace() or value[pos - 1] in delimiters:
+                url = url_token.match(value, pos, limit)
+                if url:
+                    if not exact(pos, url.end()) and value[url.end() - 1] in ".,;":
+                        exact(pos, url.end() - 1)
+                    pos = url.end()
+                    continue
+                sha = hex_token.match(value, pos, limit)
+                if sha and _COMMIT_SHA.fullmatch(sha.group()):
+                    end = sha.end()
+                    if (end == limit or value[end].isspace() or value[end] in delimiters
+                            or (value[end] == "." and (end + 1 == limit or value[end + 1].isspace()
+                                                       or value[end + 1] in delimiters))):
+                        exact(pos, end)
+                        pos = end
+                        continue
+            pos += 1
+    parts, cursor = [], 0
+    for start, end in sorted(spans):
+        parts.append(value[cursor:start])
+        cursor = end
+    parts.append(value[cursor:])
+    return "".join(parts)
 
 
 def _screen_public(value, private_fragments=(), private_values=(), public_references=(), *, sink="public"):
