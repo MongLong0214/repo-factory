@@ -132,6 +132,11 @@ def validate_request(request: Dict[str, Any]) -> None:
     필드인데 `additionalProperties: false` 인 요청 스키마 어디에도 선언돼 있지 않았고,
     프로덕션 경로가 요청을 검증하지 않아서 아무도 몰랐다."""
     invalid = sorted(Draft202012Validator(_schema("bootstrap-request.schema.json")).iter_errors(request), key=str)
+    if "supersedesProjectId" in request and (
+        not isinstance(request["supersedesProjectId"], str)
+        or not re.fullmatch(r"[^\x00-\x1f\x7f]+", request["supersedesProjectId"])
+    ):
+        raise PlanError("PROJECT_ID_INVALID: supersedesProjectId must be nonempty and contain no control characters")
     if invalid:
         if any(list(e.path) == ["projectId"] for e in invalid):
             # jsonschema's message includes the rejected value; never expose it.

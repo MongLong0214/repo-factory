@@ -7,13 +7,16 @@ const load = (path: string) => import(pathToFileURL(`${src}/${path}`).href);
 const { projectManifestSchema, manifestDigest } = await load("contracts/manifest.ts");
 const { digestOf } = await load("core/digest.ts");
 const { parseGenesis, genesisDigest } = await load("bootstrap/genesis-bundle.ts");
-const { planForSubmission, plannedBootstrapOutputs, executablePlanOf } = await load("bootstrap/bootstrap-plan.ts");
+const { planForSubmission, plannedBootstrapOutputs, executablePlanOf, bootstrapPlanIntent } = await load("bootstrap/bootstrap-plan.ts");
+const { submittedPlanSchema } = await load("bootstrap/plan-input-schema.ts");
 const { repoFactoryPlanFixtureSchema } = await load("bootstrap/repo-factory-producer.ts");
 const { genesisRepositoryOperations, preflightGitHubOperations } = await load("bootstrap/repo-factory-github.ts");
 const { parseGitHubIdentity } = await load("bootstrap/github-write-port.ts");
 const plan = JSON.parse(readFileSync(0, "utf8"));
 const manifest = projectManifestSchema.parse(plan.projectManifest);
 const result: Record<string, unknown> = { manifest, manifestDigest: manifestDigest(manifest) };
+const parsed = submittedPlanSchema.safeParse(plan);
+result.parsedPlan = parsed.success ? parsed.data : null;
 try {
   const genesis = parseGenesis(plan.genesis, manifest);
   result.normalization = { allowed: true, genesis };
@@ -29,6 +32,8 @@ result.publicOperations = genesisRepositoryOperations(identity, manifest.ciWorkf
 const content = submission.allowed ? submission.value : plan;
 const planDigest = digestOf(content);
 if (submission.allowed) {
+  result.intent = bootstrapPlanIntent({ runId: "rf58-contract", planArtifact: { digest: planDigest, content },
+    tasks: [{ taskId: "bootstrap-task", title: "Bootstrap and verify handoff", state: "READY", spec: {} }] });
   const outputs = plannedBootstrapOutputs({ runId: "rf58-contract", planArtifact: { digest: planDigest, content } }, manifest);
   result.outputs = outputs;
   if (outputs.allowed) {

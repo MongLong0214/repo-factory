@@ -64,6 +64,8 @@ _PRIVATE_VALUE = re.compile("|".join((
     r"\b(?:session|run|actor|room)[_-](?:id[\s:=_-]*)?[\w-]+|\buser[_-]id[\s:=_-]*[\w-]+",
     r"\b(?:actor|identity|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?[\"']?\s*[:=]\s*[\"']?[\w/~][^\s,]*",
     r"\brun[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
+    r"\bdecision[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
+    r"\b(?:session|decision)(?:[_ -]?id)?[\"']?(?:\s*[:=_-]\s*|\s+)[\"']?[0-9a-f]{8,}\b",
     r"\b(?:gpt-\d[\w.-]*|claude-(?:sonnet|opus|haiku)[\w.-]*)\b",
     r"\b(?:ACP|Hermes|Claude Code)\b",
     r"\b(?:actor|identity)(?:[_ -]?id)?\s+is\s+[\w]+(?:[-_][\w]+)+\b",
@@ -86,18 +88,29 @@ def _private_fragments(request):
             words = _words(sentence)
             fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
                              for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1))
+    for text in _private_review_text(request):
+        words = _words(text)
+        fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
+                         for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1))
     return fragments
 
 
-def _screen_public(value, private_fragments=()):
+def _private_review_text(request):
+    return [*request.get("reviewEvidence", []),
+            *([request["stagePlan"]] if "stagePlan" in request else [])]
+
+
+def _screen_public(value, private_fragments=(), private_values=()):
     """Reject unsafe public input unchanged; never classify or rewrite private instructions."""
     if isinstance(value, dict):
         for item in value.values():
-            _screen_public(item, private_fragments)
+            _screen_public(item, private_fragments, private_values)
     elif isinstance(value, list):
         for item in value:
-            _screen_public(item, private_fragments)
+            _screen_public(item, private_fragments, private_values)
     elif isinstance(value, str):
+        if any(text.casefold() in value.casefold() for text in private_values):
+            raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
         words = _words(value)
         if any(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) in private_fragments
                for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)):
@@ -106,13 +119,13 @@ def _screen_public(value, private_fragments=()):
             raise ValueError("PUBLIC_TEXT: private identity or runtime value")
 
 
-def _public_product_text(request, private_fragments):
+def _public_product_text(request, private_fragments, private_values):
     """Only the request author's explicit public fields can supply public product prose."""
     intent = request.get("productIntent", {})
     summary = intent.get("summary", DEFAULT_PUBLIC_SUMMARY)
     references = intent.get("references", [])
     requirements = intent.get("publicRequirements", [])
-    _screen_public([summary, *references, *requirements], private_fragments)
+    _screen_public([summary, *references, *requirements], private_fragments, private_values)
     sections = [summary]
     if references:
         sections.append("References:\n" + "\n".join(f"- {ref}" for ref in references))
@@ -164,8 +177,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     if len(request["repositories"]) != 1 or request["repositories"][0]["role"] != "primary":
         raise ValueError("ACP genesis currently supports exactly one primary repository")
     private_fragments = _private_fragments(request)
-    public_requirement = _public_product_text(request, private_fragments)
-    _screen_public(request.get("genesis", {}), private_fragments)
+    private_values = _private_review_text(request)
+    public_requirement = _public_product_text(request, private_fragments, private_values)
+    _screen_public(request.get("genesis", {}), private_fragments, private_values)
     legacy_request = {k: v for k, v in request.items() if k not in ("productIntent", "genesis")}
     legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
@@ -219,9 +233,10 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
             raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or milestone")
     for path, text in files.items():
         screen_text(text, "genesis file")
-        _screen_public(path)
-        _screen_public(text)
-    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")})
+        _screen_public(path, private_fragments, private_values)
+        _screen_public(text, private_fragments, private_values)
+    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")},
+                   private_fragments, private_values)
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
     normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle}, acp_src)
     identity = manifest["repositories"][0]["remote"]
@@ -246,16 +261,29 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         {"operationId": "set-default-branch", "resourceType": "setting", "resourceIdentity": identity + "#default-branch",
          "desiredState": {"defaultBranch": "dev"}},
     ]
+    # These PLAN strings are private data_only review context, never authority or genesis text.
+    verification_intent = [
+        "Run declared local tests and required CI with Actions provenance at the genesis PR head "
+        "before ACP merges into main; verify merged main before activation",
+        *private_values,
+        *[
+            f"issue {issue['key']}: product acceptance = the seeded issue body's acceptance; "
+            f"verified by a follow-on STANDARD_WORK run of project {manifest['projectId']} that the resident CTO "
+            "creates after activation; handoff: the issue reaches the resident CTO in the activation "
+            "handoff and is not complete until that run's verification passes."
+            for issue in bundle["issues"]
+        ],
+    ]
     return {
         "summary": public_requirement,
         "dependencies": [], "repositoryIntent": [identity],
-        "verificationIntent": ["Run declared local tests and required CI with Actions provenance at the genesis PR head "
-                               "before ACP merges into main; verify merged main before activation"],
+        "verificationIntent": verification_intent,
         "knownConflicts": [], "risks": [], "removedOverengineering": ["repo-local runtime and extra approval receipts"],
         "bootstrapOperationId": operation_id,
         "requestDigest": digest(request, volatile="strip"),
         "projectManifest": normalized["manifest"], "projectManifestDigest": normalized["manifestDigest"],
         "githubOperations": operations, "genesis": normalized["genesis"], "genesisDigest": normalized["genesisDigest"],
+        **({"supersedesProjectId": request["supersedesProjectId"]} if "supersedesProjectId" in request else {}),
     }
 
 

@@ -22,6 +22,12 @@ python3 scripts/bootstrap.py --request request.json --verification verification.
 ```
 
 The request schema is [bootstrap-request.schema.json](schemas/bootstrap-request.schema.json).
+Optional `reviewEvidence` entries and `stagePlan` stay verbatim in private, review-visible
+`PLAN.verificationIntent`, followed by one responsibility line per seeded issue. These strings
+are data_only and grant no authority. Public sinks refuse their full text or four-word overlaps.
+Bootstrap ends at genesis, activation, resident CTO, dedicated Buzz and handoff verification;
+product acceptance remains required in follow-on `STANDARD_WORK` runs after activation.
+Optional `supersedesProjectId` goes to the same-named PLAN field; RF checks shape, ACP authority/state.
 For a Node repository, a real verification list is `[{"id":"test","argv":["npm","test"]}]`.
 The output includes the full normalized manifest plus `PLAN.genesis` with base64 file bytes,
 SHA-256 digests, labels, milestones and issues. It follows the exact
@@ -31,6 +37,7 @@ with the autoInit main head as its parent. ACP opens its PR into main, runs loca
 and required CI with Actions provenance, and merges it with a merge commit inside the bootstrap
 (the public repository is created with autoInit=true; the default branch is never pushed directly); dev is
 then created from the merged main and becomes the default branch.
+Node CI checks out the exact PR head, or `github.sha` for push and merge-group events.
 CommitLore is preferred because RF does not seed its hooks/configuration.
 
 Input and outgoing bytes are secret-screened before writing. Git hooks remain enabled.
