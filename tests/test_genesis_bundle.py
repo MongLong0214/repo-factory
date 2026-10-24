@@ -52,6 +52,9 @@ def require_acp():
 def public_texts(plan):
     bundle = plan["genesis"]
     return {
+        "summary": plan["summary"],
+        "productIntent.summary": bundle["productIntent"]["summary"],
+        "productIntent.references": json.dumps(bundle["productIntent"]["references"], ensure_ascii=False),
         **{entry["path"]: base64.b64decode(entry["contentBase64"]).decode("utf-8")
            for entry in bundle["files"]},
         **{key: json.dumps(bundle[key], ensure_ascii=False)
@@ -90,9 +93,10 @@ def test_verbatim_conversation_is_private_but_reaches_the_resident_handoff(struc
     if structured:
         request["productIntent"] = {
             "summary": "A README verification tool.", "references": ["https://example.org/product"],
-            "ownerInstructions": ["Check the whole README (owner 2026-10-10).",
-                                  "Report user-visible mismatches without leaking the parent environment.",
-                                  "Create through ACP and Repo Factory; no manual room, identity or CTO."]}
+            "ownerInstructions": ["The owner supplied private operational directions.",
+                                  "Create through ACP and Repo Factory; no manual room, identity or CTO."],
+            "publicRequirements": ["Check the whole README.",
+                                   "Report user-visible mismatches without leaking the parent environment."]}
     original = copy.deepcopy(request)
     plan = compile_bundle(request)
     for location, text in public_texts(plan).items():
@@ -105,15 +109,17 @@ def test_verbatim_conversation_is_private_but_reaches_the_resident_handoff(struc
             assert "Check the whole README" in public_texts(plan)[location]
             assert "user-visible mismatches" in public_texts(plan)[location]
     assert request == original
-    assert request["seed"] in plan["summary"]
-    assert request["seed"] in plan["genesis"]["productIntent"]["summary"]
+    assert request["seed"] not in plan["summary"]
+    assert request["seed"] not in plan["genesis"]["productIntent"]["summary"]
     checked = acp_check(plan)
     handoff = checked["outputs"]["value"]["handoff"]
     decision = json.loads(handoff["recentDecisions"][0])
-    assert request["seed"] in decision["productIntent"]["summary"]
-    assert "https://example.org/product" in decision["productIntent"]["references"]
+    assert decision["productIntent"]["ownerInstructions"] == [request["seed"], *request.get("productIntent", {}).get("ownerInstructions", [])]
     if structured:
-        assert decision["productIntent"]["ownerInstructions"] == request["productIntent"]["ownerInstructions"]
+        assert "https://example.org/product" in decision["productIntent"]["references"]
+    else:
+        assert decision["productIntent"]["references"] == []
+        assert "https://example.org/product" in decision["productIntent"]["ownerInstructions"][0]
 
 
 PRIVATE_MARKERS = [
@@ -126,14 +132,20 @@ PRIVATE_MARKERS = [
 
 
 @pytest.mark.parametrize("marker", PRIVATE_MARKERS)
-def test_private_values_in_seed_never_reach_public_text(marker):
-    request = {**copy.deepcopy(REQUEST), "seed": "Owner conversation: " + marker}
+@pytest.mark.parametrize("field", ["seed", "ownerInstructions"])
+def test_private_values_in_seed_never_reach_public_text(marker, field):
+    request = copy.deepcopy(REQUEST)
+    if field == "seed":
+        request["seed"] = "Owner conversation: " + marker
+    else:
+        request["productIntent"] = {"summary": "A README checking tool.", "references": [], "ownerInstructions": [marker]}
     plan = compile_bundle(request)
-    assert marker in plan["genesis"]["productIntent"]["summary"]
+    intent = plan["genesis"]["productIntent"]
+    assert marker in intent["ownerInstructions"][0 if field == "seed" else 1]
     assert all(marker not in text for text in public_texts(plan).values())
 
 
-@pytest.mark.parametrize("surface", ["summary", "reference", "instruction", "commit", "issue", "milestone", "label"])
+@pytest.mark.parametrize("surface", ["summary", "reference", "requirement", "commit", "issue", "milestone", "label"])
 @pytest.mark.parametrize("marker", PRIVATE_MARKERS)
 def test_explicit_public_text_refuses_private_values_without_echoing_them(surface, marker):
     request = copy.deepcopy(REQUEST)
@@ -142,8 +154,8 @@ def test_explicit_public_text_refuses_private_values_without_echoing_them(surfac
         request["productIntent"]["summary"] = marker
     elif surface == "reference":
         request["productIntent"]["references"] = [marker]
-    elif surface == "instruction":
-        request["productIntent"]["ownerInstructions"] = ["Keep the product simple. " + marker]
+    elif surface == "requirement":
+        request["productIntent"]["publicRequirements"] = ["Keep the product simple. " + marker]
     else:
         request["genesis"] = {
             "commitMessage": marker if surface == "commit" else "chore: initialize",
@@ -269,12 +281,14 @@ def test_generated_verification_really_runs(tmp_path):
 
 def test_product_reference_and_owner_instructions_survive_the_plan_and_issue():
     request = copy.deepcopy(REQUEST)
-    request["productIntent"] = {"summary": request["seed"], "references": ["https://evergif.com/"],
-                                "ownerInstructions": ["Keep animation editing as the product."]}
+    request["productIntent"] = {"summary": "Edit animated images in a browser.", "references": ["https://evergif.com/"],
+                                "ownerInstructions": ["Keep animation editing as the product."],
+                                "publicRequirements": ["Support frame timing and export."]}
     plan = compile_bundle(request)
-    assert plan["genesis"]["productIntent"] == request["productIntent"]
-    assert request["seed"] in plan["summary"]
+    assert plan["genesis"]["productIntent"]["ownerInstructions"] == [request["seed"], *request["productIntent"]["ownerInstructions"]]
+    assert request["seed"] not in plan["summary"]
     assert "https://evergif.com/" in plan["genesis"]["issues"][0]["body"]
+    assert "Support frame timing and export." in plan["genesis"]["issues"][0]["body"]
     assert plan["genesis"]["issues"][0]["milestoneKey"] == plan["genesis"]["milestones"][0]["key"]
 
 
@@ -282,8 +296,10 @@ def test_a_shortened_product_summary_cannot_erase_the_original_seed_or_reference
     request = copy.deepcopy(REQUEST)
     request["productIntent"] = {"summary": "Animation tool", "references": [], "ownerInstructions": []}
     intent = compile_bundle(request)["genesis"]["productIntent"]
-    assert REQUEST["seed"] in intent["summary"]
-    assert "https://evergif.com/" in intent["references"]
+    assert intent["summary"] == "Animation tool"
+    assert intent["references"] == []
+    assert REQUEST["seed"] in intent["ownerInstructions"]
+    assert "https://evergif.com/" in intent["ownerInstructions"][0]
 
 
 @pytest.mark.parametrize("field", ["seed", "issue", "milestone"])

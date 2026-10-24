@@ -20,8 +20,8 @@ def plan():
         "references": [],
         "ownerInstructions": ["Public repository only.", "Name: ReadmeTool.",
                               "Visibility: public.", "Repository name: ReadmeTool.",
-                              "The repository must be public.", "Create a public repository named ReadmeTool.",
-                              "Check private repositories as well as public ones."],
+                              "The repository must be public.", "Create a public repository named ReadmeTool."],
+        "publicRequirements": ["Check private repositories as well as public ones."],
     }
     return compile_bundle(request)
 

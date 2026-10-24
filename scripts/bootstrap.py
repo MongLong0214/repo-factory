@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import json
 import os
 from pathlib import Path
@@ -46,21 +45,15 @@ def acp_normalize(payload, acp_src):
     return json.loads(done.stdout)
 
 
+DEFAULT_PUBLIC_SUMMARY = "Implement the product requirements described in the project backlog."
+
+
 def _product_intent(request):
-    """Private provenance for ACP's resident handoff; never render this into public bytes."""
-    intent = request.get("productIntent")
-    if intent is not None:
-        # Explicit structured intent supplements the verbatim seed; never replace the owner's idea.
-        intent = copy.deepcopy(intent)
-        if request["seed"] not in intent["summary"]:
-            intent["summary"] = request["seed"] + "\n\n" + intent["summary"]
-        for reference in re.findall(r"https?://[^\s<>]+", request["seed"]):
-            if reference not in intent["references"]:
-                intent["references"].append(reference)
-        return intent
-    return {"summary": request["seed"],
-            "references": re.findall(r"https?://[^\s<>]+", request["seed"]),
-            "ownerInstructions": []}
+    """Pinned ACP shape: public summary/references, with provenance only in private instructions."""
+    intent = request.get("productIntent", {})
+    return {"summary": intent.get("summary", DEFAULT_PUBLIC_SUMMARY),
+            "references": list(intent.get("references", [])),
+            "ownerInstructions": [request["seed"], *intent.get("ownerInstructions", [])]}
 
 
 _PRIVATE_VALUE = re.compile("|".join((
@@ -69,50 +62,57 @@ _PRIVATE_VALUE = re.compile("|".join((
     r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b",
     r"\b\d{9,}\b",
     r"\b(?:session|run|actor|room)[_-](?:id[\s:=_-]*)?[\w-]+|\buser[_-]id[\s:=_-]*[\w-]+",
-    r"\b(?:actor|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?\s*[:=]\s*[\w/~][^\s,]*",
+    r"\b(?:actor|identity|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?[\"']?\s*[:=]\s*[\"']?[\w/~][^\s,]*",
+    r"\brun[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
     r"\b(?:gpt-\d[\w.-]*|claude-(?:sonnet|opus|haiku)[\w.-]*)\b",
     r"\b(?:ACP|Hermes|Claude Code)\b",
+    r"\b(?:actor|identity)(?:[_ -]?id)?\s+is\s+[\w]+(?:[-_][\w]+)+\b",
+    r"file://",
 )), re.IGNORECASE)
 
 
-def _screen_public(value, seed=None):
-    """Refuse private value shapes without echoing the offending input. Secrets are screened separately."""
+# Compare words, not inferred intent. Four-word windows also catch partial sentences.
+PRIVATE_FRAGMENT_WORDS = 4
+
+
+def _words(text):
+    return re.findall(r"\w+(?:[-'’]\w+)*", text.casefold())
+
+
+def _private_fragments(request):
+    fragments = set()
+    for text in [request["seed"], *request.get("productIntent", {}).get("ownerInstructions", [])]:
+        for sentence in re.split(r"[.!?。！？;]+", text):
+            words = _words(sentence)
+            fragments.update(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS])
+                             for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1))
+    return fragments
+
+
+def _screen_public(value, private_fragments=()):
+    """Reject unsafe public input unchanged; never classify or rewrite private instructions."""
     if isinstance(value, dict):
         for item in value.values():
-            _screen_public(item, seed)
+            _screen_public(item, private_fragments)
     elif isinstance(value, list):
         for item in value:
-            _screen_public(item, seed)
+            _screen_public(item, private_fragments)
     elif isinstance(value, str):
-        if _PRIVATE_VALUE.search(value) or (seed and seed in value):
-            raise ValueError("PUBLIC_TEXT: private provenance is not a public product requirement")
+        words = _words(value)
+        if any(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) in private_fragments
+               for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)):
+            raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
+        if _PRIVATE_VALUE.search(value):
+            raise ValueError("PUBLIC_TEXT: private identity or runtime value")
 
 
-def _public_product_text(request):
-    """Project structured product requirements, with a neutral fallback instead of conversation."""
+def _public_product_text(request, private_fragments):
+    """Only the request author's explicit public fields can supply public product prose."""
     intent = request.get("productIntent", {})
-    summary = intent.get("summary", "").strip()
-    if not summary or summary == request["seed"].strip():
-        summary = "Implement the product requirements described in the project backlog."
-    else:
-        _screen_public(summary, request["seed"])
+    summary = intent.get("summary", DEFAULT_PUBLIC_SUMMARY)
     references = intent.get("references", [])
-    _screen_public(references, request["seed"])
-    requirements = []
-    for instruction in intent.get("ownerInstructions", []):
-        # Dated attribution and bootstrap directions belong to the private handoff.
-        instruction = re.sub(r"\s*\(owner \d{4}-\d{2}-\d{2}\)", "", instruction, flags=re.IGNORECASE)
-        for sentence in re.split(r"(?<=[.!?])\s+", instruction):
-            if not re.search(r"\b(?:create|bootstrap|provision|dispatch)\b.*\b(?:ACP|Repo Factory|CTO|Hermes|Buzz|session|room|identity)\b|^Motivation:",
-                             sentence, re.IGNORECASE):
-                # Repository creation conditions are not capabilities or restrictions of the product.
-                if re.search(r"^(?:Name|(?:Repository|Repo) name|Visibility)\s*:|"
-                             r"^(?:Public|Private)\s+(?:GitHub\s+)?(?:repository|repo)\b|"
-                             r"^(?:The\s+)?(?:repository|repo)\s+(?:must|should)\s+be\s+(?:public|private)\b|"
-                             r"^(?:Create|Name|Rename)\b.*\b(?:repository|repo)\b", sentence, re.IGNORECASE):
-                    continue
-                _screen_public(sentence, request["seed"])
-                requirements.append(sentence)
+    requirements = intent.get("publicRequirements", [])
+    _screen_public([summary, *references, *requirements], private_fragments)
     sections = [summary]
     if references:
         sections.append("References:\n" + "\n".join(f"- {ref}" for ref in references))
@@ -163,8 +163,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         raise ValueError("UNSUPPORTED_VERIFICATION: at least one real project test command is required")
     if len(request["repositories"]) != 1 or request["repositories"][0]["role"] != "primary":
         raise ValueError("ACP genesis currently supports exactly one primary repository")
-    public_requirement = _public_product_text(request)
-    _screen_public(request.get("genesis", {}), request["seed"])
+    private_fragments = _private_fragments(request)
+    public_requirement = _public_product_text(request, private_fragments)
+    _screen_public(request.get("genesis", {}), private_fragments)
     legacy_request = {k: v for k, v in request.items() if k not in ("productIntent", "genesis")}
     legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
@@ -246,7 +247,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
          "desiredState": {"defaultBranch": "dev"}},
     ]
     return {
-        "summary": "\n\n".join([request["seed"], intent["summary"], *intent["references"], *intent["ownerInstructions"]]),
+        "summary": public_requirement,
         "dependencies": [], "repositoryIntent": [identity],
         "verificationIntent": ["Run declared local tests and required CI with Actions provenance at the genesis PR head "
                                "before ACP merges into main; verify merged main before activation"],

@@ -50,7 +50,7 @@ def test_capitalized_repository_compiles_through_real_acp(explicit, expected, tm
     assert files[".github/workflows/project-ci.yml"] == compile_plan(
         request_for("freshreadme"), COMMANDS, operation_id="11111111-2222-3333-4444-555555555555")["files"][".github/workflows/project-ci.yml"]
     assert request["seed"] not in plan["genesis"]["issues"][0]["body"]
-    assert request["seed"] in plan["genesis"]["productIntent"]["summary"]
+    assert request["seed"] in plan["genesis"]["productIntent"]["ownerInstructions"]
     handoff = checked["outputs"]["value"]["handoff"]
     assert handoff["repositoryFacts"][0]["identity"] == "github:example/FreshReadme"
     decisions = [json.loads(row) for row in handoff["recentDecisions"]]

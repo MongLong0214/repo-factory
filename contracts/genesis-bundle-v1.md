@@ -46,6 +46,36 @@ The project manifest in the same PLAN must:
 Secret screen: ACP refuses a bundle whose file bytes or issue/milestone text contain credential-shaped content.
 RF additionally requires labels, milestones and issues to each be non-empty.
 
+RF request public/private boundary: `seed` and `productIntent.ownerInstructions` are private
+provenance, never sources for public prose. Request `productIntent.summary`, `references` and
+optional `publicRequirements: [str]` are explicit public-by-contract text approved by the
+CEO/CTO request author, as are the supplied genesis commit message and issue/milestone/label
+text. Every approved public requirement is rendered verbatim in README/PRD and default backlog.
+RF refuses invalid public text instead of rewriting or dropping it. Without structured intent,
+RF uses a neutral statement, never the seed. Publishing an instruction requires moving an
+approved product requirement to the public field; leaving the private wording duplicated there
+can trigger the overlap refusal.
+
+`PUBLIC_TEXT` reports fixed categories without echoing values: private fragment or concrete
+identity/local-path/session/run/model/runtime value. Private overlap is a normalized
+substring of four consecutive Unicode words within a seed/owner-instruction sentence;
+case and whitespace do not matter, and sentence punctuation is ignored. This catches full
+sentences and partial sentences of at least four words. It can refuse common phrases and does
+not detect every shorter fragment, paraphrase or unrecognized private identity. Public authors
+remain responsible for approval, and the CEO's final public-body review stays. RF does not
+detect arbitrary private natural-language content or classify product meaning. Creation,
+visibility and naming settings belong in request metadata, but RF does not semantically reject
+approved public prose. "Create a repository comparison report after each scan." and "Public
+repository READMEs must be checked for broken links." are accepted and published verbatim.
+
+The pinned ACP bundle shape above does not gain `publicRequirements`. RF renders that input
+array into the inline files/default backlog. The wire `genesis.productIntent` is private
+handoff: its summary and references use only explicit public input (or a fixed neutral summary
+when intent is absent). The private ownerInstructions array contains the verbatim seed first,
+then the untouched original ownerInstructions. References embedded in the seed remain there;
+RF never extracts them into public fields. ACP carries those private instructions and the full
+inline genesis into its resident handoff. No private provenance is copied to committed files.
+
 ACP project ids are permanent primary keys; retirement does not free an id. Re-bootstrap
 of the same repository after retirement requires a new explicit request `projectId`, e.g.
 `freshreadme-2`. ACP links the retired project via `supersedes_project_id` using repository

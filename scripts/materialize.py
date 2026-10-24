@@ -66,7 +66,7 @@ def _readme(repository_name: str, seed: str, commands: List[Dict[str, Any]]) -> 
         "",
         "## Target features",
         "",
-        seed.strip(),
+        seed,
         "",
         "Target features become usable only after the corresponding slice is implemented and",
         "verified against its seeded issue and milestone acceptance criteria.",
@@ -162,7 +162,7 @@ def artifact_coverage(artifacts, files: Dict[str, str], manifest: Dict[str, Any]
 def _spec(repository_name: str, seed: str, commands, *, acceptance_oracle: bool = False) -> str:
     return "\n".join([
         f"# {repository_name} — specification", "",
-        "## Goal", "", seed.strip(), "",
+        "## Goal", "", seed, "",
         "## Non-goals", "",
         "- Anything the goal above does not name. A non-goal added later is a scope change and",
         "  belongs in a decision record, not here.", "",
