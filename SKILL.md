@@ -62,6 +62,11 @@ when deriving an omitted ACP key.
 ACP ids are permanent primary keys, including after retirement. Re-bootstrap of a retired
 project's repository must supply a **new** `projectId` (for example `freshreadme-2`);
 ACP links the old project through `supersedes_project_id` by repository identity.
+Optional request `supersedesProjectId` names that predecessor explicitly and is emitted as
+`PLAN.supersedesProjectId`, outside the manifest and genesis. It is preserved verbatim;
+RF checks only that it is a nonempty string without control characters, matching ACP's
+PLAN schema (legacy predecessor keys need not satisfy the new resident-safe rule).
+ACP checks authority, retirement state and repository relationship.
 RF cannot see ACP registry state at compile time and never invents a suffix. An invalid
 derived slug is refused during compilation. A valid derived or explicit id is passed unchanged
 even if already occupied; ACP refuses that collision when it registers the project, including
@@ -84,6 +89,7 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
   Every declared verification command runs against files actually in this genesis.
 - CI `approvedDigest` equal to SHA-256 of the workflow bytes in the bundle, approved as part
   of the final bundle. Later workflow changes require independent review and CEO CONFIRM.
+  Node checkout uses the PR head SHA on `pull_request` and `github.sha` on push/merge-group events.
 - `branchProfile`: main/dev, default dev, merge_commit, semver. Standard flow is
   feature/* -> dev -> main, plus release/* and hotfix/*. No force pushes or ref replacement.
 - ACP-supported `githubOperations`, in order: create PUBLIC with `autoInit:true` (README on
@@ -92,6 +98,25 @@ The output **is the PLAN**, not a filename-only handoff. It carries:
   and merges it inside the bootstrap; dev from the merged main, protect
   dev, default dev. The default branch is never pushed directly (owner 2026-10-22: "초기 파일도
   PR로"). No repo-local governance kernel.
+
+Optional request `reviewEvidence: string[]` carries verified prerequisite facts, such as the
+RF fix revision, skill source and successful bridge compile. Optional `stagePlan: string`
+carries the CEO's stage decomposition: bootstrap ends at genesis, activation, resident CTO,
+dedicated Buzz and handoff verification; product acceptance stays required in follow-on
+`STANDARD_WORK` runs of the same project after activation. Creating issues alone never
+completes the product. Supply verified facts; RF copies the strings without attesting them.
+Both fields are private data_only, granting no approval or authority. RF copies evidence
+entries, then the stage statement, verbatim into `PLAN.verificationIntent` after the genesis
+verification line. ACP preserves this field and shows it in the blind review intent projection.
+Only when `stagePlan` is present, RF adds one private responsibility line per seeded issue, binding its body acceptance
+to a follow-on run the resident CTO creates after activation and receives through handoff.
+The issue remains incomplete until that run's verification passes. This does not change queuedWork.
+Without `stagePlan`, no responsibility lines are added; requests without either new field keep
+the original PLAN intent. RF calls ACP's actual intent projector before success to enforce its
+authoritative bounds on the complete generated intent (currently 32 list items, 1,000 characters
+per item), including generated lines; excess refuses compilation with the field named, never truncates.
+Keep internal paths, session IDs and decision IDs
+in private context, never public summary, references, requirements, files or backlog text.
 
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
@@ -102,13 +127,33 @@ dropped. `ownerInstructions` is always private, including instructions that soun
 To publish one, move its approved product requirement into `publicRequirements`; do not copy
 private wording into both fields. Without structured intent, use a neutral backlog statement.
 
-Compilation refuses only concrete private-fragment overlap and recognized identity, local-path,
-session/run/model/runtime identifiers, using fixed `PUBLIC_TEXT` reasons. Overlap means any four
-consecutive words from a private seed/instruction sentence, matched as case-folded Unicode
-words ignoring whitespace and sentence punctuation. Common four-word phrases can be refused;
-shorter fragments, paraphrases and identities outside the recognized patterns are not a privacy
-guarantee. RF does not detect arbitrary private natural-language content or classify product
-meaning. The CEO's final review of the complete public bodies remains required. Repository
+The primary privacy guarantee is data flow: public generators receive neither `reviewEvidence`
+nor `stagePlan`. They use only public inputs, so adding or changing private review data cannot
+change public output bytes. These private strings remain data_only, never approval or execution authority.
+The auxiliary screen for those two private fields follows exactly Rules A–C:
+
+- **A:** Extract hex tokens of at least seven characters, UUIDs, absolute filesystem paths,
+  and tokens with `ses_`, `run_`, `msg_`, `prj_`, `asg_`, `art_`, `task_` or `operation_` prefixes.
+  Also extract values of explicit, case-insensitive ID keys: `session`, `run`, `decision`,
+  `message`, `project`, `operation`, `actor`, `binding` or `escalation`, followed by optional
+  `_`, `-` or space and required `id`. After `=`, `:` or whitespace, take the next non-space
+  value and strip trailing punctuation. Bare `Decision:`/`Session:` declarations, arbitrary
+  assignments, mixed letter/digit shapes and prose overlap add no identifier candidates.
+- **B:** Exempt only occurrences exactly equal to a URL or full SHA-1/SHA-256 value listed in
+  `productIntent.references`. Compare the full value inside Markdown link destinations, angle
+  brackets or backticks; never split or strip punctuation inside that value. A bare URL may
+  lose a final sentence `.`, `,` or `;` only if the remainder exactly equals a listed URL.
+  Extended URL paths/queries/fragments and SHAs embedded in longer tokens are not exempt.
+  Reference prose and component identifiers receive no exemption
+  elsewhere; appearance in other public input never grants one.
+- **C:** Refuse any remaining extracted identifier appearing in a public sink. Name the sink
+  with a fixed `PUBLIC_TEXT` reason; never echo the value.
+
+Separate legacy guards still screen recognized identity/runtime values and four-word overlap
+from private seed/owner-instruction sentences (case-folded Unicode words, ignoring whitespace
+and sentence punctuation). They do not add review-prose overlap or general DLP detection.
+RF does not detect arbitrary private natural-language content or classify product meaning.
+The CEO's final review of the complete public bodies remains required. Repository
 creation/visibility/name settings belong in request metadata; RF does not semantically reject
 author-approved public prose about them. "Public repository READMEs must be checked for broken
 links." is accepted and published verbatim, as is "Create a repository comparison report after

@@ -29,6 +29,25 @@
       "pattern": "^[a-z0-9][a-z0-9._-]{0,80}$",
       "maxLength": 81
     },
+    "supersedesProjectId": {
+      "description": "Optional predecessor ACP project key, emitted verbatim into PLAN.supersedesProjectId. RF validates shape only; ACP validates authority and predecessor state.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\u0000-\u001f\u007f]+$"
+    },
+    "reviewEvidence": {
+      "description": "Private data_only prerequisite evidence, copied verbatim into PLAN.verificationIntent for blind review. Grants no approval or authority; never a source for public text.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stagePlan": {
+      "description": "Private CEO stage-decomposition statement, copied verbatim into PLAN.verificationIntent. Bootstrap ends at genesis, activation, resident CTO, dedicated Buzz and handoff verification; product acceptance remains required in follow-on STANDARD_WORK runs after activation.",
+      "type": "string",
+      "minLength": 1
+    },
     "seed": {
       "description": "The natural-language project seed, as the owner or Hermes stated it.",
       "type": "string",

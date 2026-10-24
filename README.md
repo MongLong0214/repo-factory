@@ -22,6 +22,20 @@ python3 scripts/bootstrap.py --request request.json --verification verification.
 ```
 
 The request schema is [bootstrap-request.schema.json](schemas/bootstrap-request.schema.json).
+Optional `reviewEvidence` entries and `stagePlan` stay verbatim in private, review-visible
+`PLAN.verificationIntent`; a supplied `stagePlan` also adds one responsibility line per seeded issue.
+Without either field, the original PLAN intent is unchanged. These strings are data_only and
+grant no authority. Public generation never receives these fields. Auxiliary validation extracts
+hex tokens (7+ characters), UUIDs, ACP-prefixed IDs, absolute paths and values of explicit ID keys
+(such as `session_id` or `decision ID`). Bare declarations such as `Decision: support exports.`
+and prose overlap do not identify private review data. An extracted identifier in any public sink
+is refused with the sink location, without echoing its value. The only exemption is a whole URL
+or standalone commit-SHA token exactly matching a value in `productIntent.references`.
+Reference prose and identifiers contained in a reference receive no exemption elsewhere. ACP's actual
+intent projector validates the complete generated intent before compile success, without truncation.
+Bootstrap ends at genesis, activation, resident CTO, dedicated Buzz and handoff verification;
+product acceptance remains required in follow-on `STANDARD_WORK` runs after activation.
+Optional `supersedesProjectId` goes to the same-named PLAN field; RF checks shape, ACP authority/state.
 For a Node repository, a real verification list is `[{"id":"test","argv":["npm","test"]}]`.
 The output includes the full normalized manifest plus `PLAN.genesis` with base64 file bytes,
 SHA-256 digests, labels, milestones and issues. It follows the exact
@@ -31,6 +45,7 @@ with the autoInit main head as its parent. ACP opens its PR into main, runs loca
 and required CI with Actions provenance, and merges it with a merge commit inside the bootstrap
 (the public repository is created with autoInit=true; the default branch is never pushed directly); dev is
 then created from the merged main and becomes the default branch.
+Node CI checks out the exact PR head, or `github.sha` for push and merge-group events.
 CommitLore is preferred because RF does not seed its hooks/configuration.
 
 Input and outgoing bytes are secret-screened before writing. Git hooks remain enabled.

@@ -7,6 +7,7 @@ const load = (path: string) => import(pathToFileURL(`${src}/${path}`).href);
 const { projectManifestSchema, manifestDigest } = await load("contracts/manifest.ts");
 const input = JSON.parse(readFileSync(0, "utf8"));
 let reason = "manifest";
+let intentField: string | undefined;
 try {
   const manifest = projectManifestSchema.parse(input.projectManifest);
   const result: Record<string, unknown> = { manifest, manifestDigest: manifestDigest(manifest) };
@@ -17,6 +18,20 @@ try {
     const genesis = parseGenesis(input.genesis, manifest);
     result.genesis = genesis;
     result.genesisDigest = genesisDigest(genesis);
+  }
+  if (input.planIntent !== undefined) {
+    reason = "planIntent";
+    const { bootstrapPlanIntent } = await load("bootstrap/bootstrap-plan.ts");
+    const projected = bootstrapPlanIntent({ runId: "rf-compile",
+      planArtifact: { digest: "rf-compile", content: input.planIntent },
+      tasks: [{ taskId: "rf-compile", title: "Bootstrap", state: "READY", spec: {} }] });
+    if (!projected.allowed) {
+      const field = projected.evidence?.field;
+      if (typeof field === "string" && /^(summary|repositoryIntent|verificationIntent|risks)(\[\d+\])?$/.test(field)) {
+        intentField = field;
+      }
+      throw new Error("generated PLAN intent refused");
+    }
   }
   console.log(JSON.stringify(result));
 } catch (error) {
@@ -32,6 +47,6 @@ try {
     if (field === "ciWorkflows") reason = "manifest.ciWorkflows";
     if (field === "branchProfile") reason = "manifest.branchProfile";
   }
-  console.log(JSON.stringify({error: "ACP_SCHEMA: manifest or genesis failed ACP's authoritative schema (VERIFICATION may be unsupported)", reason}));
+  console.log(JSON.stringify({error: "ACP_SCHEMA: manifest, genesis or intent refused by ACP", reason, field: intentField}));
   process.exitCode = 1;
 }

@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 from canonical import digest
 from materialize import CI_PATH, MANIFEST_PATH
@@ -34,9 +35,17 @@ def acp_normalize(payload, acp_src):
     if done.returncode:
         # Treat bridge output as untrusted: forward only an exact fixed category.
         try:
-            reason = json.loads(done.stdout).get("reason")
+            refusal = json.loads(done.stdout)
+            reason = refusal.get("reason")
+            field = refusal.get("field")
         except (ValueError, AttributeError):
-            reason = None
+            reason = field = None
+        if reason == "planIntent":
+            if isinstance(field, str) and re.fullmatch(
+                r"(?:summary|repositoryIntent|verificationIntent|risks)(?:\[\d+\])?", field
+            ):
+                raise ValueError(f"ACP_PLAN_INTENT: {field} refused by ACP's authoritative review bounds; no truncation")
+            raise ValueError("ACP_PLAN_INTENT: generated intent refused by ACP's authoritative review bounds")
         if reason in ("manifest", "manifest.projectId", "manifest.verificationCommands",
                       "manifest.ciWorkflows", "manifest.branchProfile", "genesis"):
             raise ValueError(f"ACP_SCHEMA: {reason} refused by ACP's authoritative schema "
@@ -64,6 +73,8 @@ _PRIVATE_VALUE = re.compile("|".join((
     r"\b(?:session|run|actor|room)[_-](?:id[\s:=_-]*)?[\w-]+|\buser[_-]id[\s:=_-]*[\w-]+",
     r"\b(?:actor|identity|user|session|room|model|runtime|environment|provider)(?:[_ -]?id)?[\"']?\s*[:=]\s*[\"']?[\w/~][^\s,]*",
     r"\brun[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
+    r"\bdecision[_ -]?id[\"']?\s*[:=]\s*[\"']?\S+",
+    r"\b(?:session|decision)(?:[_ -]?id)?[\"']?(?:\s*[:=_-]\s*|\s+)[\"']?[0-9a-f]{8,}\b",
     r"\b(?:gpt-\d[\w.-]*|claude-(?:sonnet|opus|haiku)[\w.-]*)\b",
     r"\b(?:ACP|Hermes|Claude Code)\b",
     r"\b(?:actor|identity)(?:[_ -]?id)?\s+is\s+[\w]+(?:[-_][\w]+)+\b",
@@ -80,6 +91,7 @@ def _words(text):
 
 
 def _private_fragments(request):
+    """Legacy seed/owner-instruction protection; review data has identifier rules only."""
     fragments = set()
     for text in [request["seed"], *request.get("productIntent", {}).get("ownerInstructions", [])]:
         for sentence in re.split(r"[.!?。！？;]+", text):
@@ -89,30 +101,180 @@ def _private_fragments(request):
     return fragments
 
 
-def _screen_public(value, private_fragments=()):
+def _private_review_text(request):
+    return [*request.get("reviewEvidence", []),
+            *([request["stagePlan"]] if "stagePlan" in request else [])]
+
+
+def _private_identifiers(texts):
+    """Rule A: identifier shapes or explicit ID keys, never bare declarations/prose overlap."""
+    identifiers = set()
+    for text in texts:
+        identifiers.update(re.findall(r"\b[0-9a-f]{7,}\b", text, re.IGNORECASE))
+        identifiers.update(re.findall(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", text, re.IGNORECASE))
+        identifiers.update(re.findall(r"\b(?:ses|run|msg|prj|asg|art|task|operation)_[\w-]+", text))
+        identifiers.update(re.findall(r"(?<![\w:/~])(?:~/|/|[a-z]:[\\/])[^\s\"'<>\[\]{},;]+", text, re.IGNORECASE))
+        identifiers.update(re.findall(
+            r"(?<![\w-])(?:session|run|decision|message|project|operation|actor|binding|escalation)[_ -]?id"
+            r"[\"']?(?:\s*[:=]\s*|\s+)[\"']?(\S+)", text, re.IGNORECASE))
+    return {token.rstrip(".,;:!?。！？\"'()[]{}<>") for token in identifiers
+            if token.rstrip(".,;:!?。！？\"'()[]{}<>")}
+
+
+_COMMIT_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.IGNORECASE)
+
+
+def _public_references(request):
+    """Rule B: only full SHA-1/SHA-256 references or absolute URLs."""
+    references = []
+    for reference in request.get("productIntent", {}).get("references", []):
+        if _COMMIT_SHA.fullmatch(reference):
+            references.append(reference)
+        elif not any(c.isspace() for c in reference):
+            try:
+                url = urlsplit(reference)
+            except ValueError:
+                continue
+            if url.scheme and url.netloc:
+                references.append(reference)
+    return references
+
+
+def _without_exact_references(value, references):
+    """Exempt full reference values, preserving URL punctuation and wrapper contents.
+
+    Markdown destinations, angle brackets and code spans are opaque values. Other prose
+    enclosures are scanned inside their matched delimiters, never by stripping URL bytes.
+    Only a bare URL may lose one sentence '.', ',' or ';', after exact comparison.
+    This validation copy never supplies rendered bytes.
+    """
+    if not references:
+        return value
+    references = set(references)
+    url_token = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+    hex_token = re.compile(r"[0-9a-f]+", re.IGNORECASE)
+    delimiters = "()[]<>`\"',;{}"
+
+    def closing(start, limit):
+        opening = value[start]
+        end_char = {"(": ")", "[": "]", "{": "}", '"': '"', "'": "'"}[opening]
+        depth, pos = 1, start + 1
+        while pos < limit:
+            if value[pos] == "\\":
+                pos += 2
+                continue
+            if value[pos] == end_char:
+                depth -= 1
+                if depth == 0:
+                    return pos
+            elif opening != end_char and value[pos] == opening:
+                depth += 1
+            pos += 1
+        return None
+
+    def exact(start, end):
+        if value[start:end] in references:
+            spans.append((start, end))
+            return True
+        return False
+
+    spans, pending = [], [(0, len(value))]
+    while pending:
+        start, limit = pending.pop()
+        pos = start
+        while pos < limit:
+            char = value[pos]
+            if char == "`":
+                opening = re.match(r"`+", value[pos:limit]).group()
+                end = next((m for m in re.finditer(r"`+", value[pos + len(opening):limit])
+                            if len(m.group()) == len(opening)), None)
+                if end is None:
+                    break
+                end_start = pos + len(opening) + end.start()
+                exact(pos + len(opening), end_start)
+                pos = end_start + len(opening)
+                continue
+            if char == "<":
+                end = value.find(">", pos + 1, limit)
+                if end != -1:
+                    exact(pos + 1, end)
+                    pos = end + 1
+                    continue
+            if char in "([{\"'":
+                end = closing(pos, limit)
+                if end is not None:
+                    if char == "[" and end + 1 < limit and value[end + 1] == "(":
+                        target_end = closing(end + 1, limit)
+                        if target_end is not None:
+                            pending.append((pos + 1, end))  # Labels are still public prose.
+                            exact(end + 2, target_end)  # The full destination is one value.
+                            pos = target_end + 1
+                            continue
+                    if not exact(pos + 1, end):
+                        pending.append((pos + 1, end))
+                    pos = end + 1
+                    continue
+            if pos == start or value[pos - 1].isspace() or value[pos - 1] in delimiters:
+                url = url_token.match(value, pos, limit)
+                if url:
+                    if not exact(pos, url.end()) and value[url.end() - 1] in ".,;":
+                        exact(pos, url.end() - 1)
+                    pos = url.end()
+                    continue
+                sha = hex_token.match(value, pos, limit)
+                if sha and _COMMIT_SHA.fullmatch(sha.group()):
+                    end = sha.end()
+                    if (end == limit or value[end].isspace() or value[end] in delimiters
+                            or (value[end] == "." and (end + 1 == limit or value[end + 1].isspace()
+                                                       or value[end + 1] in delimiters))):
+                        exact(pos, end)
+                        pos = end
+                        continue
+            pos += 1
+    parts, cursor = [], 0
+    for start, end in sorted(spans):
+        parts.append(value[cursor:start])
+        cursor = end
+    parts.append(value[cursor:])
+    return "".join(parts)
+
+
+def _screen_public(value, private_fragments=(), private_values=(), public_references=(), *, sink="public"):
     """Reject unsafe public input unchanged; never classify or rewrite private instructions."""
     if isinstance(value, dict):
-        for item in value.values():
-            _screen_public(item, private_fragments)
+        for key, item in value.items():
+            _screen_public(item, private_fragments, private_values, public_references, sink=f"{sink}.{key}")
     elif isinstance(value, list):
-        for item in value:
-            _screen_public(item, private_fragments)
+        for index, item in enumerate(value):
+            _screen_public(item, private_fragments, private_values, public_references, sink=f"{sink}[{index}]")
     elif isinstance(value, str):
+        identifiers = _private_identifiers(private_values)
+        # Rule B protects only exact reference occurrences. It grants no global exemption
+        # to an identifier contained inside a reference; copies elsewhere are still refused.
+        review_screened = _without_exact_references(value, public_references)
+        if any(token in review_screened for token in identifiers):
+            raise ValueError(f"PUBLIC_TEXT: private identifier at {sink}")
         words = _words(value)
         if any(" ".join(words[i:i + PRIVATE_FRAGMENT_WORDS]) in private_fragments
                for i in range(len(words) - PRIVATE_FRAGMENT_WORDS + 1)):
             raise ValueError("PUBLIC_TEXT: private fragment overlaps public text")
-        if _PRIVATE_VALUE.search(value):
+        # Preserve the legacy guard's public URL/SHA handling. It cannot exempt an extracted
+        # private identifier: Rule C has already refused those above unless Rule B applies.
+        # This validation copy never supplies rendered bytes.
+        screened = value
+        provenance = re.findall(r"https?://[^\s]+|\b[0-9a-f]{40}\b", value, re.IGNORECASE)
+        for token in [*provenance, *public_references]:
+            screened = screened.replace(token, "")
+        if _PRIVATE_VALUE.search(screened):
             raise ValueError("PUBLIC_TEXT: private identity or runtime value")
 
 
-def _public_product_text(request, private_fragments):
+def _public_product_text(request):
     """Only the request author's explicit public fields can supply public product prose."""
     intent = request.get("productIntent", {})
     summary = intent.get("summary", DEFAULT_PUBLIC_SUMMARY)
     references = intent.get("references", [])
     requirements = intent.get("publicRequirements", [])
-    _screen_public([summary, *references, *requirements], private_fragments)
     sections = [summary]
     if references:
         sections.append("References:\n" + "\n".join(f"- {ref}" for ref in references))
@@ -163,10 +325,19 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         raise ValueError("UNSUPPORTED_VERIFICATION: at least one real project test command is required")
     if len(request["repositories"]) != 1 or request["repositories"][0]["role"] != "primary":
         raise ValueError("ACP genesis currently supports exactly one primary repository")
-    private_fragments = _private_fragments(request)
-    public_requirement = _public_product_text(request, private_fragments)
-    _screen_public(request.get("genesis", {}), private_fragments)
-    legacy_request = {k: v for k, v in request.items() if k not in ("productIntent", "genesis")}
+    private_values = _private_review_text(request)
+    # Primary boundary: public generation never receives private review data. The auxiliary
+    # identifier screen additionally refuses private identifiers copied into public input.
+    public_request = {k: v for k, v in request.items() if k not in ("reviewEvidence", "stagePlan")}
+    public_references = _public_references(public_request)
+    private_fragments = _private_fragments(public_request)
+    for key in ("summary", "references", "publicRequirements"):
+        _screen_public(public_request.get("productIntent", {}).get(key),
+                       private_fragments, private_values, public_references, sink=f"productIntent.{key}")
+    public_requirement = _public_product_text(public_request)
+    _screen_public(public_requirement, private_fragments, private_values, public_references, sink="PLAN.summary")
+    _screen_public(public_request.get("genesis", {}), private_fragments, private_values, public_references, sink="genesis")
+    legacy_request = {k: v for k, v in public_request.items() if k not in ("productIntent", "genesis")}
     legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
                             requested_optional=requested_optional, ci_values=ci_values)
@@ -188,11 +359,11 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     files[MANIFEST_PATH] = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     # Regenerate local guidance from the same normalized commands and CommitLore policy.
     from materialize import _agents, _readme
-    repository_name = request["repositories"][0]["name"]
+    repository_name = public_request["repositories"][0]["name"]
     files["AGENTS.md"] = _agents(repository_name, manifest["verificationCommands"], "preferred")
     files["README.md"] = _readme(repository_name, public_requirement, manifest["verificationCommands"])
-    intent = _product_intent(request)
-    backlog = request.get("genesis", {})
+    intent = _product_intent(public_request)
+    backlog = public_request.get("genesis", {})
     bundle = {
         "schema": "acp.genesis-bundle.v1",
         "commitMessage": backlog.get("commitMessage", "chore: initialize project"),
@@ -217,13 +388,13 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     for issue in bundle["issues"]:
         if set(issue["labels"]) - labels or (issue["milestoneKey"] is not None and issue["milestoneKey"] not in milestones):
             raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or milestone")
-    for path, text in files.items():
+    for index, (path, text) in enumerate(files.items()):
         screen_text(text, "genesis file")
-        _screen_public(path)
-        _screen_public(text)
-    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")})
+        _screen_public(path, private_fragments, private_values, public_references, sink=f"genesis.files[{index}].path")
+        _screen_public(text, private_fragments, private_values, public_references, sink=f"genesis.files[{index}].content")
+    _screen_public({key: bundle[key] for key in ("commitMessage", "labels", "milestones", "issues")},
+                   private_fragments, private_values, public_references, sink="genesis")
     screen_value({k: v for k, v in bundle.items() if k != "files"}, "genesis text")
-    normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle}, acp_src)
     identity = manifest["repositories"][0]["remote"]
     # Strict ACP shapes only, in execution order. Genesis never pushes the default branch (owner
     # 2026-10-22 "초기 파일도 PR로"; the standing no-default-branch-push rule stands): GitHub's own
@@ -246,16 +417,33 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         {"operationId": "set-default-branch", "resourceType": "setting", "resourceIdentity": identity + "#default-branch",
          "desiredState": {"defaultBranch": "dev"}},
     ]
+    # These PLAN strings are private data_only review context, never authority or genesis text.
+    verification_intent = [
+        "Run declared local tests and required CI with Actions provenance at the genesis PR head "
+        "before ACP merges into main; verify merged main before activation",
+        *private_values,
+        *[
+            f"issue {issue['key']}: product acceptance = the seeded issue body's acceptance; "
+            f"verified by a follow-on STANDARD_WORK run of project {manifest['projectId']} that the resident CTO "
+            "creates after activation; handoff: the issue reaches the resident CTO in the activation "
+            "handoff and is not complete until that run's verification passes."
+            for issue in bundle["issues"] if "stagePlan" in request
+        ],
+    ]
+    # Run ACP's actual projector, which owns all intent bounds and character-count semantics.
+    normalized = acp_normalize({"projectManifest": manifest, "genesis": bundle,
+                                "planIntent": {"summary": public_requirement, "repositoryIntent": [identity],
+                                               "verificationIntent": verification_intent, "risks": []}}, acp_src)
     return {
         "summary": public_requirement,
         "dependencies": [], "repositoryIntent": [identity],
-        "verificationIntent": ["Run declared local tests and required CI with Actions provenance at the genesis PR head "
-                               "before ACP merges into main; verify merged main before activation"],
+        "verificationIntent": verification_intent,
         "knownConflicts": [], "risks": [], "removedOverengineering": ["repo-local runtime and extra approval receipts"],
         "bootstrapOperationId": operation_id,
         "requestDigest": digest(request, volatile="strip"),
         "projectManifest": normalized["manifest"], "projectManifestDigest": normalized["manifestDigest"],
         "githubOperations": operations, "genesis": normalized["genesis"], "genesisDigest": normalized["genesisDigest"],
+        **({"supersedesProjectId": request["supersedesProjectId"]} if "supersedesProjectId" in request else {}),
     }
 
 
