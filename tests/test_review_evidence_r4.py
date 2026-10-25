@@ -16,7 +16,7 @@ FORMATS = [*("{}" + mark for mark in ":!?。！？"),
 
 @pytest.mark.parametrize("private_field", ["reviewEvidence", "stagePlan"])
 @pytest.mark.parametrize("public_field", PUBLIC_FIELDS)
-@pytest.mark.parametrize("reference", [SHA1, SHA256, URL])
+@pytest.mark.parametrize("reference", [SHA1, URL])
 @pytest.mark.parametrize("template", FORMATS)
 def test_r4_exact_references_across_every_public_surface(private_field, public_field, reference, template):
     request = request_for()

@@ -99,9 +99,12 @@ tokens with hyphens or underscores. Plain words, numbers and ordinary hyphenated
 not inferred to be identifiers.
 Explicit public request inputs take precedence for public URLs, commit SHAs and product prose
 repeated in review data; the private copy cannot remove or rewrite public output.
-Exact listed URL/SHA references support bare values, prose enclosures, angle brackets, backticks,
+Listed commit references must be 40-hex SHA-1 values. RF request validation refuses standalone
+64-hex references as credential-shaped under ACP's policy; use a 40-hex SHA-1 or an absolute URL.
+Exact listed URL/SHA-1 references support bare values, prose enclosures, angle brackets, backticks,
 Markdown links (including `[a](URL "title")`), and emphasis (`**URL**`, `*URL*`, `_URL_`).
-Link labels and titles remain screened public prose. Standalone SHAs accept sentence
+Link labels and titles use the same reference scan as other public prose; a `)` inside a quoted
+title does not close the link. Standalone SHAs accept sentence
 `.`, `,`, `;`, `:`, `!`, `?`, `。`, `！`, `？`. Bare URLs accept one final
 `.`, `,`, `;`, `:`, `!`, `。`, `！` or `？` only after exact full-value comparison;
 ASCII `?` remains an added query delimiter (use `<URL>?` for sentence punctuation).

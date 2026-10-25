@@ -121,11 +121,11 @@ def _private_identifiers(texts):
             if token.rstrip(".,;:!?。！？\"'()[]{}<>")}
 
 
-_COMMIT_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.IGNORECASE)
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}", re.IGNORECASE)
 
 
 def _public_references(request):
-    """Rule B: only full SHA-1/SHA-256 references or absolute URLs."""
+    """Rule B: only full SHA-1 references or absolute URLs."""
     references = []
     for reference in request.get("productIntent", {}).get("references", []):
         if _COMMIT_SHA.fullmatch(reference):
@@ -161,13 +161,19 @@ def _without_exact_references(value, references):
     def boundary(pos, limit):
         return pos == limit or value[pos].isspace() or value[pos] in delimiters
 
-    def closing(start, limit):
+    def closing(start, limit, *, link=False):
         opening = value[start]
         end_char = {"(": ")", "[": "]", "{": "}", '"': '"', "'": "'"}[opening]
         depth, pos = 1, start + 1
         while pos < limit:
             if value[pos] == "\\":
                 pos += 2
+                continue
+            if link and depth == 1 and value[pos] == '"' and value[pos - 1].isspace():
+                title_end = closing(pos, limit)
+                if title_end is None:
+                    return None
+                pos = title_end + 1
                 continue
             if value[pos] == end_char:
                 depth -= 1
@@ -211,15 +217,16 @@ def _without_exact_references(value, references):
                 end = closing(pos, limit)
                 if end is not None:
                     if char == "[" and end + 1 < limit and value[end + 1] == "(":
-                        target_end = closing(end + 1, limit)
+                        target_end = closing(end + 1, limit, link=True)
                         if target_end is not None:
                             pending.append((pos + 1, end))  # Labels are still public prose.
                             destination = end + 2
                             if not exact(destination, target_end):
-                                titled = re.fullmatch(r'(\S+)\s+"(?:\\.|[^"\\])*"\s*',
+                                titled = re.fullmatch(r'(\S+)\s+"((?:\\.|[^"\\])*)"\s*',
                                                       value[destination:target_end])
                                 if titled:
                                     exact(destination, destination + len(titled.group(1)))
+                                    pending.append((destination + titled.start(2), destination + titled.end(2)))
                             pos = target_end + 1
                             continue
                     if not exact(pos + 1, end):
