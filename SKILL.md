@@ -139,10 +139,18 @@ The auxiliary screen for those two private fields follows exactly Rules A–C:
   `_`, `-` or space and required `id`. After `=`, `:` or whitespace, take the next non-space
   value and strip trailing punctuation. Bare `Decision:`/`Session:` declarations, arbitrary
   assignments, mixed letter/digit shapes and prose overlap add no identifier candidates.
-- **B:** Exempt only occurrences exactly equal to a URL or full SHA-1/SHA-256 value listed in
-  `productIntent.references`. Compare the full value inside Markdown link destinations, angle
-  brackets or backticks; never split or strip punctuation inside that value. A bare URL may
-  lose a final sentence `.`, `,` or `;` only if the remainder exactly equals a listed URL.
+- **B:** Exempt only occurrences exactly equal to a URL or full 40-hex SHA-1 value listed in
+  `productIntent.references`. RF request validation refuses standalone 64-hex references as
+  credential-shaped under ACP's policy; use a 40-hex SHA-1 or an absolute URL instead.
+  Compare the full value inside Markdown link destinations
+  (including `[a](URL "title")`), angle brackets, backticks, or emphasis (`**URL**`, `*URL*`,
+  `_URL_`); link labels and titles use the same reference scan as other public prose.
+  A `)` inside a quoted title does not close the link. Never split or strip
+  punctuation inside a destination, angle bracket or code span. Standalone SHAs accept
+  sentence `.`, `,`, `;`, `:`, `!`, `?`, `。`, `！`, `？`. A bare URL may lose one final
+  `.`, `,`, `;`, `:`, `!`, `。`, `！` or `？` only if the remainder exactly equals a listed URL;
+  ASCII `?` remains an added query delimiter (use `<URL>?` for sentence punctuation).
+  An unmatched backtick does not stop screening later references.
   Extended URL paths/queries/fragments and SHAs embedded in longer tokens are not exempt.
   Reference prose and component identifiers receive no exemption
   elsewhere; appearance in other public input never grants one.

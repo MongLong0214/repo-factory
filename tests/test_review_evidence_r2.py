@@ -82,7 +82,7 @@ def test_rule_a_only_identifier_shapes_and_explicit_id_keys(private, expected):
 @pytest.mark.parametrize("reference,allowed", [
     ("ab12cd34" * 5, True),
     ("1234567890" * 4, True),
-    ("ab12cd34" * 8, True),
+    ("ab12cd34" * 8, False),
     ("https://github.com/example/public-project", True),
     ("1718881034", False),
     ("Public provenance: abc1234", False),

@@ -145,6 +145,12 @@ def validate_request(request: Dict[str, Any]) -> None:
             "the request does not satisfy schemas/bootstrap-request.schema.json: "
             + "; ".join(f"{'.'.join(str(x) for x in e.path) or '<root>'}: {e.message}" for e in invalid[:5])
         )
+    if any(re.fullmatch(r"\s*[0-9a-fA-F]{64}\s*", reference)
+           for reference in request.get("productIntent", {}).get("references", [])):
+        raise PlanError(
+            "PUBLIC_REFERENCE: productIntent.references does not support standalone 64-hex values; "
+            "ACP treats them as credential-shaped; use a 40-hex SHA-1 or an absolute URL"
+        )
     # 이 공장이 만드는 저장소는 ruleset 으로 보호된다. private 저장소의 ruleset 은 GitHub
     # Pro 이상을 요구하고, 이 배포는 Pro 를 쓰지 않는다 — 그러면 private Plan 은 컴파일은
     # 되지만 `after-files` 에서 반드시 죽는 Plan 이다. 실측: `create-ruleset` 이 HTTP 403 으로
