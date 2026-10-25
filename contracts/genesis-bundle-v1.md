@@ -98,7 +98,15 @@ prefixes, including hex IDs, UUIDs, prefixed IDs, assigned values, paths and mix
 tokens with hyphens or underscores. Plain words, numbers and ordinary hyphenated prose are
 not inferred to be identifiers.
 Explicit public request inputs take precedence for public URLs, commit SHAs and product prose
-repeated in review data; the private copy cannot remove or rewrite public output. Explicit
+repeated in review data; the private copy cannot remove or rewrite public output.
+Exact listed URL/SHA references support bare values, prose enclosures, angle brackets, backticks,
+Markdown links (including `[a](URL "title")`), and emphasis (`**URL**`, `*URL*`, `_URL_`).
+Link labels and titles remain screened public prose. Standalone SHAs accept sentence
+`.`, `,`, `;`, `:`, `!`, `?`, `。`, `！`, `？`. Bare URLs accept one final
+`.`, `,`, `;`, `:`, `!`, `。`, `！` or `？` only after exact full-value comparison;
+ASCII `?` remains an added query delimiter (use `<URL>?` for sentence punctuation).
+Destination, angle bracket and code span contents are compared whole; unmatched backticks
+do not stop screening later references. Explicit
 internal decision/session/run IDs and internal paths remain private even when copied into a
 public field. The public output bytes are invariant under changes to the private fields;
 only private intent and its request-binding digest change.

@@ -145,7 +145,9 @@ def _without_exact_references(value, references):
 
     Markdown destinations, angle brackets and code spans are opaque values. Other prose
     enclosures are scanned inside their matched delimiters, never by stripping URL bytes.
-    Only a bare URL may lose one sentence '.', ',' or ';', after exact comparison.
+    Link titles remain public prose; emphasis may wrap an exact reference value.
+    Only a bare URL may lose one sentence punctuation mark, after exact comparison
+    (ASCII '?' remains an added query delimiter).
     This validation copy never supplies rendered bytes.
     """
     if not references:
@@ -154,6 +156,10 @@ def _without_exact_references(value, references):
     url_token = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
     hex_token = re.compile(r"[0-9a-f]+", re.IGNORECASE)
     delimiters = "()[]<>`\"',;{}"
+    sentence_marks = ".,;:!。！？"
+
+    def boundary(pos, limit):
+        return pos == limit or value[pos].isspace() or value[pos] in delimiters
 
     def closing(start, limit):
         opening = value[start]
@@ -189,7 +195,8 @@ def _without_exact_references(value, references):
                 end = next((m for m in re.finditer(r"`+", value[pos + len(opening):limit])
                             if len(m.group()) == len(opening)), None)
                 if end is None:
-                    break
+                    pos += len(opening)
+                    continue
                 end_start = pos + len(opening) + end.start()
                 exact(pos + len(opening), end_start)
                 pos = end_start + len(opening)
@@ -207,7 +214,12 @@ def _without_exact_references(value, references):
                         target_end = closing(end + 1, limit)
                         if target_end is not None:
                             pending.append((pos + 1, end))  # Labels are still public prose.
-                            exact(end + 2, target_end)  # The full destination is one value.
+                            destination = end + 2
+                            if not exact(destination, target_end):
+                                titled = re.fullmatch(r'(\S+)\s+"(?:\\.|[^"\\])*"\s*',
+                                                      value[destination:target_end])
+                                if titled:
+                                    exact(destination, destination + len(titled.group(1)))
                             pos = target_end + 1
                             continue
                     if not exact(pos + 1, end):
@@ -215,18 +227,31 @@ def _without_exact_references(value, references):
                     pos = end + 1
                     continue
             if pos == start or value[pos - 1].isspace() or value[pos - 1] in delimiters:
+                if char in "*_":
+                    opening = re.match(r"\*+|_+", value[pos:limit]).group()
+                    if len(opening) <= 2:
+                        for reference in references:
+                            end = pos + len(opening) + len(reference)
+                            after = end + len(opening)
+                            if (after <= limit and value.startswith(reference + opening, pos + len(opening))
+                                    and (boundary(after, limit) or value[after] in sentence_marks + "?")):
+                                exact(pos + len(opening), end)
+                                pos = after
+                                break
+                        else:
+                            pos += len(opening)
+                        continue
                 url = url_token.match(value, pos, limit)
                 if url:
-                    if not exact(pos, url.end()) and value[url.end() - 1] in ".,;":
+                    if not exact(pos, url.end()) and value[url.end() - 1] in sentence_marks:
                         exact(pos, url.end() - 1)
                     pos = url.end()
                     continue
                 sha = hex_token.match(value, pos, limit)
                 if sha and _COMMIT_SHA.fullmatch(sha.group()):
                     end = sha.end()
-                    if (end == limit or value[end].isspace() or value[end] in delimiters
-                            or (value[end] == "." and (end + 1 == limit or value[end + 1].isspace()
-                                                       or value[end + 1] in delimiters))):
+                    if (boundary(end, limit)
+                            or (value[end] in sentence_marks + "?" and boundary(end + 1, limit))):
                         exact(pos, end)
                         pos = end
                         continue
