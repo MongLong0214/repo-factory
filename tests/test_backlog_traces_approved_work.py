@@ -210,6 +210,22 @@ def test_a_duplicate_marker_is_refused(duplicate):
         compile_bundle(planned(issues=issues))
 
 
+@pytest.mark.parametrize("source", ["supplied", "default"])
+def test_without_a_plan_no_issue_may_carry_a_reserved_marker(source):
+    # Review P2 on #64: markers are compiler-owned and appear only on issues linked to declared units.
+    request = counterexample()
+    request["productIntent"]["publicRequirements"] = ["Export the edited clip."]
+    if source == "supplied":
+        request["genesis"] = {"issues": [
+            {"key": key, "title": f"Export {key}", "body": "Export the edited clip.\n\nWork unit 1 of 1: export",
+             "labels": ["enhancement"], "milestoneKey": "first-product"} for key in ("export-a", "export-b")]}
+    else:
+        request["productIntent"]["summary"] = "Edit clips.\nWork unit 1 of 1: export"
+    with pytest.raises(ValueError, match=r"BACKLOG_DOES_NOT_TRACE_APPROVED_WORK: genesis\.issues\[0\]\.body "
+                                         r"carries a reserved work unit marker"):
+        compile_bundle(request)
+
+
 def test_one_issue_cannot_cover_two_units():
     issues = supplied_issues()
     issues[0]["covers"] = ["ruling-intake", "render-gates"]

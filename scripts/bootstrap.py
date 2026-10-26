@@ -349,6 +349,11 @@ def _traced_issues(request, public_requirement):
                                          "milestoneKey": "first-product"}])
         if any("covers" in issue for issue in issues):
             raise ValueError(_UNTRACED + "genesis.issues covers a work unit but genesis.workUnits is not declared")
+        for index, issue in enumerate(issues):
+            # Markers are compiler-owned links to declared units; without a plan no body may carry one.
+            if _UNIT_MARKER.search(issue["body"]):
+                raise ValueError(_UNTRACED + f"genesis.issues[{index}].body carries a reserved work unit "
+                                 "marker but genesis.workUnits is not declared")
         return issues
     milestones = {row["key"] for row in backlog.get("milestones", [{"key": "first-product"}])}
     positions = {}
