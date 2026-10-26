@@ -177,6 +177,48 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "workUnits": {
+          "description": "The approved work plan. Each unit is one issue: key, public title, public deliverable or acceptance criteria, and the declared milestone (product stage or owner goal) it belongs to. Work sharing one implementation and rollback responsibility may be one unit. Required when productIntent.publicRequirements has two or more entries. RF checks structure and linkage only; the blind review of the PLAN judges semantic adequacy. Never sent to ACP.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "title",
+              "acceptance",
+              "milestoneKey"
+            ],
+            "properties": {
+              "key": {
+                "description": "Letters, digits, '.', '_' or '-'; unique within the plan. Checked by the compiler without echoing the value.",
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "acceptance": {
+                "type": "string",
+                "minLength": 1
+              },
+              "milestoneKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "labels": {
+                "description": "Labels of the issue RF derives from this unit; default [\"enhancement\"].",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
         "commitMessage": {
           "type": "string",
           "minLength": 1
@@ -267,6 +309,11 @@
                   "string",
                   "null"
                 ]
+              },
+              "covers": {
+                "description": "Request-only link to the one genesis.workUnits key this issue delivers; required on every supplied issue when workUnits is declared, refused otherwise. Never sent to ACP: RF appends 'Work unit <position> of <count>: <key>' as the body's last line.",
+                "type": "string",
+                "minLength": 1
               }
             }
           }

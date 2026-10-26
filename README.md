@@ -7,7 +7,9 @@ merge or governance runtime. [SKILL.md](SKILL.md) is the sole operational instru
 The owner confirms Phase 0 questions, the dossier and the final plan bundle. There is
 no additional authority receipt or T3 approval stage. Only PUBLIC repositories are supported.
 Product ideas, references and instructions stay in the PLAN's genesis `productIntent`
-and initial implementation issue, and must reach the resident CTO handoff.
+and initial issues, and must reach the resident CTO handoff. Issues follow the approved
+work plan: each declared work unit is exactly one issue on its milestone, so independent work
+never hides in one catch-all issue (SKILL.md, "Backlog trace").
 
 ## Compile
 

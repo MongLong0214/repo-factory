@@ -48,8 +48,9 @@ Choose a new UUID for a new bootstrap; reuse it for retries of that same operati
 `request.json` follows `schemas/bootstrap-request.schema.json`. It carries the ACP run ID,
 verbatim `seed`, profile, priority, one primary repository (with `stack: "node"`),
 `visibility: "public"`, `remoteOwner`, origin, and optional structured `productIntent`.
-Optional `genesis` request fields supply approved commitMessage/labels/milestones/issues;
-otherwise RF seeds an implementation issue tied to the owner's idea and first milestone.
+Optional `genesis` request fields supply approved commitMessage/labels/milestones/issues and
+the approved work plan `workUnits` (backlog trace below). Without a plan or issues, RF seeds one
+implementation issue tied to the owner's idea and first milestone.
 Optional `projectId` is the permanent ACP key and must match
 `^[a-z0-9][a-z0-9._-]{0,80}$` (1–81 characters). An explicit id is validated verbatim:
 never lowercase, slug or trim it; refuse it if invalid. When omitted, RF uses only
@@ -121,11 +122,25 @@ in private context, never public summary, references, requirements, files or bac
 Secret screening covers owner input before rendering, outgoing file bytes and backlog text.
 Remove credential-shaped content instead of bypassing the refusal. Never use `--no-verify`.
 Public text comes only from explicit public-by-contract fields: request `productIntent.summary`,
-`references`, `publicRequirements`, and `genesis` commit/issue/milestone/label text. Requirements
-are rendered verbatim in README/PRD and the default backlog; none are classified, rewritten or
-dropped. `ownerInstructions` is always private, including instructions that sound like features.
+`references`, `publicRequirements`, and `genesis` commit/issue/milestone/label/work-unit text.
+Requirements are rendered verbatim in README/PRD and the default issue; none are classified,
+rewritten or dropped. `ownerInstructions` is always private, including instructions that sound like features.
 To publish one, move its approved product requirement into `publicRequirements`; do not copy
 private wording into both fields. Without structured intent, use a neutral backlog statement.
+
+**Backlog trace.** Issues follow the approved work plan, `genesis.workUnits`: each unit has a key,
+public title, public acceptance (deliverable or acceptance criteria) and the declared milestone
+(product stage or owner goal) it belongs to. Work sharing one implementation and rollback
+responsibility may be one unit; independent work is separate units. Each unit becomes exactly one
+issue: RF derives it from the unit, or a supplied issue names the unit in request-only `covers`,
+contains the unit's acceptance verbatim and uses the unit's milestone. Without a plan the public
+intent is one unit, so a request with two or more `publicRequirements` and no plan is refused with
+`BACKLOG_DOES_NOT_TRACE_APPROVED_WORK`: RF cannot tell from prose how requirements group. RF appends
+`Work unit <k> of <n>: <key>` as each planned issue body's last line; it is a link, not proof of content.
+The compiler enforces structure and linkage only (one issue per unit, no duplicate marker, declared
+milestones, each issue on its unit's milestone); the blind review of the PLAN judges whether the
+plan adequately covers the product intent. Product stages come only from the author's public
+`genesis.milestones`, never from private `stagePlan`.
 
 The primary privacy guarantee is data flow: public generators receive neither `reviewEvidence`
 nor `stagePlan`. They use only public inputs, so adding or changing private review data cannot
