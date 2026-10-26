@@ -62,6 +62,15 @@ def public_texts(plan):
     }
 
 
+def traced_backlog(acceptances, milestone_description="Deliver the approved work plan."):
+    """An approved work plan: one declared unit per acceptance, all in one milestone (#1240)."""
+    return {"labels": [{"name": "enhancement", "color": "a2eeef", "description": "Product development"}],
+            "milestones": [{"key": "mvp", "title": "First product increment", "description": milestone_description}],
+            "workUnits": [{"key": f"unit-{index}", "title": f"Deliver work unit {index}",
+                           "acceptance": text, "milestoneKey": "mvp"}
+                          for index, text in enumerate(acceptances, start=1)]}
+
+
 @pytest.mark.parametrize("profile", ["SIMPLE", "STANDARD", "GUARDED"])
 def test_emitted_text_references_only_files_present_in_the_bundle(profile):
     request = {**copy.deepcopy(REQUEST), "bootstrapProfile": profile}
@@ -97,6 +106,9 @@ def test_verbatim_conversation_is_private_but_reaches_the_resident_handoff(struc
                                   "Create through ACP and Repo Factory; no manual room, identity or CTO."],
             "publicRequirements": ["Check the whole README.",
                                    "Report user-visible mismatches without leaking the parent environment."]}
+        # Several approved requirements need a declared work plan, not one catch-all issue (#1240).
+        request["genesis"] = traced_backlog(request["productIntent"]["publicRequirements"],
+                                            request["productIntent"]["summary"])
     original = copy.deepcopy(request)
     plan = compile_bundle(request)
     for location, text in public_texts(plan).items():
@@ -104,8 +116,9 @@ def test_verbatim_conversation_is_private_but_reaches_the_resident_handoff(struc
         assert "PRIVATE-CONVERSATION" not in text and "눈사람" not in text, location
         assert "owner 2026-10-10" not in text and "no manual room" not in text, location
     if structured:
-        for location in ("README.md", "docs/PRD.md", "issues", "milestones"):
+        for location in ("README.md", "docs/PRD.md", "milestones"):
             assert "A README verification tool." in public_texts(plan)[location]
+        for location in ("README.md", "docs/PRD.md", "issues"):
             assert "Check the whole README" in public_texts(plan)[location]
             assert "user-visible mismatches" in public_texts(plan)[location]
     assert request == original

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from test_genesis_bundle import REQUEST, acp_check, compile_bundle, public_texts
+from test_genesis_bundle import REQUEST, acp_check, compile_bundle, public_texts, traced_backlog
 
 
 FEATURES = ["Create a repository comparison report after each scan.",
@@ -113,11 +113,18 @@ def test_every_explicit_feature_survives_verbatim_and_private_handoff_is_preserv
     request = request_for()
     request["productIntent"]["summary"] = "  " + request["productIntent"]["summary"] + "  "
     request["productIntent"]["publicRequirements"] = [*FEATURES, "  Preserve mixed Unicode output: 눈사람 雪.  "]
+    request["genesis"] = traced_backlog(request["productIntent"]["publicRequirements"],
+                                        request["productIntent"]["summary"])
     before = copy.deepcopy(request)
     plan = compile_bundle(request)
-    for sink in ("README.md", "docs/PRD.md", "issues", "milestones"):
+    for sink in ("README.md", "docs/PRD.md"):
         for feature in [request["productIntent"]["summary"], *request["productIntent"]["publicRequirements"]]:
             assert feature in public_texts(plan)[sink], (sink, feature)
+    assert request["productIntent"]["summary"] in public_texts(plan)["milestones"]
+    # This plan declares one unit per feature; each unit's acceptance survives verbatim in its issue (#1240).
+    assert len(plan["genesis"]["issues"]) == len(request["productIntent"]["publicRequirements"])
+    for issue, feature in zip(plan["genesis"]["issues"], request["productIntent"]["publicRequirements"]):
+        assert feature in issue["body"], feature
     assert request == before
     decision = json.loads(acp_check(plan)["outputs"]["value"]["handoff"]["recentDecisions"][0])
     assert decision["productIntent"]["summary"] == request["productIntent"]["summary"]
@@ -164,6 +171,7 @@ def test_freshreadme_shape_uses_four_public_requirements_and_private_instruction
     request["projectId"] = "freshreadme-2"
     request["productIntent"]["publicRequirements"] = FEATURES
     request["productIntent"]["references"] = ["https://github.com/ShreyasDasari/evergif"]
+    request["genesis"] = traced_backlog(FEATURES)  # Four requirements need a declared work plan (#1240).
     plan = compile_bundle(request)
     assert plan["projectManifest"]["projectId"] == "freshreadme-2"
     assert all(feature in public_texts(plan)["docs/PRD.md"] for feature in FEATURES)

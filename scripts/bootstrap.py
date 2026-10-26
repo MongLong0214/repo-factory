@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from canonical import digest
 from materialize import CI_PATH, MANIFEST_PATH
 from plan import compile_plan, content_digest, validate_request
-from secret_screen import screen_text, screen_value
+from secret_screen import screen_text, screen_value, screen_whole_value
 from render_ci import effective_values
 
 
@@ -315,6 +315,84 @@ def _public_product_text(request):
     return "\n\n".join(sections)
 
 
+_UNIT_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_UNIT_MARKER = re.compile(r"^Work unit \d+ of \d+:", re.MULTILINE)
+_UNTRACED = "BACKLOG_DOES_NOT_TRACE_APPROVED_WORK: "
+
+
+def _trace_line(position, count, key):
+    """Last line of each issue in a declared work plan: a link to its unit, never proof of content."""
+    return f"Work unit {position} of {count}: {key}"
+
+
+def _traced_issues(request, public_requirement):
+    """Issues follow the approved work plan, so independent units never hide in one catch-all issue.
+
+    The plan is request `genesis.workUnits`: each unit has a key, public title, public acceptance
+    and the milestone (product stage or owner goal) it belongs to; work sharing one implementation
+    and rollback responsibility may be one unit. Without a plan the public intent is a single unit,
+    so an intent naming several approved requirements is refused: RF cannot tell from prose how
+    they group. With a plan, each unit gets exactly one issue: RF derives it from the unit, or a
+    supplied issue names it in request-only `covers`, states the unit's acceptance and uses its
+    milestone. This checks structure and linkage only; the PLAN's blind review judges whether the
+    plan covers the intent. Refusals name fields and indexes, never values.
+    """
+    backlog = request.get("genesis", {})
+    units = backlog.get("workUnits")
+    if units is None:
+        requirements = request.get("productIntent", {}).get("publicRequirements", [])
+        if len(requirements) > 1:
+            raise ValueError(_UNTRACED + f"no declared work plan (genesis.workUnits) for a public intent with "
+                             f"{len(requirements)} approved requirements; declare its work units")
+        issues = backlog.get("issues", [{"key": "implement-product", "title": "Implement the owner's product intent",
+                                         "body": public_requirement, "labels": ["enhancement"],
+                                         "milestoneKey": "first-product"}])
+        if any("covers" in issue for issue in issues):
+            raise ValueError(_UNTRACED + "genesis.issues covers a work unit but genesis.workUnits is not declared")
+        for index, issue in enumerate(issues):
+            # Markers are compiler-owned links to declared units; without a plan no body may carry one.
+            if _UNIT_MARKER.search(issue["body"]):
+                raise ValueError(_UNTRACED + f"genesis.issues[{index}].body carries a reserved work unit "
+                                 "marker but genesis.workUnits is not declared")
+        return issues
+    milestones = {row["key"] for row in backlog.get("milestones", [{"key": "first-product"}])}
+    positions = {}
+    for index, unit in enumerate(units):
+        if not _UNIT_KEY.fullmatch(unit["key"]) or unit["key"] in positions:
+            raise ValueError(_UNTRACED + f"genesis.workUnits[{index}].key must be unique and use only "
+                             "letters, digits, '.', '_' or '-'")
+        if not unit["title"].strip() or not unit["acceptance"].strip():
+            raise ValueError(_UNTRACED + f"genesis.workUnits[{index}] needs a public title and acceptance")
+        screen_whole_value(unit["acceptance"], f"genesis.workUnits[{index}].acceptance")
+        if unit["milestoneKey"] not in milestones:
+            raise ValueError(_UNTRACED + f"genesis.workUnits[{index}].milestoneKey names no declared milestone")
+        positions[unit["key"]] = index
+    issues = backlog.get("issues", [{"key": unit["key"], "title": unit["title"], "body": unit["acceptance"],
+                                     "labels": unit.get("labels", ["enhancement"]),
+                                     "milestoneKey": unit["milestoneKey"], "covers": unit["key"]} for unit in units])
+    traced, covered = [], set()
+    for index, issue in enumerate(issues):
+        where, key = f"genesis.issues[{index}]", issue.get("covers")
+        if key not in positions:
+            raise ValueError(_UNTRACED + f"{where}.covers must name exactly one declared work unit")
+        if key in covered or _UNIT_MARKER.search(issue["body"]):
+            raise ValueError(_UNTRACED + f"{where} duplicates a work unit marker")
+        unit = units[positions[key]]
+        if unit["acceptance"].strip() not in issue["body"]:
+            raise ValueError(_UNTRACED + f"{where}.body does not state its work unit's declared acceptance")
+        if issue["milestoneKey"] != unit["milestoneKey"]:
+            raise ValueError(_UNTRACED + f"{where}.milestoneKey is not its work unit's milestone")
+        covered.add(key)
+        # The marker would hide a whole-value key from ACP's screen, so screen the body first.
+        screen_whole_value(issue["body"], f"{where}.body")
+        body = issue["body"] + ("\n\n" if issue["body"] else "") + _trace_line(positions[key] + 1, len(units), key)
+        traced.append({**{name: value for name, value in issue.items() if name != "covers"}, "body": body})
+    for index, unit in enumerate(units):
+        if unit["key"] not in covered:
+            raise ValueError(_UNTRACED + f"genesis.workUnits[{index}] has no issue")
+    return traced
+
+
 def _verification_in_files(commands, files):
     """Admit only invocations this scaffold actually supplies; fail before repository creation.
 
@@ -369,6 +447,8 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     public_requirement = _public_product_text(public_request)
     _screen_public(public_requirement, private_fragments, private_values, public_references, sink="PLAN.summary")
     _screen_public(public_request.get("genesis", {}), private_fragments, private_values, public_references, sink="genesis")
+    # Before materialization: a backlog that does not trace the approved units is refused.
+    issues = _traced_issues(public_request, public_requirement)
     legacy_request = {k: v for k, v in public_request.items() if k not in ("productIntent", "genesis")}
     legacy_request["seed"] = public_requirement
     compiled = compile_plan(legacy_request, verification_commands, operation_id=operation_id,
@@ -405,8 +485,7 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
         "branches": {"main": "main", "integration": "dev", "genesis": "genesis"},
         "labels": backlog.get("labels", [{"name": "enhancement", "color": "a2eeef", "description": "Product development"}]),
         "milestones": backlog.get("milestones", [{"key": "first-product", "title": "First product increment", "description": public_requirement}]),
-        "issues": backlog.get("issues", [{"key": "implement-product", "title": "Implement the owner's product intent",
-                                         "body": public_requirement, "labels": ["enhancement"], "milestoneKey": "first-product"}]),
+        "issues": issues,
         "productIntent": intent,
     }
     for rows, key in ((bundle["labels"], "name"), (bundle["milestones"], "key"), (bundle["issues"], "key")):
@@ -418,8 +497,9 @@ def compile_bootstrap_plan(request, verification_commands, *, operation_id, acp_
     labels = {row["name"] for row in bundle["labels"]}
     milestones = {row["key"] for row in bundle["milestones"]}
     for issue in bundle["issues"]:
-        if set(issue["labels"]) - labels or (issue["milestoneKey"] is not None and issue["milestoneKey"] not in milestones):
-            raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or milestone")
+        # Every issue links to an existing milestone; a null milestone leaves it unplanned.
+        if set(issue["labels"]) - labels or issue["milestoneKey"] not in milestones:
+            raise ValueError("GENESIS_BACKLOG: issue references an undeclared label or names no declared milestone")
     for index, (path, text) in enumerate(files.items()):
         screen_text(text, "genesis file")
         _screen_public(path, private_fragments, private_values, public_references, sink=f"genesis.files[{index}].path")

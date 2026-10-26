@@ -66,13 +66,25 @@ The project manifest in the same PLAN must:
   the exact head and push/merge-group CI retains its event SHA; action pins and matrix/gate stay intact.
 - commitlore: { "mode": "required" } only if the genesis includes what CommitLore needs; otherwise "preferred".
 Secret screen: ACP refuses a bundle whose file bytes or issue/milestone text contain credential-shaped content.
-RF additionally requires labels, milestones and issues to each be non-empty.
+RF additionally requires labels, milestones and issues to each be non-empty, and every issue to name a
+declared milestone (no null milestoneKey).
+
+Backlog trace (#1240): issues follow the approved work plan, request-only `genesis.workUnits`
+(key, public title, public acceptance, declared milestoneKey). Each unit becomes exactly one issue on
+its unit's milestone: RF derives it from the unit, or a supplied issue names the unit in request-only
+`covers` and contains the unit's acceptance verbatim. Without a plan the public intent is one unit;
+two or more `publicRequirements` without a plan refuse `BACKLOG_DOES_NOT_TRACE_APPROVED_WORK`.
+The wire shape above is unchanged: `workUnits` and `covers` are removed, and each planned issue body
+ends with the line `Work unit <k> of <n>: <key>` (k = the unit's 1-based plan position, n = unit count,
+key matching `[A-Za-z0-9][A-Za-z0-9._-]*`). Issues of a request without a plan carry no marker.
+The marker is a link, not proof of content: RF enforces structure and linkage only; semantic
+adequacy is judged by the blind review of the PLAN.
 
 RF request public/private boundary: `seed` and `productIntent.ownerInstructions` are private
 provenance, never sources for public prose. Request `productIntent.summary`, `references` and
 optional `publicRequirements: [str]` are explicit public-by-contract text approved by the
 CEO/CTO request author, as are the supplied genesis commit message and issue/milestone/label
-text. Every approved public requirement is rendered verbatim in README/PRD and default backlog.
+text. Every approved public requirement is rendered verbatim in README/PRD and the default issue.
 RF refuses invalid public text instead of rewriting or dropping it. Without structured intent,
 RF uses a neutral statement, never the seed. Publishing an instruction requires moving an
 approved product requirement to the public field; leaving the private wording duplicated there
@@ -115,7 +127,7 @@ public field. The public output bytes are invariant under changes to the private
 only private intent and its request-binding digest change.
 
 The pinned ACP bundle shape above does not gain `publicRequirements`. RF renders that input
-array into the inline files/default backlog. The wire `genesis.productIntent` is private
+array into the inline files and default issue. The wire `genesis.productIntent` is private
 handoff: its summary and references use only explicit public input (or a fixed neutral summary
 when intent is absent). The private ownerInstructions array contains the verbatim seed first,
 then the untouched original ownerInstructions. References embedded in the seed remain there;
