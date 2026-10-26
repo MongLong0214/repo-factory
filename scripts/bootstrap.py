@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from canonical import digest
 from materialize import CI_PATH, MANIFEST_PATH
 from plan import compile_plan, content_digest, validate_request
-from secret_screen import screen_text, screen_value
+from secret_screen import screen_text, screen_value, screen_whole_value
 from render_ci import effective_values
 
 
@@ -363,6 +363,7 @@ def _traced_issues(request, public_requirement):
                              "letters, digits, '.', '_' or '-'")
         if not unit["title"].strip() or not unit["acceptance"].strip():
             raise ValueError(_UNTRACED + f"genesis.workUnits[{index}] needs a public title and acceptance")
+        screen_whole_value(unit["acceptance"], f"genesis.workUnits[{index}].acceptance")
         if unit["milestoneKey"] not in milestones:
             raise ValueError(_UNTRACED + f"genesis.workUnits[{index}].milestoneKey names no declared milestone")
         positions[unit["key"]] = index
@@ -382,6 +383,8 @@ def _traced_issues(request, public_requirement):
         if issue["milestoneKey"] != unit["milestoneKey"]:
             raise ValueError(_UNTRACED + f"{where}.milestoneKey is not its work unit's milestone")
         covered.add(key)
+        # The marker would hide a whole-value key from ACP's screen, so screen the body first.
+        screen_whole_value(issue["body"], f"{where}.body")
         body = issue["body"] + ("\n\n" if issue["body"] else "") + _trace_line(positions[key] + 1, len(units), key)
         traced.append({**{name: value for name, value in issue.items() if name != "covers"}, "body": body})
     for index, unit in enumerate(units):

@@ -29,6 +29,18 @@ def screen_text(text, location="outgoing content"):
         raise SecretScreenError(f"SECRET_SCREEN: credential-shaped content in {location}; remove it before rendering")
 
 
+# ACP's genesis screen also refuses a public string that is nothing but a 64-hex key (a copied
+# Buzz/Nostr `.priv` file). It is a whole-value rule, so text appended afterwards hides the key.
+_WHOLE_VALUE_KEY = re.compile(r"\s*[0-9a-fA-F]{64}\s*")
+
+
+def screen_whole_value(text, location):
+    """ACP's per-string public screen; run it before RF appends anything to the string."""
+    screen_text(text, location)
+    if _WHOLE_VALUE_KEY.fullmatch(text):
+        raise SecretScreenError(f"SECRET_SCREEN: credential-shaped content in {location}; remove it before rendering")
+
+
 def screen_value(value, location="input"):
     if isinstance(value, dict):
         for item in value.values():

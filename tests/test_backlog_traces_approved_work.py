@@ -319,6 +319,27 @@ def test_a_unit_acceptance_with_a_local_path_is_refused():
         compile_bundle(request)
 
 
+@pytest.mark.parametrize("case,sink", [
+    ("derived", r"genesis\.workUnits\[1\]\.acceptance"),
+    ("supplied", r"genesis\.workUnits\[1\]\.acceptance"),
+    ("acceptance-only", r"genesis\.workUnits\[1\]\.acceptance"),
+    ("body-only", r"genesis\.issues\[1\]\.body"),
+])
+def test_a_whole_value_key_is_screened_before_the_marker_hides_it(case, sink):
+    # Review P2 on #64: ACP refuses a body that is nothing but 64 hex characters; the appended
+    # marker would hide it, so RF applies that whole-value rule to the original text first.
+    key = "a1b2c3d4" * 8
+    units = copy.deepcopy(UNITS)
+    units[1]["acceptance"] = "a1b2c3d4" if case == "body-only" else key
+    issues = None
+    if case != "derived":
+        issues = supplied_issues()
+        issues[1]["body"] = f"Acceptance: {key}" if case == "acceptance-only" else key
+    with pytest.raises(ValueError, match=rf"SECRET_SCREEN: credential-shaped content in {sink}") as caught:
+        compile_bundle(planned(units, issues=issues))
+    assert key not in str(caught.value) and "a1b2c3d4" not in str(caught.value)
+
+
 def test_derived_marker_text_passes_through_the_public_screen(monkeypatch):
     # Falsifiable: if the generated marker carried a private value, the bundle screen refuses it.
     module = importlib.import_module("bootstrap")
