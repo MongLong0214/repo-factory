@@ -31,7 +31,10 @@ def screen_text(text, location="outgoing content"):
 
 # ACP's genesis screen also refuses a public string that is nothing but a 64-hex key (a copied
 # Buzz/Nostr `.priv` file). It is a whole-value rule, so text appended afterwards hides the key.
-_WHOLE_VALUE_KEY = re.compile(r"\s*[0-9a-fA-F]{64}\s*")
+# ACP matches /^\s*[0-9a-fA-F]{64}\s*$/ in JavaScript, whose \s differs from Python's (it includes
+# U+FEFF and excludes U+001C-U+001F and U+0085), so the class is spelled out.
+_JS_SPACE = "[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
+_WHOLE_VALUE_KEY = re.compile(f"{_JS_SPACE}*[0-9a-fA-F]{{64}}{_JS_SPACE}*")
 
 
 def screen_whole_value(text, location):

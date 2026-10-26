@@ -12,6 +12,7 @@ import re
 import pytest
 
 from test_genesis_bundle import REQUEST, acp_check, compile_bundle, public_texts
+from secret_screen import SecretScreenError, screen_whole_value
 
 
 # Public-safe synthetic stand-in for the live counterexample: a SIMPLE request whose eleven
@@ -325,10 +326,12 @@ def test_a_unit_acceptance_with_a_local_path_is_refused():
     ("acceptance-only", r"genesis\.workUnits\[1\]\.acceptance"),
     ("body-only", r"genesis\.issues\[1\]\.body"),
 ])
-def test_a_whole_value_key_is_screened_before_the_marker_hides_it(case, sink):
+@pytest.mark.parametrize("pad", ["", "\ufeff", "\u3000"])
+def test_a_whole_value_key_is_screened_before_the_marker_hides_it(case, sink, pad):
     # Review P2 on #64: ACP refuses a body that is nothing but 64 hex characters; the appended
     # marker would hide it, so RF applies that whole-value rule to the original text first.
-    key = "a1b2c3d4" * 8
+    # The padding is whitespace to ACP's JavaScript \s but U+FEFF is not to Python's.
+    key = pad + "a1b2c3d4" * 8
     units = copy.deepcopy(UNITS)
     units[1]["acceptance"] = "a1b2c3d4" if case == "body-only" else key
     issues = None
@@ -338,6 +341,17 @@ def test_a_whole_value_key_is_screened_before_the_marker_hides_it(case, sink):
     with pytest.raises(ValueError, match=rf"SECRET_SCREEN: credential-shaped content in {sink}") as caught:
         compile_bundle(planned(units, issues=issues))
     assert key not in str(caught.value) and "a1b2c3d4" not in str(caught.value)
+
+
+@pytest.mark.parametrize("pad,refused", [("\ufeff", True), ("\u00a0", True), ("\x1c", False), ("\x85", False)])
+def test_the_whole_value_rule_uses_acps_javascript_whitespace(pad, refused):
+    # ACP's /^\s*[0-9a-fA-F]{64}\s*$/ decides; RF must neither miss nor add a refusal.
+    text = pad + "a1b2c3d4" * 8 + pad
+    if refused:
+        with pytest.raises(SecretScreenError):
+            screen_whole_value(text, "probe")
+    else:
+        screen_whole_value(text, "probe")
 
 
 def test_derived_marker_text_passes_through_the_public_screen(monkeypatch):
